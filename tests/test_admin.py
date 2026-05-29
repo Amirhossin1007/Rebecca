@@ -96,7 +96,7 @@ def test_disable_admin_users(auth_client: TestClient, xray_mock):
         assert user3.status == UserStatus.disabled
 
         xray_mock.config.include_db_users.assert_called_once()
-        xray_mock.core.restart.assert_called_once()
+        xray_mock.operations.restart_node.assert_not_called()
 
     finally:
         # Cleanup
@@ -327,11 +327,7 @@ def test_disable_admin(auth_client: TestClient, xray_mock):
 
         # Verify xray was restarted with updated config
         xray_mock.config.include_db_users.assert_called_once()
-        xray_mock.core.restart.assert_called_once()
-
-        # Get the config that was passed to restart
-        restart_call_args = xray_mock.core.restart.call_args
-        assert restart_call_args is not None
+        xray_mock.operations.restart_node.assert_not_called()
 
     finally:
         # Cleanup

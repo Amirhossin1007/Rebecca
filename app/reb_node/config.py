@@ -4,8 +4,6 @@ import base64
 import binascii
 import json
 import logging
-import re
-import subprocess
 import uuid
 from collections import defaultdict
 from copy import deepcopy
@@ -30,7 +28,6 @@ from app.utils.xray_defaults import (
 )
 from config import (
     DEBUG,
-    XRAY_EXECUTABLE_PATH,
     XRAY_EXCLUDE_INBOUND_TAGS,
     XRAY_FALLBACKS_INBOUND_TAG,
 )
@@ -105,23 +102,11 @@ def _derive_reality_public_key_python(private_key: str) -> str:
 
 def derive_reality_public_key(private_key: str) -> str:
     """
-    Try to derive the Reality public key exactly the way Xray does (through the
-    CLI helper) to ensure identical formatting. Fall back to a pure Python
-    implementation when the CLI helper is unavailable.
+    Derive the Reality public key without shelling out to a local runtime binary.
+    Master is node-only now, so it must not depend on a local runtime executable.
     """
     if not private_key:
         raise ValueError("Reality private key is empty")
-
-    try:
-        cmd = [XRAY_EXECUTABLE_PATH, "x25519"]
-        if private_key:
-            cmd.extend(["-i", private_key])
-        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8")
-        match = re.match(r"Private key: (.+)\nPublic key: (.+)", output)
-        if match:
-            return match.group(2)
-    except Exception:  # pragma: no cover - fallback handled below
-        pass
 
     return _derive_reality_public_key_python(private_key)
 
@@ -171,19 +156,22 @@ def _flow_supported_for_inbound(inbound: dict) -> bool:
 
 def get_xray_version():
     """
-    Get the installed Xray core version from the running instance.
-    Falls back to creating a temporary instance if runtime is not yet initialized.
+    Get the runtime version reported by a connected node.
 
     Returns:
         str: Version string (e.g., "1.8.4") if Xray is available, None otherwise.
     """
     try:
-        # Try to use the already-running core instance from runtime
-        from app.reb_node.state import core
+        from app.runtime import xray as runtime_xray
 
-        return core.version if core.available else None
+        for node in list(getattr(runtime_xray, "nodes", {}).values()):
+            if getattr(node, "connected", False):
+                version = getattr(node, "node_version", None) or node.get_version()
+                if version:
+                    return version
     except Exception:
-        return None
+        pass
+    return None
 
 
 def is_xray_version_at_least(target_version: str) -> bool:

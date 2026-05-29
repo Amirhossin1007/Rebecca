@@ -2,7 +2,7 @@ import importlib
 
 
 JOB_MODULES = (
-    "xray_core",
+    "node_runtime",
     "add_db_users",
     "record_usages",
     "remove_expired_users",

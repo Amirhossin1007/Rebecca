@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import secrets
-import subprocess
 import time
 from collections import deque
 from copy import deepcopy
@@ -38,7 +37,7 @@ from app.utils.binary_control import (
 from app.utils.update_check import get_binary_update_status
 from app.utils.system import cpu_usage, realtime_bandwidth
 from app.reb_node.config import XRayConfig
-from app.utils.xray_config import restart_xray_and_invalidate_cache, restart_xray_targets
+from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache, restart_runtime_targets
 from app.utils.xray_targets import (
     MASTER_TARGET_ID,
     ensure_target_configs_for_mutation,
@@ -47,7 +46,7 @@ from app.utils.xray_targets import (
     parse_target_id,
     persist_mutated_target_configs,
 )
-from config import XRAY_EXECUTABLE_PATH, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
+from config import XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 logger = logging.getLogger(__name__)
@@ -74,15 +73,31 @@ _PANEL_PROCESS = psutil.Process(os.getpid())
 _PANEL_PROCESS.cpu_percent(interval=None)
 
 
-def _queue_xray_restart(bg: BackgroundTasks, target_ids: set[str] | None = None) -> None:
+def _call_node_runtime_helper(method_name: str, *args):
+    last_error = None
+    for node_id, node in list(getattr(xray, "nodes", {}).items()):
+        try:
+            if not node.connected:
+                continue
+            return getattr(node, method_name)(*args)
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Node %s failed to run runtime helper %s: %s", node_id, method_name, exc)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No connected node is available for runtime helper")
+
+
+def _queue_runtime_restart(bg: BackgroundTasks, target_ids: set[str] | None = None) -> None:
     def _restart() -> None:
         try:
             if target_ids:
-                restart_xray_targets(target_ids)
+                restart_runtime_targets(target_ids)
             else:
-                restart_xray_and_invalidate_cache()
+                restart_default_runtimes_and_invalidate_cache()
         except Exception as exc:  # pragma: no cover - best effort background task
-            logger.error("Failed to restart Xray after inbound change: %s", exc)
+            logger.error("Failed to restart runtime after inbound change: %s", exc)
 
     bg.add_task(_restart)
 
@@ -163,24 +178,13 @@ def get_system_stats(admin: Admin = Depends(Admin.get_current)):
     xray_uptime_seconds = 0
     xray_version = None
     last_xray_error = None
-    if xray and getattr(xray, "core", None):
-        xray_running = bool(xray.core.started)
-        xray_version = xray.core.version
-        xray_proc = getattr(xray.core, "process", None)
-        if xray_proc:
-            try:
-                xray_process = psutil.Process(xray_proc.pid)
-                if xray_running:
-                    xray_uptime_seconds = max(0, int(now - xray_process.create_time()))
-            except (psutil.NoSuchProcess, AttributeError):
-                xray_uptime_seconds = 0
-
-        # Get last error if Xray is not running (stopped/crashed)
-        if not xray_running:
-            try:
-                last_xray_error = xray.core.get_last_error()
-            except (AttributeError, Exception):
-                last_xray_error = None
+    for node in list(getattr(xray, "nodes", {}).values()):
+        try:
+            if node.connected and node.started:
+                xray_running = True
+                break
+        except Exception:
+            continue
 
     timestamp = int(now)
     _system_history["cpu"].append({"timestamp": timestamp, "value": float(cpu.percent)})
@@ -328,7 +332,7 @@ def restart_panel_from_maintenance(admin: Admin = Depends(Admin.check_sudo_admin
 
 @router.post("/maintenance/soft-reload", responses={403: responses._403})
 def soft_reload_panel_from_maintenance(admin: Admin = Depends(Admin.check_sudo_admin)):
-    """Soft reload the panel without restarting Xray core or nodes.
+    """Soft reload the panel without restarting node runtimes.
 
     This reloads configuration from database and invalidates caches,
     but keeps all connections active. Use this when you want to refresh
@@ -379,38 +383,13 @@ def get_inbounds_full(
 def generate_vless_encryption_keys(
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Run `xray vlessenc` to generate authentication/encryption suggestions."""
+    """Return authentication/encryption suggestions without touching a local runtime binary."""
 
-    def _fallback_auths() -> dict:
-        # Minimal fallback so UI remains usable even if xray binary is missing or output can't be parsed.
-        return {
-            "auths": [
-                {"label": "none", "encryption": "none", "decryption": "none"},
-            ]
-        }
-
-    try:
-        process = subprocess.run(
-            [XRAY_EXECUTABLE_PATH, "vlessenc"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except FileNotFoundError:  # pragma: no cover - depends on host setup
-        return _fallback_auths()
-    except subprocess.CalledProcessError as exc:  # pragma: no cover - defensive
-        detail = exc.stderr.strip() or exc.stdout.strip() or ""
-        logger.warning("vlessenc failed: %s", detail or exc)
-        return _fallback_auths()
-
-    raw_output = process.stdout.strip()
-    auths = _parse_vlessenc_output(raw_output)
-
-    if not auths:
-        logger.warning("Unable to parse vlessenc output: %s", raw_output or "<empty>")
-        return _fallback_auths()
-
-    return {"auths": auths}
+    return {
+        "auths": [
+            {"label": "none", "encryption": "none", "decryption": "none"},
+        ]
+    }
 
 
 @router.get(
@@ -422,7 +401,7 @@ def generate_reality_keypair(
 ):
     """Generate a REALITY key pair using Xray's x25519 command."""
     try:
-        result = xray.core.get_x25519()
+        result = _call_node_runtime_helper("get_x25519")
         if not result:
             raise HTTPException(status_code=500, detail="Failed to generate key pair")
 
@@ -473,7 +452,7 @@ def generate_mldsa65(
 ):
     """Generate an ML-DSA-65 keypair using Xray's mldsa65 command."""
     try:
-        result = xray.core.get_mldsa65()
+        result = _call_node_runtime_helper("get_mldsa65")
         if not result:
             raise HTTPException(status_code=500, detail="Failed to generate ML-DSA-65 keypair")
         seed = result.get("seed")
@@ -500,7 +479,7 @@ def generate_ech_cert(
     if not sni or not sni.strip():
         raise HTTPException(status_code=400, detail="SNI is required to generate ECH certificate")
     try:
-        result = xray.core.get_ech_cert(sni)
+        result = _call_node_runtime_helper("get_ech_cert", sni)
         if not result:
             raise HTTPException(status_code=500, detail="Failed to generate ECH certificate")
         ech_server_keys = result.get("echServerKeys")
@@ -557,7 +536,7 @@ def create_inbound(
         _validate_port_available(config, inbound, target_id)
         _upsert_inbound_in_config(config, inbound)
     persist_mutated_target_configs(db, configs)
-    _queue_xray_restart(bg, set(configs.keys()))
+    _queue_runtime_restart(bg, set(configs.keys()))
 
     crud.get_or_create_inbound(db, tag)
     # Ensure hosts cache is updated after inbound is created
@@ -597,7 +576,7 @@ def update_inbound(
         else:
             _remove_inbound_from_config(config, tag)
     persist_mutated_target_configs(db, configs)
-    _queue_xray_restart(bg, set(configs.keys()))
+    _queue_runtime_restart(bg, set(configs.keys()))
 
     crud.get_or_create_inbound(db, tag)
     # Ensure hosts cache is updated after inbound is updated
@@ -637,7 +616,7 @@ def delete_inbound(
     for config in configs.values():
         _remove_inbound_from_config(config, tag)
     persist_mutated_target_configs(db, configs)
-    _queue_xray_restart(bg, set(configs.keys()))
+    _queue_runtime_restart(bg, set(configs.keys()))
 
     try:
         crud.delete_inbound(db, tag)

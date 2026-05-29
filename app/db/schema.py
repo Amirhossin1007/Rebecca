@@ -80,6 +80,6 @@ def ensure_users_subadress_column() -> None:
         logger.error("Unexpected error while adding 'subadress' column: %s", exc)
 
 
-def ensure_core_schema() -> None:
+def ensure_runtime_schema() -> None:
     ensure_users_credential_key_column()
     ensure_users_subadress_column()

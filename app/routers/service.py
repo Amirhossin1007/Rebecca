@@ -40,9 +40,9 @@ from app.models.user import (
     UserStatus,
     UsersResponse,
 )
-from app.reb_node import operations as core_operations
+from app.reb_node import operations as node_operations
 from app.utils import responses
-from app.utils.xray_config import apply_config, restart_xray_and_invalidate_cache
+from app.utils.xray_config import apply_config, restart_default_runtimes_and_invalidate_cache
 
 router = APIRouter(
     prefix="/api/v2/services",
@@ -54,12 +54,12 @@ logger = logging.getLogger(__name__)
 _AUTO_INBOUND_PREFIX = "setservice-"
 
 
-def _queue_xray_restart(bg: BackgroundTasks) -> None:
+def _queue_runtime_restart(bg: BackgroundTasks) -> None:
     def _restart() -> None:
         try:
-            restart_xray_and_invalidate_cache()
+            restart_default_runtimes_and_invalidate_cache()
         except Exception as exc:  # pragma: no cover - best effort background task
-            logger.error("Failed to restart Xray after service inbound change: %s", exc)
+            logger.error("Failed to restart runtime after service inbound change: %s", exc)
 
     bg.add_task(_restart)
 
@@ -425,7 +425,7 @@ def create_service_auto_inbound(
 
     config.setdefault("inbounds", []).append(inbound)
     apply_config(config)
-    _queue_xray_restart(bg)
+    _queue_runtime_restart(bg)
 
     crud.get_or_create_inbound(db, tag)
     xray.hosts.update()
@@ -462,7 +462,7 @@ def delete_service_auto_inbound(
 
     del config["inbounds"][index]
     apply_config(config)
-    _queue_xray_restart(bg)
+    _queue_runtime_restart(bg)
 
     try:
         crud.delete_inbound(db, tag)
@@ -509,9 +509,9 @@ def delete_service(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     for dbuser in deleted_users:
-        core_operations.remove_user(dbuser=dbuser)
+        node_operations.remove_user(dbuser=dbuser)
     for dbuser in transferred_users:
-        core_operations.update_user(dbuser=dbuser)
+        node_operations.update_user(dbuser=dbuser)
     xray.hosts.update()
 
 
@@ -787,10 +787,6 @@ def perform_service_users_action(
             raise
         raise HTTPException(status_code=500, detail=str(exc))
 
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    restart_default_runtimes_and_invalidate_cache(xray.config.include_db_users())
 
     return {"detail": detail, "count": affected}

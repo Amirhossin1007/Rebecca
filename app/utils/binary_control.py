@@ -16,7 +16,7 @@ from app.utils.update_check import infer_update_channel
 
 HOST_OPERATION_DISABLED_DETAIL = (
     "This host-level action is available only on binary installations. "
-    "Migrate this panel to the binary version before using update, restart, core, or geo actions from the web UI."
+    "Migrate this panel to the binary version before using update, restart, runtime, or geo actions from the web UI."
 )
 
 

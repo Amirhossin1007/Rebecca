@@ -56,7 +56,7 @@ def test_safe_execute_retries_sqlite_database_locked(monkeypatch):
     assert db.commits == 1
 
 
-def test_core_websocket_routes_are_not_wrapped_by_http_request_origin_dependency():
+def test_runtime_websocket_routes_are_not_wrapped_by_http_request_origin_dependency():
     from app.routers import api_router
     from app.utils.request_context import capture_subscription_request_origin
 

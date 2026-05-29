@@ -192,6 +192,14 @@ class NodeResponse(Node):
     node_install_mode: Optional[str] = None
     node_binary_tag: Optional[str] = None
     node_update_channel: Optional[str] = None
+    cpu_cores: Optional[int] = None
+    cpu_frequency_hz: Optional[float] = None
+    cpu_usage_percent: Optional[float] = None
+    memory_used: Optional[int] = None
+    memory_total: Optional[int] = None
+    memory_usage_percent: Optional[float] = None
+    upload_speed: Optional[int] = None
+    download_speed: Optional[int] = None
     status: NodeStatus
     message: Optional[str] = None
     geo_mode: GeoMode

@@ -12,6 +12,8 @@ class XRayBase(object):
     ):
         self.address = address
         self.port = port
+        self.ssl_cert = ssl_cert
+        self.ssl_target_name = ssl_target_name
         options = list(channel_options or [])
 
         if ssl_cert is None:

@@ -1,6 +1,7 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import threading
 from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, bindparam, case, func, insert, or_, select, update
@@ -9,7 +10,6 @@ from sqlalchemy.orm import selectinload
 
 from app.db import GetDB, crud
 from app.db.models import Admin, AdminServiceLink, NodeUserUsage, Service, User
-from app.jobs.usage.collectors import get_users_stats
 from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from app.jobs.usage.utils import hour_bucket, is_retryable_db_error, retry_delay, safe_execute, utcnow_naive
 from app.models.admin import Admin as AdminSchema, AdminStatus
@@ -21,6 +21,8 @@ from config import DISABLE_RECORDING_NODE_USAGE
 
 """User/admin/service usage pipeline: collect, aggregate, and persist usage in the database."""
 
+_record_user_usages_lock = threading.Lock()
+
 # region Collect & aggregate per-user stats from Xray
 
 
@@ -28,16 +30,8 @@ def _build_api_instances():
     api_instances = {}
     usage_coefficient = {}
 
-    try:
-        if getattr(xray.core, "available", False) and getattr(xray.core, "started", False):
-            api_instances[None] = xray.api
-            usage_coefficient[None] = 1
-    except Exception:
-        # Skip master core if it's unavailable; still record from nodes
-        pass
-
     for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
+        if node.connected:
             api_instances[node_id] = node
             usage_coefficient[node_id] = node.usage_coefficient
 
@@ -50,18 +44,19 @@ def _is_missing_node_usage_endpoint(exc: Exception) -> bool:
 
 def _collect_user_stats(source):
     if not hasattr(source, "collect_user_stats"):
-        return {"stats": get_users_stats(source), "node_batch_id": ""}
+        raise RuntimeError("Node does not support buffered user usage collection")
+
     try:
         payload = source.collect_user_stats()
-        return {
-            "stats": payload.get("stats") or [],
-            "node_batch_id": payload.get("batch_id") or "",
-        }
     except Exception as exc:
-        if not _is_missing_node_usage_endpoint(exc):
-            raise
+        if _is_missing_node_usage_endpoint(exc):
+            raise RuntimeError("Node does not support buffered user usage collection") from exc
+        raise
 
-    return {"stats": get_users_stats(source.api), "node_batch_id": ""}
+    return {
+        "stats": payload.get("stats") or [],
+        "node_batch_id": payload.get("batch_id") or "",
+    }
 
 
 def _ack_node_user_batches(node_batches: dict[int, str]) -> None:
@@ -616,6 +611,16 @@ def _apply_usage_to_db(users_usage, admin_usage, service_usage, admin_service_us
 
 
 def record_user_usages():
+    if not _record_user_usages_lock.acquire(blocking=False):
+        logger.warning("record_user_usages is already running; skipping overlapping run")
+        return
+    try:
+        return _record_user_usages_once()
+    finally:
+        _record_user_usages_lock.release()
+
+
+def _record_user_usages_once():
     # Always enforce due limits/expiry first, even if no current usage was collected.
     try:
         with GetDB() as db:

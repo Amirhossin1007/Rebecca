@@ -327,12 +327,10 @@ def _restore_admin_users_and_nodes(db: Session, dbadmin: Admin) -> None:
     """Reload nodes after admin re-enable without auto-changing user statuses."""
     try:
         from app.runtime import xray
+        from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
 
         startup_config = xray.config.include_db_users()
-        xray.core.restart(startup_config)
-        for node_id, node in list(xray.nodes.items()):
-            if node.connected:
-                xray.operations.restart_node(node_id, startup_config)
+        restart_default_runtimes_and_invalidate_cache(startup_config)
     except ImportError:
         return
 

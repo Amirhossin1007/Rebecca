@@ -13,33 +13,72 @@ from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from tests.conftest import TestingSessionLocal
 
 
-def _fake_xray(master_api, node_api=None):
+def _fake_xray(master_api=None, node=None):
     nodes = {}
-    if node_api is not None:
-        nodes[1] = SimpleNamespace(connected=True, started=True, api=node_api)
+    if node is not None:
+        nodes[1] = node
     return SimpleNamespace(
-        core=SimpleNamespace(available=True, started=True),
         api=master_api,
         nodes=nodes,
         config={"outbounds": [{"tag": "proxy", "protocol": "freedom"}]},
     )
 
 
-def test_record_node_usages_persists_master_and_node_outbound_traffic(monkeypatch):
+def test_record_user_usages_skips_overlapping_run(monkeypatch):
+    called = False
+
+    def fail_if_called():
+        nonlocal called
+        called = True
+        raise AssertionError("overlapping user usage job should be skipped")
+
+    monkeypatch.setattr(user_usage, "_record_user_usages_once", fail_if_called)
+    assert user_usage._record_user_usages_lock.acquire(blocking=False)
+    try:
+        user_usage.record_user_usages()
+    finally:
+        user_usage._record_user_usages_lock.release()
+
+    assert called is False
+
+
+def test_record_node_usages_skips_overlapping_run(monkeypatch):
+    called = False
+
+    def fail_if_called():
+        nonlocal called
+        called = True
+        raise AssertionError("overlapping node usage job should be skipped")
+
+    monkeypatch.setattr(node_usage, "_record_node_usages_once", fail_if_called)
+    assert node_usage._record_node_usages_lock.acquire(blocking=False)
+    try:
+        node_usage.record_node_usages()
+    finally:
+        node_usage._record_node_usages_lock.release()
+
+    assert called is False
+
+
+def test_record_node_usages_persists_node_outbound_traffic(monkeypatch):
     usage_delivery_buffer.clear()
     master_api = object()
-    remote_api = object()
-    fake_xray = _fake_xray(master_api, remote_api)
+
+    class BufferedNode:
+        connected = True
+        started = True
+        usage_coefficient = 1
+
+        def collect_outbound_stats(self):
+            return {"batch_id": "node-batch-1", "stats": [{"tag": "proxy", "up": 100, "down": 200}]}
+
+        def ack_outbound_stats(self, batch_id):
+            pass
+
+    fake_xray = _fake_xray(master_api, BufferedNode())
     monkeypatch.setattr(node_usage, "xray", fake_xray)
     monkeypatch.setattr(outbound_traffic, "xray", fake_xray)
     monkeypatch.setattr(node_usage, "DISABLE_RECORDING_NODE_USAGE", True)
-
-    def fake_stats(api):
-        if api is master_api:
-            return [{"tag": "proxy", "up": 10, "down": 20}]
-        return [{"tag": "proxy", "up": 100, "down": 200}]
-
-    monkeypatch.setattr(node_usage, "get_outbounds_stats", fake_stats)
 
     db = TestingSessionLocal()
     try:
@@ -62,9 +101,7 @@ def test_record_node_usages_persists_master_and_node_outbound_traffic(monkeypatc
             .filter(OutboundTraffic.tag == "proxy", OutboundTraffic.target_id == "node:1")
             .first()
         )
-        assert master_record is not None
-        assert master_record.uplink == 10
-        assert master_record.downlink == 20
+        assert master_record is None
         assert node_record is not None
         assert node_record.uplink == 100
         assert node_record.downlink == 200
@@ -94,7 +131,6 @@ def test_record_node_usages_acks_node_buffer_after_persist(monkeypatch):
 
     node = BufferedNode()
     fake_xray = SimpleNamespace(
-        core=SimpleNamespace(available=False, started=False),
         api=None,
         nodes={1: node},
         config={"outbounds": [{"tag": "proxy", "protocol": "freedom"}]},
@@ -171,7 +207,6 @@ def test_node_outbound_usage_replaces_cumulative_node_batches(monkeypatch):
             return {"batch_id": "outbound-batch-1", "stats": [{"tag": "proxy", "up": 7, "down": 11}]}
 
     fake_xray = SimpleNamespace(
-        core=SimpleNamespace(available=False, started=False),
         api=None,
         nodes={1: BufferedNode()},
         config={"outbounds": [{"tag": "proxy", "protocol": "freedom"}]},
@@ -204,10 +239,10 @@ def test_user_usage_ack_prevents_replay_when_hourly_snapshot_fails(monkeypatch):
     monkeypatch.setattr(user_usage, "GetDB", DummyDB)
     monkeypatch.setattr(user_usage, "_enforce_due_active_admins", lambda db: 0)
     monkeypatch.setattr(user_usage, "_enforce_due_active_users", lambda db: 0)
-    monkeypatch.setattr(user_usage, "_build_api_instances", lambda: ({None: object()}, {None: 1}))
+    monkeypatch.setattr(user_usage, "_build_api_instances", lambda: ({1: object()}, {1: 1}))
 
     def collect_from_buffer(api_instances):
-        return {None: usage_delivery_buffer.add_user_stats(None, samples.pop(0))}, {}
+        return {1: usage_delivery_buffer.add_user_stats(1, samples.pop(0))}, {}
 
     def apply_usage(users_usage, admin_usage, service_usage, admin_service_usage):
         applied.extend(users_usage)
@@ -223,7 +258,7 @@ def test_user_usage_ack_prevents_replay_when_hourly_snapshot_fails(monkeypatch):
     user_usage.record_user_usages()
 
     assert applied == [{"uid": "42", "value": 100}]
-    assert usage_delivery_buffer.pending_user_stats(None) == []
+    assert usage_delivery_buffer.pending_user_stats(1) == []
 
 
 def test_apply_usage_bulk_update_does_not_require_session_sync(monkeypatch):
@@ -254,12 +289,25 @@ def test_apply_usage_bulk_update_does_not_require_session_sync(monkeypatch):
 
 def test_outbound_usage_buffer_rolls_back_partial_persist_until_retry_succeeds(monkeypatch):
     usage_delivery_buffer.clear()
-    master_api = object()
-    fake_xray = _fake_xray(master_api)
+
+    class BufferedNode:
+        connected = True
+        started = False
+        usage_coefficient = 1
+
+        def __init__(self):
+            self.samples = [[{"tag": "proxy", "up": 9, "down": 1}], []]
+
+        def collect_outbound_stats(self):
+            return {"batch_id": "", "stats": self.samples.pop(0)}
+
+        def ack_outbound_stats(self, batch_id):
+            pass
+
+    fake_xray = _fake_xray(node=BufferedNode())
     monkeypatch.setattr(node_usage, "xray", fake_xray)
     monkeypatch.setattr(outbound_traffic, "xray", fake_xray)
     monkeypatch.setattr(node_usage, "DISABLE_RECORDING_NODE_USAGE", False)
-    monkeypatch.setattr(node_usage, "get_outbounds_stats", lambda api: [{"tag": "proxy", "up": 9, "down": 1}])
 
     original_persist_node_stats = node_usage._persist_node_stats_in_session
 
@@ -283,7 +331,7 @@ def test_outbound_usage_buffer_rolls_back_partial_persist_until_retry_succeeds(m
     with pytest.raises(RuntimeError, match="db is down"):
         node_usage.record_node_usages()
 
-    assert usage_delivery_buffer.pending_outbound_stats(None) == [{"tag": "proxy", "up": 9, "down": 1}]
+    assert usage_delivery_buffer.pending_outbound_stats(1) == [{"tag": "proxy", "up": 9, "down": 1}]
 
     db = TestingSessionLocal()
     try:
@@ -296,7 +344,6 @@ def test_outbound_usage_buffer_rolls_back_partial_persist_until_retry_succeeds(m
     finally:
         db.close()
 
-    monkeypatch.setattr(node_usage, "get_outbounds_stats", lambda api: [])
     monkeypatch.setattr(node_usage, "_persist_node_stats_in_session", original_persist_node_stats)
 
     node_usage.record_node_usages()
@@ -311,7 +358,7 @@ def test_outbound_usage_buffer_rolls_back_partial_persist_until_retry_succeeds(m
         if system:
             assert system.uplink == 9
             assert system.downlink == 1
-        node_usage_row = db.query(NodeUsage).filter(NodeUsage.node_id.is_(None)).first()
+        node_usage_row = db.query(NodeUsage).filter(NodeUsage.node_id == 1).first()
         assert node_usage_row is not None
         assert node_usage_row.uplink == 9
         assert node_usage_row.downlink == 1
@@ -326,4 +373,4 @@ def test_outbound_usage_buffer_rolls_back_partial_persist_until_retry_succeeds(m
         db.close()
         usage_delivery_buffer.clear()
 
-    assert usage_delivery_buffer.pending_outbound_stats(None) == []
+    assert usage_delivery_buffer.pending_outbound_stats(1) == []

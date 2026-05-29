@@ -25,7 +25,7 @@ from app.models.node import (
 from app.models.proxy import ProxyHost
 from app.utils import responses, report
 from app.db.models import MasterNodeState as DBMasterNodeState, Node as DBNode
-from app.routers.core import GEO_TEMPLATES_INDEX_DEFAULT, _resolve_geo_template_index_url
+from app.routers.runtime import GEO_TEMPLATES_INDEX_DEFAULT, _resolve_geo_template_index_url
 from app.services import go_usage
 from app.utils.binary_control import build_rebecca_update_args, require_binary_runtime
 from app.utils.xray_logs import normalize_log_chunk, sort_log_lines
@@ -59,7 +59,7 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
 MASTER_NODE_NAME = "Master"
 NODE_BINARY_REQUIRED_DETAIL = (
     "This node host-level action is available only when the node is installed in binary mode. "
-    "Migrate the node to the binary version before using update, restart, core, or geo actions from the web UI."
+    "Migrate the node to the binary version before using update, restart, runtime, or geo actions from the web UI."
 )
 
 
@@ -68,10 +68,25 @@ def _serialize_node_response(dbnode: Union[DBNode, NodeResponse]) -> NodeRespons
     node_response = dbnode if isinstance(dbnode, NodeResponse) else NodeResponse.model_validate(dbnode)
     runtime_node = xray.nodes.get(node_response.id)
     if runtime_node:
+        try:
+            runtime_node.refresh_health()
+        except Exception as exc:
+            logger.debug("Unable to refresh node runtime metadata for %s: %s", node_response.id, exc)
         node_response.node_service_version = getattr(runtime_node, "node_version", None)
         node_response.node_install_mode = getattr(runtime_node, "install_mode", None)
         node_response.node_binary_tag = getattr(runtime_node, "node_binary_tag", None)
         node_response.node_update_channel = getattr(runtime_node, "update_channel", None)
+        for attr in (
+            "cpu_cores",
+            "cpu_frequency_hz",
+            "cpu_usage_percent",
+            "memory_used",
+            "memory_total",
+            "memory_usage_percent",
+            "upload_speed",
+            "download_speed",
+        ):
+            setattr(node_response, attr, getattr(runtime_node, attr, None))
     return node_response
 
 
@@ -471,13 +486,13 @@ def get_node_usage_daily(
 
 
 @router.post("/node/{node_id}/xray/update", responses={403: responses._403, 404: responses._404})
-def update_node_core(
+def update_node_runtime(
     node_id: int,
     payload: dict = Body(..., examples={"default": {"version": "v1.8.11"}}),
     dbnode: NodeResponse = Depends(get_node),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Ask a node to update/switch its Xray-core to a specific version, then restart node core."""
+    """Ask a node to update/switch its Xray-core to a specific version, then restart node runtime."""
     require_binary_runtime()
     version = payload.get("version")
     if not version or not isinstance(version, str):
@@ -492,7 +507,7 @@ def update_node_core(
         node_id=node_id,
         node_name=dbnode.name,
         action=lambda: node.update_core(version=version),
-        failure_message=f"Unable to update node core for {dbnode.name}",
+        failure_message=f"Unable to update node runtime for {dbnode.name}",
     )
     startup_config = xray.config.include_db_users()
     xray.operations.restart_node(node_id, startup_config)

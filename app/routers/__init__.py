@@ -3,7 +3,7 @@ from app.utils.request_context import capture_subscription_request_origin
 from . import (
     ads,
     admin,
-    core,
+    runtime,
     node,
     subscription,
     subscription_alias,
@@ -21,7 +21,7 @@ api_router = APIRouter()
 routers = [
     ads.router,
     admin.router,
-    core.router,
+    runtime.router,
     node.router,
     subscription.router,
     system.router,
@@ -35,7 +35,7 @@ routers = [
 ]
 
 for router in routers:
-    if router is core.router:
+    if router is runtime.router:
         api_router.include_router(router)
     else:
         api_router.include_router(router, dependencies=[Depends(capture_subscription_request_origin)])

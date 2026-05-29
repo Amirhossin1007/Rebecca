@@ -142,8 +142,7 @@ def _load_node_metadata() -> dict[int, dict[str, Any]]:
 
 
 def _resolve_assets_base() -> Path:
-    base = getattr(getattr(xray, "core", None), "assets_path", None) or XRAY_ASSETS_PATH
-    return Path(base).expanduser()
+    return Path(XRAY_ASSETS_PATH).expanduser()
 
 
 def get_all_log_sources() -> list[NodeLogSource]:
@@ -161,20 +160,7 @@ def get_all_log_sources() -> list[NodeLogSource]:
 
     sources: list[NodeLogSource] = []
 
-    # Add master xray log
-    master_log = resolve_access_log_path()
-    sources.append(
-        NodeLogSource(
-            node_id=None,
-            node_name="master",
-            log_path=master_log,
-            is_master=True,
-            fetch_lines=None,
-            connected=master_log.exists(),
-        )
-    )
-
-    # Add node logs via REST API
+    # Add node logs via REST API. The master has no local runtime.
     if xray and hasattr(xray, "nodes"):
         node_metadata = _load_node_metadata()
         for node_id, node in xray.nodes.items():
@@ -223,15 +209,7 @@ def resolve_access_log_path() -> Path:
     base_dir = Path(XRAY_LOG_DIR or _resolve_assets_base() or "/var/log").expanduser()
     candidates: list[Path] = []
 
-    # 1) Prefer the actual resolved path used by the running core (if any)
-    try:
-        core_access = getattr(getattr(xray, "core", None), "access_log_path", None)
-        if core_access:
-            candidates.append(Path(core_access).expanduser())
-    except Exception:
-        pass
-
-    # 2) Use the configured log.access value (respecting relative/None/empty)
+    # 1) Use the configured log.access value (respecting relative/None/empty)
     log_config: dict[str, Any] = {}
     try:
         log_config = getattr(getattr(xray, "config", None), "get", lambda *_: {})("log", {}) or {}
@@ -245,7 +223,7 @@ def resolve_access_log_path() -> Path:
     if resolved and resolved.lower() != "none":
         candidates.append(Path(resolved).expanduser())
 
-    # 3) Fallback to conventional system locations
+    # 2) Fallback to conventional system locations
     candidates.extend(
         [
             base_dir / "access.log",

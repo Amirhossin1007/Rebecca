@@ -18,7 +18,6 @@ _PROTO_ROOT = Path(__file__).resolve().parent / "proto"
 if _PROTO_ROOT.exists():
     sys.path.append(str(_PROTO_ROOT))
 from app import runtime
-from app.db import GetDB, crud
 from app.utils.system import register_scheduler_jobs
 
 __version__ = "0.1.3"
@@ -59,9 +58,9 @@ else:
     register_scheduler_jobs(scheduler)
 
     runtime.app = app
-    from app.db.schema import ensure_core_schema
+    from app.db.schema import ensure_runtime_schema
 
-    ensure_core_schema()
+    ensure_runtime_schema()
     allowed_origins = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
     if not allowed_origins:
         allowed_origins = ["*"]
@@ -98,69 +97,6 @@ if not SKIP_RUNTIME_INIT:
 
 
 if not SKIP_RUNTIME_INIT:
-    def _trigger_node_autoconnect(config=None):
-        """
-        Fire-and-forget connect requests for all enabled nodes.
-        Runs on startup to make sure nodes attempt connection even if main core is absent.
-        """
-        if not xray:
-            return
-
-        try:
-            if config is None:
-                config = xray.config.include_db_users()
-        except Exception as e:
-            logger.error(f"Failed to build Xray config for node auto-connect: {e}", exc_info=True)
-            config = None
-
-        try:
-            from app.models.node import NodeStatus
-
-            with GetDB() as db:
-                dbnodes = crud.get_nodes(db=db, enabled=True)
-                node_ids = []
-                for dbnode in dbnodes:
-                    if dbnode.status in (NodeStatus.disabled, NodeStatus.limited):
-                        continue
-                    node_ids.append(dbnode.id)
-                    if dbnode.status not in (NodeStatus.connecting, NodeStatus.connected):
-                        crud.update_node_status(db, dbnode, NodeStatus.connecting)
-
-            for node_id in node_ids:
-                try:
-                    if node_id in xray.nodes and getattr(xray.nodes[node_id], "connected", False):
-                        continue
-                    xray.operations.connect_node(node_id, config)
-                except Exception as e:
-                    logger.error(f"Failed to schedule connect for node {node_id}: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Failed to enqueue node auto-connect: {e}", exc_info=True)
-
-    def _bootstrap_master_core_and_nodes():
-        """
-        Build runtime config, start master core when available, then trigger node connects.
-        This is invoked on startup in addition to the legacy job hook to guarantee ordering.
-        """
-        if not xray:
-            return
-
-        try:
-            config = xray.config.include_db_users()
-        except Exception as e:
-            logger.error(f"Failed to generate Xray config on startup: {e}", exc_info=True)
-            config = None
-
-        if config and getattr(xray, "core", None):
-            if xray.core.available and not xray.core.started:
-                try:
-                    xray.core.start(config)
-                except Exception as e:
-                    logger.error(f"Failed to start master Xray core on startup: {e}", exc_info=True)
-            if xray.core.available and not xray.core.started:
-                logger.error("Master Xray core failed to start; check binary path/config.")
-
-        _trigger_node_autoconnect(config=config)
-
     def on_startup():
         if IS_RUNNING_TESTS:
             return
@@ -174,15 +110,23 @@ if not SKIP_RUNTIME_INIT:
         # Start scheduler first (so server can start quickly)
         scheduler.start()
 
-        # Ensure config is generated, master core is started (when available), and nodes attempt to connect.
+        # Ensure config is generated and enabled nodes attempt to connect.
         try:
-            _bootstrap_master_core_and_nodes()
+            from app.jobs.node_runtime import start_node_runtime
+
+            start_node_runtime()
         except Exception as e:
-            logger.error(f"Failed to bootstrap Xray runtime on startup: {e}", exc_info=True)
+            logger.error(f"Failed to bootstrap node runtime on startup: {e}", exc_info=True)
 
     def on_shutdown():
         if IS_RUNNING_TESTS:
             return
+        try:
+            from app.jobs.node_runtime import shutdown_node_runtime
+
+            shutdown_node_runtime()
+        except Exception as e:
+            logger.error(f"Failed to shutdown node runtime cleanly: {e}", exc_info=True)
         if scheduler:
             scheduler.shutdown()
 

@@ -6,7 +6,6 @@ from functools import partial
 
 from app.db import GetDB
 from app.db.models import Node, OutboundTraffic
-from app.jobs.usage.collectors import get_outbounds_stats
 from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from app.runtime import xray
 from app.utils.outbound import extract_outbound_metadata, generate_outbound_id
@@ -155,18 +154,19 @@ def _is_missing_node_usage_endpoint(exc: Exception) -> bool:
 
 def _collect_node_outbound_stats(node):
     if not hasattr(node, "collect_outbound_stats"):
-        return {"stats": get_outbounds_stats(node.api), "node_batch_id": ""}
+        raise RuntimeError("Node does not support buffered outbound usage collection")
+
     try:
         payload = node.collect_outbound_stats()
-        return {
-            "stats": payload.get("stats") or [],
-            "node_batch_id": payload.get("batch_id") or "",
-        }
     except Exception as exc:
-        if not _is_missing_node_usage_endpoint(exc):
-            raise
+        if _is_missing_node_usage_endpoint(exc):
+            raise RuntimeError("Node does not support buffered outbound usage collection") from exc
+        raise
 
-    return {"stats": get_outbounds_stats(node.api), "node_batch_id": ""}
+    return {
+        "stats": payload.get("stats") or [],
+        "node_batch_id": payload.get("batch_id") or "",
+    }
 
 
 def _ack_node_outbound_batches(node_batches: dict[int, str]) -> None:
@@ -185,25 +185,18 @@ def _ack_node_outbound_batches(node_batches: dict[int, str]) -> None:
 def record_outbound_traffic():
     """Record outbound traffic statistics to database."""
     try:
-        # Collect API instances (master core + nodes)
+        # Collect outbound usage from nodes. Nodes own Xray stats access and keep
+        # reset samples buffered until the master acknowledges a persisted batch.
         collectors = {}
-        try:
-            if getattr(xray.core, "available", False) and getattr(xray.core, "started", False):
-                collectors[None] = partial(get_outbounds_stats, xray.api)
-        except Exception:
-            # Skip master core if it's unavailable; still record from nodes
-            pass
-
-        # Add node API instances
         for node_id, node in list(xray.nodes.items()):
-            if node.connected and node.started:
+            if node.connected:
                 collectors[node_id] = partial(_collect_node_outbound_stats, node)
 
         if not collectors:
-            logger.debug("No Xray API instances available for outbound traffic recording")
+            logger.debug("No connected nodes available for outbound traffic recording")
             return
 
-        # Get outbound stats from all API instances in parallel
+        # Get outbound stats from all nodes in parallel
         api_params = {}
         node_batches = {}
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -217,13 +210,13 @@ def record_outbound_traffic():
                         node_batches[node_id] = node_batch_id
                         result = result.get("stats") or []
                     if node_batch_id:
-                        api_params[node_id] = usage_delivery_buffer.replace_outbound_stats(node_id, result)
+                        api_params[node_id] = usage_delivery_buffer.replace_outbound_stats(
+                            node_id, result, node_batch_id
+                        )
                     else:
                         api_params[node_id] = usage_delivery_buffer.add_outbound_stats(node_id, result)
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to get outbound stats from {'master' if node_id is None else f'node {node_id}'}: {e}"
-                    )
+                    logger.warning(f"Failed to get outbound stats from node {node_id}: {e}")
                     api_params[node_id] = usage_delivery_buffer.pending_outbound_stats(node_id)
 
         if not any(api_params.values()):
@@ -231,7 +224,7 @@ def record_outbound_traffic():
             return
 
         record_outbound_traffic_from_params(api_params)
-        usage_delivery_buffer.ack_outbound_stats_for(api_params.keys())
+        usage_delivery_buffer.ack_outbound_stats_for(api_params.keys(), node_batches)
         _ack_node_outbound_batches(node_batches)
 
     except Exception as e:

@@ -39,6 +39,7 @@ from app.utils import report, responses
 from app.utils.credentials import ensure_user_credential_key
 from app.utils.request_context import get_request_origin, use_subscription_request_origin
 from app.utils.subscription_links import build_subscription_links
+from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
 from app import runtime
 from app.runtime import logger
 from app.services import metrics_service
@@ -1294,11 +1295,7 @@ def perform_users_bulk_action(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
 
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    restart_default_runtimes_and_invalidate_cache(xray.config.include_db_users())
 
     return {"detail": detail, "count": affected}
 

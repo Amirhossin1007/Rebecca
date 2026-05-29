@@ -31,6 +31,7 @@ from app.telegram.utils.shared import (
 )
 from app.utils.store import MemoryStorage
 from app.utils.system import cpu_usage, readable_size, realtime_bandwidth
+from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
 from app.services import TelegramSettingsService
 
 mem_store = MemoryStorage()
@@ -131,7 +132,7 @@ def system_command(call: types.CallbackQuery):
 @bot.callback_query_handler(cb_query_equals("restart"), is_admin=True)
 def restart_command(call: types.CallbackQuery):
     bot.edit_message_text(
-        "⚠️ Are you sure? This will restart Xray core.",
+        "⚠️ Are you sure? This will restart node runtime.",
         call.message.chat.id,
         call.message.message_id,
         reply_markup=BotKeyboard.confirm_action(action="restart"),
@@ -1630,14 +1631,11 @@ def confirm_user_command(call: types.CallbackQuery):
             except ApiTelegramException:
                 pass
     elif data == "restart":
-        m = bot.edit_message_text("🔄 Restarting XRay core...", call.message.chat.id, call.message.message_id)
+        m = bot.edit_message_text("🔄 Restarting node runtime...", call.message.chat.id, call.message.message_id)
         config = xray.config.include_db_users()
-        xray.core.restart(config)
-        for node_id, node in list(xray.nodes.items()):
-            if node.connected:
-                xray.operations.restart_node(node_id, config)
+        restart_default_runtimes_and_invalidate_cache(config)
         bot.edit_message_text(
-            "✅ XRay core restarted successfully.", m.chat.id, m.message_id, reply_markup=BotKeyboard.main_menu()
+            "✅ Node runtime restarted successfully.", m.chat.id, m.message_id, reply_markup=BotKeyboard.main_menu()
         )
 
     elif data in ["charge_add", "charge_reset"]:

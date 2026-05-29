@@ -13,14 +13,9 @@ from app.models.proxy import ProxyHostSecurity
 from app.utils.store import DictStorage
 from app.utils.system import check_port
 from app.reb_node.config import XRayConfig
-from app.reb_node.core import XRayCore
 from app.reb_node.node import XRayNode
-from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH
-from xray_api import XRay as XRayAPI
 from xray_api import exceptions, types
 from xray_api import exceptions as exc  # noqa: F401
-
-core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
 
 api_port = 8080  # Default port
 try:
@@ -41,8 +36,6 @@ except Exception as e:
     logger = logging.getLogger("uvicorn.error")
     logger.warning(f"Failed to load Xray config from database: {e}")
     config = XRayConfig({}, api_port=api_port)
-
-api = XRayAPI(config.api_host, config.api_port)
 
 nodes: Dict[int, XRayNode] = {}
 service_hosts_cache: Dict[Optional[int], Dict[str, list]] = {}

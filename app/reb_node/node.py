@@ -1,4 +1,3 @@
-import os
 import re
 import ssl
 import tempfile
@@ -10,7 +9,6 @@ from contextlib import contextmanager
 from typing import Optional
 from urllib.parse import quote
 
-import grpc
 import requests
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -24,7 +22,29 @@ from websocket import (
 
 from app.reb_node.config import XRayConfig
 from config import NODE_HEALTH_CACHE_SECONDS
-from xray_api import XRay as XRayAPI
+
+
+def _enum_or_raw_value(value):
+    return getattr(value, "value", value)
+
+
+def _account_to_node_payload(proxy_type, account) -> dict:
+    if hasattr(account, "model_dump"):
+        payload = account.model_dump(mode="json")
+    elif hasattr(account, "dict"):
+        payload = account.dict()
+    else:
+        payload = dict(account)
+
+    normalized = {}
+    for key, value in payload.items():
+        normalized[key] = _enum_or_raw_value(value)
+
+    if "ivCheck" in normalized and "iv_check" not in normalized:
+        normalized["iv_check"] = normalized.pop("ivCheck")
+
+    normalized["protocol"] = _enum_or_raw_value(proxy_type)
+    return normalized
 
 
 def string_to_temp_file(content: str):
@@ -102,9 +122,6 @@ def _is_expected_maintenance_disconnect(detail) -> bool:
         "read timed out",
     )
     return any(token in text for token in expected_tokens)
-
-
-_GRPC_PROXY_ENV_LOCK = threading.Lock()
 
 
 def _normalize_proxy_config(proxy: Optional[dict]) -> Optional[dict]:
@@ -188,6 +205,24 @@ def _build_ws_proxy_options(proxy: Optional[dict]) -> dict:
     return options
 
 
+def _as_int(value, default: int | None = None) -> int | None:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value, default: float | None = None) -> float | None:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _extract_certificate_identity(pem_data: str) -> str | None:
     """Extract SAN/CN value from certificate for TLS target override."""
     if not pem_data:
@@ -218,18 +253,6 @@ def _extract_certificate_identity(pem_data: str) -> str | None:
         pass
 
     return None
-
-
-def _select_root_certificate(pem_data: str) -> Optional[bytes]:
-    """
-    Return PEM bytes so gRPC trusts the node certificate (self-signed or custom CA).
-    Previously we only returned certs that were strictly self-signed, which caused
-    TLS handshakes to fail when the node used a custom CA. Supplying the presented
-    cert here lets gRPC validate the connection.
-    """
-    if not pem_data:
-        return None
-    return pem_data.encode("utf-8")
 
 
 def _fetch_cert_from_session(session: requests.Session, url: str) -> Optional[str]:
@@ -282,7 +305,6 @@ class ReSTXRayNode:
         self._proxy = _normalize_proxy_config(proxy)
         self._proxy_url = _build_proxy_url(self._proxy)
         self._ws_proxy_options = _build_ws_proxy_options(self._proxy)
-        self._grpc_channel_options = (("grpc.enable_http_proxy", 1),) if self._proxy_url else None
         self._health_ttl = max(int(NODE_HEALTH_CACHE_SECONDS or 0), 0)
         self._health_cache = {"checked_at": 0.0, "connected": False, "started": False}
         self._health_lock = threading.Lock()
@@ -300,14 +322,20 @@ class ReSTXRayNode:
         self._logs_queues = []
         self._logs_bg_thread = threading.Thread(target=self._bg_fetch_logs, daemon=True)
 
-        self._api = None
         self._started = False
         self.node_version = None
         self.install_mode = None
         self.node_binary_tag = None
         self.update_channel = None
+        self.cpu_cores = None
+        self.cpu_frequency_hz = None
+        self.cpu_usage_percent = None
+        self.memory_used = None
+        self.memory_total = None
+        self.memory_usage_percent = None
+        self.upload_speed = None
+        self.download_speed = None
         self._tls_target_name = "rebeccapanel"
-        self._grpc_root_cert: Optional[bytes] = None
 
     def _apply_service_metadata(self, payload: dict):
         node_version = payload.get("node_version")
@@ -320,6 +348,21 @@ class ReSTXRayNode:
         update_channel = payload.get("update_channel")
         if update_channel:
             self.update_channel = update_channel
+        system = payload.get("system") if isinstance(payload, dict) else None
+        if not isinstance(system, dict):
+            return
+        cpu = system.get("cpu") if isinstance(system.get("cpu"), dict) else {}
+        memory = system.get("memory") if isinstance(system.get("memory"), dict) else {}
+        bandwidth = system.get("bandwidth") if isinstance(system.get("bandwidth"), dict) else {}
+
+        self.cpu_cores = _as_int(cpu.get("cores"), self.cpu_cores)
+        self.cpu_frequency_hz = _as_float(cpu.get("frequency_hz"), self.cpu_frequency_hz)
+        self.cpu_usage_percent = _as_float(cpu.get("usage_percent"), self.cpu_usage_percent)
+        self.memory_used = _as_int(memory.get("used_bytes"), self.memory_used)
+        self.memory_total = _as_int(memory.get("total_bytes"), self.memory_total)
+        self.memory_usage_percent = _as_float(memory.get("usage_percent"), self.memory_usage_percent)
+        self.upload_speed = _as_int(bandwidth.get("upload_bytes_per_second"), self.upload_speed)
+        self.download_speed = _as_int(bandwidth.get("download_bytes_per_second"), self.download_speed)
 
     def _register_runtime_error(self, detail: str) -> None:
         """Best-effort bridge to master error reporting/status handling."""
@@ -377,41 +420,6 @@ class ReSTXRayNode:
             pass
         self.session = self._build_session()
 
-    @contextmanager
-    def _grpc_proxy_env(self):
-        if not self._proxy_url:
-            yield
-            return
-
-        proxy_value = self._proxy_url
-        keys = ["http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
-        with _GRPC_PROXY_ENV_LOCK:
-            saved = {key: os.environ.get(key) for key in keys}
-            try:
-                os.environ["http_proxy"] = proxy_value
-                os.environ["https_proxy"] = proxy_value
-                os.environ["HTTP_PROXY"] = proxy_value
-                os.environ["HTTPS_PROXY"] = proxy_value
-                os.environ.pop("no_proxy", None)
-                os.environ.pop("NO_PROXY", None)
-                yield
-            finally:
-                for key, value in saved.items():
-                    if value is None:
-                        os.environ.pop(key, None)
-                    else:
-                        os.environ[key] = value
-
-    def _create_api(self):
-        with self._grpc_proxy_env():
-            return XRayAPI(
-                address=self.address,
-                port=self.api_port,
-                ssl_cert=self._grpc_root_cert,
-                ssl_target_name=self._tls_target_name,
-                channel_options=self._grpc_channel_options,
-            )
-
     def _check_health(self, *, force: bool = False) -> tuple[bool, bool]:
         now = time.time()
         if not force and self._health_ttl > 0:
@@ -426,14 +434,12 @@ class ReSTXRayNode:
                                     "started": False,
                                 }
                             )
-                        self._api = None
                         self._started = False
                         return False, False
                     return self._health_cache["connected"], self._health_cache["started"]
 
         if not self._session_id:
             self._set_health_cache(False, False)
-            self._api = None
             self._started = False
             return False, False
 
@@ -441,6 +447,7 @@ class ReSTXRayNode:
         started = False
         try:
             res = self.make_request("/", timeout=20)
+            self._apply_service_metadata(res)
             connected = True
             started = bool(res.get("started", False))
         except NodeAPIError:
@@ -457,10 +464,8 @@ class ReSTXRayNode:
             )
         if not connected:
             self._session_id = None
-            self._api = None
             self._started = False
         elif not started:
-            self._api = None
             self._started = False
         else:
             self._started = True
@@ -502,7 +507,6 @@ class ReSTXRayNode:
                     detail_text = detail.lower() if isinstance(detail, str) else ""
                     if res.status_code in (401, 403) or ("session" in detail_text):
                         self._session_id = None
-                        self._api = None
                         self._started = False
                         self._set_health_cache(False, False)
                     if report_runtime_error and "xray is started already" not in detail_text:
@@ -516,7 +520,6 @@ class ReSTXRayNode:
                         self._reset_session()
                         continue
                     self._session_id = None
-                    self._api = None
                     self._started = False
                     self._set_health_cache(False, False)
                     if report_runtime_error:
@@ -525,7 +528,6 @@ class ReSTXRayNode:
                 except Exception as exc:
                     last_exc = exc
                     self._session_id = None
-                    self._api = None
                     self._started = False
                     self._set_health_cache(False, False)
                     if report_runtime_error:
@@ -550,19 +552,6 @@ class ReSTXRayNode:
     def started(self):
         return self._check_health()[1]
 
-    @property
-    def api(self):
-        if not self._session_id:
-            raise ConnectionError("Node is not connected")
-
-        if not self._api:
-            if self._started is True:
-                self._api = self._create_api()
-            else:
-                raise ConnectionError("Node is not started")
-
-        return self._api
-
     def connect(self):
         node_cert = None
         if self._proxy_url:
@@ -583,7 +572,6 @@ class ReSTXRayNode:
         self._node_cert = node_cert
         self._node_certfile = string_to_temp_file(self._node_cert)
         self.session.verify = self._node_certfile.name
-        self._grpc_root_cert = _select_root_certificate(self._node_cert)
         parsed_target = _extract_certificate_identity(self._node_cert)
         if parsed_target:
             self._tls_target_name = parsed_target
@@ -598,7 +586,6 @@ class ReSTXRayNode:
     def disconnect(self):
         self.make_request("/disconnect", timeout=60)
         self._session_id = None
-        self._api = None
         self._started = False
         self._set_health_cache(False, False)
 
@@ -625,20 +612,12 @@ class ReSTXRayNode:
         self._started = True
         self._set_health_cache(True, True)
 
-        self._api = self._create_api()
-
-        try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=100)
-        except grpc.FutureTimeoutError:
-            raise ConnectionError("Failed to connect to node's API")
-
         return res
 
     def stop(self):
         self._ensure_connected()
 
         self.make_request("/stop", timeout=100)
-        self._api = None
         self._started = False
         self._set_health_cache(True, False)
 
@@ -652,13 +631,6 @@ class ReSTXRayNode:
 
         self._started = True
         self._set_health_cache(True, True)
-
-        self._api = self._create_api()
-
-        try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=100)
-        except grpc.FutureTimeoutError:
-            raise ConnectionError("Failed to connect to node's API")
 
         return res
 
@@ -726,7 +698,6 @@ class ReSTXRayNode:
 
             # Maintenance restart can drop this control connection mid-request.
             self._session_id = None
-            self._api = None
             self._started = False
             self._set_health_cache(False, False)
             return {
@@ -750,7 +721,6 @@ class ReSTXRayNode:
 
             # The node service can terminate while systemd replaces/restarts it.
             self._session_id = None
-            self._api = None
             self._started = False
             self._set_health_cache(False, False)
             return {
@@ -765,6 +735,74 @@ class ReSTXRayNode:
         """
         self._ensure_connected()
         self.make_request("/update_geo", timeout=300, files=files)
+
+    def add_inbound_user(self, inbound_tag: str, proxy_type, account):
+        """Add one runtime user to an inbound through the node-side Xray API bridge."""
+        self._ensure_connected()
+        inbound_tag = str(inbound_tag or "").strip()
+        if not inbound_tag:
+            raise NodeAPIError(0, "inbound_tag is required")
+        return self.make_request(
+            "/inbounds/users/add",
+            timeout=75,
+            inbound_tag=inbound_tag,
+            user=_account_to_node_payload(proxy_type, account),
+        )
+
+    def remove_inbound_user(self, inbound_tag: str, email: str):
+        """Remove one runtime user from an inbound through the node-side Xray API bridge."""
+        self._ensure_connected()
+        inbound_tag = str(inbound_tag or "").strip()
+        email = str(email or "").strip()
+        if not inbound_tag:
+            raise NodeAPIError(0, "inbound_tag is required")
+        if not email:
+            raise NodeAPIError(0, "email is required")
+        return self.make_request(
+            "/inbounds/users/remove",
+            timeout=75,
+            inbound_tag=inbound_tag,
+            email=email,
+        )
+
+    def get_x25519(self, private_key: str = None):
+        self._ensure_connected()
+        params = {}
+        if private_key:
+            params["private_key"] = private_key
+        return self.make_request("/helpers/x25519", timeout=60, report_runtime_error=False, **params)
+
+    def get_mldsa65(self):
+        self._ensure_connected()
+        return self.make_request("/helpers/mldsa65", timeout=60, report_runtime_error=False)
+
+    def get_ech_cert(self, server_name: str):
+        self._ensure_connected()
+        return self.make_request(
+            "/helpers/ech",
+            timeout=60,
+            report_runtime_error=False,
+            server_name=str(server_name or "").strip(),
+        )
+
+    def test_outbound(
+        self,
+        outbound_tag: str,
+        all_outbounds: list,
+        outbound_protocol: str = "",
+        test_url: str = "",
+    ) -> dict:
+        self._ensure_connected()
+        response = self.make_request(
+            "/outbounds/test",
+            timeout=45,
+            report_runtime_error=False,
+            outbound_tag=str(outbound_tag or "").strip(),
+            outbound_protocol=str(outbound_protocol or "").strip().lower(),
+            all_outbounds=all_outbounds if isinstance(all_outbounds, list) else [],
+            test_url=str(test_url or "").strip(),
+        )
+        return response if isinstance(response, dict) else {"success": False, "error": "Outbound test failed"}
 
     def collect_outbound_stats(self) -> dict:
         """Collect reset outbound stats through the node-side delivery buffer."""

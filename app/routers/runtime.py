@@ -4,9 +4,7 @@ import json
 import contextlib
 import ipaddress
 import socket
-import subprocess
 import threading
-from copy import deepcopy
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, Body, BackgroundTasks
 from starlette.websockets import WebSocketDisconnect
@@ -16,7 +14,7 @@ from app.services import access_insights
 from app.db import Session, get_db, crud, GetDB
 from app.db.models import OutboundTraffic
 from app.models.admin import Admin, AdminRole
-from app.models.core import CoreStats, ServerIPs
+from app.models.runtime import RuntimeStats, ServerIPs
 from app.utils.xray_logs import normalize_log_chunk, sort_log_lines
 from app.models.warp import (
     WarpAccountResponse,
@@ -30,7 +28,11 @@ from app.utils import responses
 from app.utils.system import get_public_ip, get_public_ipv6
 from app.utils.outbound import extract_outbound_metadata, generate_outbound_id
 from app.models.node import XrayConfigMode
-from app.utils.xray_config import apply_config_and_restart, apply_target_config_and_restart, restart_xray_targets
+from app.utils.xray_config import (
+    apply_runtime_config_and_restart,
+    apply_target_runtime_config_and_restart,
+    restart_runtime_targets,
+)
 from app.utils.xray_targets import (
     MASTER_TARGET_ID,
     get_target_raw_config,
@@ -40,60 +42,37 @@ from app.utils.xray_targets import (
     set_node_xray_config_mode,
     get_node_effective_raw_config,
 )
-from app.utils.binary_control import require_binary_runtime
-
 import os
-import shutil
-import tempfile
-from pathlib import Path
 import requests
-import platform
-import zipfile
-import io
-import stat
 from urllib.parse import urlparse
 
-router = APIRouter(tags=["Core"], prefix="/api", responses={401: responses._401})
+router = APIRouter(tags=["Runtime"], prefix="/api", responses={401: responses._401})
 
 GITHUB_RELEASES = "https://api.github.com/repos/XTLS/Xray-core/releases"
 GEO_TEMPLATES_INDEX_DEFAULT = "https://raw.githubusercontent.com/ppouria/geo-templates/main/index.json"
 OUTBOUND_TEST_DEFAULT_URL = "https://www.google.com/generate_204"
 _OUTBOUND_TEST_LOCK = threading.Lock()
 _ALLOWED_GEO_FILENAMES = {"geoip.dat", "geosite.dat"}
-_XRAY_ARCHIVE_MEMBERS = {
-    "xray": "xray",
-    "Xray": "Xray",
-    "xray.exe": "xray.exe",
-    "Xray.exe": "Xray.exe",
-    "geoip.dat": "geoip.dat",
-    "geosite.dat": "geosite.dat",
-    "LICENSE": "LICENSE",
-    "README.md": "README.md",
-}
 
 
-def _validate_release_tag(tag: str) -> str:
-    tag = (tag or "").strip()
-    if len(tag) > 64 or not tag.startswith("v"):
-        raise HTTPException(status_code=422, detail="Invalid Xray release tag")
+def _select_runtime_log_source(node_id_raw: str | None = None):
+    node_id_raw = (node_id_raw or "").strip()
+    if node_id_raw:
+        try:
+            node_id = int(node_id_raw)
+        except ValueError as exc:
+            raise ValueError("Invalid node_id") from exc
+        node = getattr(xray, "nodes", {}).get(node_id)
+        if not node:
+            raise ValueError("Node not found")
+        if not getattr(node, "connected", False):
+            raise ValueError("Node is not connected")
+        return node
 
-    allowed_suffix_chars = set("-+._") | set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-    rest = tag[1:]
-    for index in range(3):
-        digits = []
-        while rest and rest[0].isdigit():
-            digits.append(rest[0])
-            rest = rest[1:]
-        if not digits or len(digits) > 5:
-            raise HTTPException(status_code=422, detail="Invalid Xray release tag")
-        if index < 2:
-            if not rest.startswith("."):
-                raise HTTPException(status_code=422, detail="Invalid Xray release tag")
-            rest = rest[1:]
-
-    if len(rest) > 48 or any(char not in allowed_suffix_chars for char in rest):
-        raise HTTPException(status_code=422, detail="Invalid Xray release tag")
-    return tag
+    for node in list(getattr(xray, "nodes", {}).values()):
+        if getattr(node, "connected", False):
+            return node
+    raise ValueError("No connected node is available for logs")
 
 
 def _validate_download_url(url: str, *, field_name: str = "url") -> str:
@@ -149,18 +128,6 @@ def _safe_geo_filename(name: str) -> str:
     )
 
 
-def _safe_xray_archive_member(name: str) -> str | None:
-    normalized = (name or "").replace("\\", "/").strip()
-    parts = [part for part in normalized.split("/") if part]
-    if not parts:
-        return None
-    if normalized.startswith("/") or any(part == ".." for part in parts):
-        raise HTTPException(status_code=400, detail="Unsafe path in Xray archive")
-    if len(parts) != 1:
-        return None
-    return _XRAY_ARCHIVE_MEMBERS.get(parts[0])
-
-
 def _resolve_template_files(template_index_url: str, template_name: str) -> list[dict]:
     """
     Fetch template index and return file list. If template_name is empty, pick the first template.
@@ -187,105 +154,20 @@ def _resolve_template_files(template_index_url: str, template_name: str) -> list
     return files
 
 
-def _detect_asset_name() -> str:
-    sys_name = platform.system().lower()
-    arch = platform.machine().lower()
-    if sys_name.startswith("linux"):
-        if arch in ("x86_64", "amd64"):
-            return "Xray-linux-64.zip"
-        if arch in ("aarch64", "arm64"):
-            return "Xray-linux-arm64-v8a.zip"
-        if arch in ("armv7l", "armv7"):
-            return "Xray-linux-arm32-v7a.zip"
-        if arch in ("armv6l",):
-            return "Xray-linux-arm32-v6.zip"
-        if arch in ("riscv64",):
-            return "Xray-linux-riscv64.zip"
-    raise HTTPException(status_code=400, detail="Unsupported platform for Xray update")
-
-
-def _install_xray_zip(zip_bytes: bytes, target_dir: Path) -> Path:
-    """Extract Xray archive safely and return the executable path."""
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
-            for member in archive.infolist():
-                output_name = _safe_xray_archive_member(member.filename)
-                if not output_name:
-                    continue
-                output_path = tmp_path / output_name
-                if member.is_dir():
-                    continue
-                with archive.open(member) as source, output_path.open("wb") as destination:
-                    shutil.copyfileobj(source, destination)
-
-        candidates = [
-            tmp_path / "xray",
-            tmp_path / "Xray",
-            tmp_path / "xray.exe",
-            tmp_path / "Xray.exe",
-        ]
-        exe_tmp = next((path for path in candidates if path.exists()), None)
-        if exe_tmp is None:
-            raise HTTPException(status_code=500, detail="xray binary not found in archive")
-
-        # Copy other assets first (README, LICENSE, geo files if shipped)
-        for item in tmp_path.iterdir():
-            if item.name.lower().startswith("xray"):
-                continue
-            dest = target_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, dest)
-
-        # Atomically swap the executable to avoid ETXTBSY while the old binary is in use.
-        dest_exe = target_dir / exe_tmp.name
-        temp_exe = dest_exe.with_name(dest_exe.name + ".new")
-        shutil.copy2(exe_tmp, temp_exe)
-        os.replace(temp_exe, dest_exe)
-
-    try:
-        dest_exe.chmod(dest_exe.stat().st_mode | stat.S_IEXEC)
-    except Exception:
-        pass
-
-    return dest_exe
-
-
-def _download_geo_files(dest: Path, files: list[dict]) -> list[dict]:
-    """Download geo files into dest and return saved metadata."""
-    dest.mkdir(parents=True, exist_ok=True)
-    saved = []
+def _validate_geo_files(files: list[dict]) -> list[dict]:
+    """Validate geo file metadata before forwarding it to nodes."""
+    validated = []
     for item in files:
         name = _safe_geo_filename(item.get("name") or "")
         url = _validate_download_url(item.get("url") or "")
         if not name or not url:
             raise HTTPException(status_code=422, detail="Each file must include name and url.")
-        try:
-            r = requests.get(url, timeout=120)
-            r.raise_for_status()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to download {name}: {exc}")
-        try:
-            if name == "geoip.dat":
-                path = (dest / "geoip.dat").resolve()
-            elif name == "geosite.dat":
-                path = (dest / "geosite.dat").resolve()
-            else:
-                raise HTTPException(status_code=422, detail="Invalid geo file path")
-            path.write_bytes(r.content)
-            saved.append({"name": name, "path": str(path)})
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to save {name}: {exc}")
-    return saved
+        validated.append({"name": name, "url": url})
+    return validated
 
 
 @router.websocket("/core/logs")
-async def core_logs(websocket: WebSocket):
+async def runtime_logs(websocket: WebSocket):
     token = websocket.query_params.get("token") or websocket.headers.get("Authorization", "").removeprefix("Bearer ")
     with GetDB() as db:
         admin = Admin.get_admin(token, db)
@@ -303,6 +185,11 @@ async def core_logs(websocket: WebSocket):
             return await websocket.close(reason="Invalid interval value", code=4400)
         if interval > 10:
             return await websocket.close(reason="Interval must be more than 0 and at most 10 seconds", code=4400)
+
+    try:
+        logs_source = _select_runtime_log_source(websocket.query_params.get("node_id"))
+    except ValueError as exc:
+        return await websocket.close(reason=str(exc), code=4404)
 
     await websocket.accept()
 
@@ -322,7 +209,7 @@ async def core_logs(websocket: WebSocket):
         last_sent_ts = time.time()
         return True
 
-    with xray.core.get_logs() as logs:
+    with logs_source.get_logs() as logs:
         while True:
             if interval and time.time() - last_sent_ts >= interval and cache:
                 if not await _flush_cache():
@@ -364,19 +251,16 @@ def get_access_insights(
     admin: Admin = Depends(Admin.get_current),
 ):
     """
-    Return recent access log entries enriched with geosite/geoip labels.
-    LEGACY: Use /core/access/insights/multi-node for better performance and node support.
+    Return recent node access log entries enriched with geosite/geoip labels.
+    Master has no local access log anymore, so this legacy route is node-only.
     """
     try:
-        payload = access_insights.build_access_insights(
+        payload = access_insights.build_multi_node_insights(
             limit=limit, lookback_lines=lookback, search=search, window_seconds=window_seconds
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    # Graceful return when log is missing
-    if payload.get("error") == "access_log_missing":
-        return payload
     return payload
 
 
@@ -391,7 +275,7 @@ def get_multi_node_access_insights(
     admin: Admin = Depends(Admin.get_current),
 ):
     """
-    Return access insights from all nodes (master + connected nodes).
+    Return access insights from connected nodes.
     Optimized for lower RAM/CPU usage.
 
     Args:
@@ -407,8 +291,6 @@ def get_multi_node_access_insights(
         if node_ids:
             try:
                 node_id_list = [int(nid.strip()) for nid in node_ids.split(",") if nid.strip()]
-                if not any(nid is None for nid in node_id_list):
-                    node_id_list.append(None)  # Include master
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid node_ids format")
 
@@ -567,13 +449,23 @@ async def access_logs_ws(websocket: WebSocket):
             await websocket.close()
 
 
-@router.get("/core", response_model=CoreStats)
-def get_core_stats(admin: Admin = Depends(Admin.get_current)):
-    """Retrieve core statistics such as version and uptime."""
-    return CoreStats(
-        version=xray.core.version,
-        started=xray.core.started,
-        logs_websocket=router.url_path_for("core_logs"),
+@router.get("/core", response_model=RuntimeStats)
+def get_runtime_stats(admin: Admin = Depends(Admin.get_current)):
+    """Retrieve aggregate node runtime status."""
+    started = False
+    version = None
+    for node in list(getattr(xray, "nodes", {}).values()):
+        try:
+            if node.connected and node.started:
+                started = True
+                version = getattr(node, "node_version", None) or version
+                break
+        except Exception:
+            continue
+    return RuntimeStats(
+        version=version,
+        started=started,
+        logs_websocket=router.url_path_for("runtime_logs"),
     )
 
 
@@ -587,52 +479,52 @@ def get_server_ips(admin: Admin = Depends(Admin.get_current)):
 
 
 @router.post("/core/restart", responses={403: responses._403})
-def restart_core(
+def queue_runtime_restart(
     bg: BackgroundTasks,
     target: str | None = None,
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Restart the selected core target."""
+    """Restart the selected runtime target."""
     if target:
         kind, node_id = parse_target_id(target)
         if kind != MASTER_TARGET_ID and not crud.get_node_by_id(db, node_id):
             raise HTTPException(status_code=404, detail="Node not found")
 
     def _restart():
-        restart_xray_targets({target} if target else None)
+        restart_runtime_targets({target} if target else None)
 
     bg.add_task(_restart)
 
-    return {"detail": "Core restart queued"}
+    return {"detail": "Runtime restart queued"}
 
 
 @router.get("/core/config", responses={403: responses._403})
-def get_core_config(
+def get_runtime_config(
     target: str = MASTER_TARGET_ID,
     admin: Admin = Depends(Admin.check_sudo_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Get the current core configuration."""
+    """Get the current runtime configuration."""
     return get_target_raw_config(db, target)
 
 
 @router.put("/core/config", responses={403: responses._403})
-def modify_core_config(
+def modify_runtime_config(
     payload: dict,
     target: str = MASTER_TARGET_ID,
     admin: Admin = Depends(Admin.check_sudo_admin),
 ) -> dict:
-    """Modify the core configuration and restart the core."""
+    """Modify the runtime configuration and restart the target runtime."""
     if target == MASTER_TARGET_ID:
-        apply_config_and_restart(payload)
+        apply_runtime_config_and_restart(payload)
     else:
-        apply_target_config_and_restart(target, payload)
+        apply_target_runtime_config_and_restart(target, payload)
     return payload
 
 
 @router.get("/core/config/targets", responses={403: responses._403})
-def get_core_config_targets(
+def get_runtime_config_targets(
     admin: Admin = Depends(Admin.check_sudo_admin),
     db: Session = Depends(get_db),
 ):
@@ -656,37 +548,15 @@ def modify_node_config_mode(
     set_node_xray_config_mode(db, node_id, mode)
 
     def _restart():
-        restart_xray_targets({node_target_id(node_id)})
+        restart_runtime_targets({node_target_id(node_id)})
 
     bg.add_task(_restart)
     return {"target": node_target_id(node_id), "mode": mode.value}
 
 
-def _update_env_envfile(env_path: Path, key: str, value: str) -> str:
-    """Update .env key=value if active, skip if commented, return effective value."""
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.touch(exist_ok=True)
-    lines = env_path.read_text(encoding="utf-8").splitlines()
-    found = False
-
-    for i, ln in enumerate(lines):
-        stripped = ln.strip()
-        # active key
-        if stripped.startswith(f"{key}="):
-            lines[i] = f'{key}="{value}"'
-            found = True
-            break
-
-    if not found:
-        lines.append(f'{key}="{value}"')
-
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return value
-
-
 @router.get("/core/xray/releases", responses={403: responses._403})
 def list_xray_releases(limit: int = 10, admin: Admin = Depends(Admin.check_sudo_admin)):
-    """List latest Xray-core tags"""
+    """List latest Xray-core tags for node update workflows."""
     try:
         r = requests.get(f"{GITHUB_RELEASES}?per_page={max(1, min(limit, 50))}", timeout=30)
         r.raise_for_status()
@@ -698,93 +568,12 @@ def list_xray_releases(limit: int = 10, admin: Admin = Depends(Admin.check_sudo_
 
 
 @router.post("/core/xray/update", responses={403: responses._403})
-def update_core_version(
+def update_node_runtime_version(
     payload: dict = Body(..., examples={"default": {"version": "v1.8.11", "persist_env": True}}),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Update the local Xray core binary in binary/host installs."""
-    require_binary_runtime()
-    tag = payload.get("version")
-    if not tag or not isinstance(tag, str):
-        raise HTTPException(422, detail="version is required (e.g. v1.8.11)")
-    tag = _validate_release_tag(tag)
-
-    persist_env = bool(payload.get("persist_env", True))
-
-    asset_name = _detect_asset_name()
-    url = _validate_download_url(
-        f"https://github.com/XTLS/Xray-core/releases/download/{tag}/{asset_name}",
-        field_name="release_url",
-    )
-    try:
-        resp = requests.get(url, timeout=180)
-        resp.raise_for_status()
-    except Exception as exc:
-        raise HTTPException(502, detail=f"Failed to download Xray release: {exc}")
-
-    data_dir = Path(os.getenv("REBECCA_DATA_DIR", "/var/lib/rebecca")).resolve()
-    base_dir = (data_dir / "xray-core").resolve()
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    if xray.core.started:
-        try:
-            xray.core.stop()
-        except Exception:
-            pass
-
-    exe_path = _install_xray_zip(resp.content, base_dir)
-
-    if persist_env:
-        env_targets = [Path(".env"), data_dir / ".env"]
-        for env_path in env_targets:
-            try:
-                _update_env_envfile(env_path, "XRAY_EXECUTABLE_PATH", str(exe_path))
-                _update_env_envfile(env_path, "XRAY_ASSETS_PATH", str(base_dir))
-            except Exception:
-                pass
-
-    xray.core.executable_path = str(exe_path)
-    xray.core.assets_path = str(base_dir)
-    xray.core._env["XRAY_LOCATION_ASSET"] = str(base_dir)
-    try:
-        xray.core.version = xray.core.get_version()
-    except Exception:
-        pass
-
-    return {
-        "detail": f"Core assets updated to {tag}. Restart Xray to apply the new binary.",
-        "version": xray.core.version,
-    }
-
-
-def _resolve_assets_path_master(persist_env: bool) -> Path:
-    """Resolve and persist assets directory for master."""
-    data_dir = Path(os.getenv("REBECCA_DATA_DIR", "/var/lib/rebecca")).resolve()
-    target = (data_dir / "xray-core").resolve()
-    if persist_env:
-        for env_path in (Path(".env"), data_dir / ".env"):
-            try:
-                _update_env_envfile(env_path, "XRAY_ASSETS_PATH", str(target))
-            except Exception:
-                pass
-
-    target.mkdir(parents=True, exist_ok=True)
-
-    system_default = Path("/usr/local/share/xray")
-    try:
-        if system_default.exists() or system_default.is_symlink():
-            if system_default.resolve() != target:
-                if system_default.is_symlink() or system_default.is_file():
-                    system_default.unlink()
-                elif system_default.is_dir():
-                    pass
-        if not system_default.exists():
-            system_default.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(str(target), str(system_default))
-    except Exception:
-        pass
-
-    return target
+    """Deprecated: master no longer owns a local runtime."""
+    raise HTTPException(status_code=410, detail="Master runtime is node-only; update nodes instead.")
 
 
 @router.get("/core/geo/templates", responses={403: responses._403})
@@ -841,7 +630,6 @@ def apply_geo_assets(
     db: Session = Depends(get_db),
 ):
     """Download and apply geo assets."""
-    require_binary_runtime()
     mode = (payload.get("mode") or "default").strip().lower()
     files = payload.get("files") or []
 
@@ -855,19 +643,17 @@ def apply_geo_assets(
     if not files or not isinstance(files, list):
         raise HTTPException(422, detail="'files' must be a non-empty list of {name,url}.")
 
-    persist_env = bool(payload.get("persist_env", payload.get("persistEnv", True)))
-    apply_to_nodes = bool(payload.get("apply_to_nodes", payload.get("applyToNodes", False)))
+    apply_to_nodes = bool(payload.get("apply_to_nodes", payload.get("applyToNodes", True)))
     skip_node_ids = set(payload.get("skip_node_ids") or payload.get("skipNodeIds") or [])
 
-    master_assets_dir = _resolve_assets_path_master(persist_env=persist_env)
-    saved = _download_geo_files(master_assets_dir, files)
-    xray.core.assets_path = str(master_assets_dir)
-    xray.core._env["XRAY_LOCATION_ASSET"] = str(master_assets_dir)
+    if not apply_to_nodes:
+        raise HTTPException(status_code=409, detail="Master has no local runtime; enable apply_to_nodes.")
 
+    files = _validate_geo_files(files)
     startup_config = xray.config.include_db_users()
 
     results = {
-        "master": {"assets_path": str(master_assets_dir), "files": len(saved)},
+        "master": {"status": "node-only"},
         "nodes": {},
     }
     if apply_to_nodes:
@@ -911,7 +697,7 @@ def update_geo_assets(
                 "templateName": "standard",
                 "files": [],
                 "persistEnv": True,
-                "applyToNodes": False,
+                "applyToNodes": True,
                 "skipNodeIds": [],
             }
         },
@@ -931,7 +717,7 @@ def update_geo_assets(
         or GEO_TEMPLATES_INDEX_DEFAULT,
         "template_name": payload.get("template_name") or payload.get("templateName") or "",
         "persist_env": payload.get("persist_env", payload.get("persistEnv", True)),
-        "apply_to_nodes": payload.get("apply_to_nodes", payload.get("applyToNodes", False)),
+        "apply_to_nodes": payload.get("apply_to_nodes", payload.get("applyToNodes", True)),
         "skip_node_ids": payload.get("skip_node_ids") or payload.get("skipNodeIds") or [],
     }
     return apply_geo_assets(normalized_payload, admin, db)
@@ -1061,229 +847,34 @@ def _extract_outbound_test_payload(payload: dict) -> tuple[dict, list]:
     return outbound, all_outbounds
 
 
-def _find_available_test_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
-
-
-def _collect_process_output(process: subprocess.Popen, timeout_seconds: float = 1.0) -> str:
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        return ""
-    except ValueError:
-        return ""
-    output_parts = [part.strip() for part in (stdout, stderr) if isinstance(part, str) and part.strip()]
-    return " | ".join(output_parts)
-
-
-def _wait_for_test_port(
-    process: subprocess.Popen,
-    port: int,
-    timeout_seconds: float = 3.0,
-) -> tuple[bool, str]:
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        if process.poll() is not None:
-            _collect_process_output(process)
-            return False, "Xray test instance exited before it was ready"
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                return True, ""
-        except OSError:
-            time.sleep(0.05)
-    return False, "Xray test instance did not become ready"
-
-
-def _stop_test_process(process: subprocess.Popen) -> None:
-    if process.poll() is not None:
-        _collect_process_output(process)
-        return
-    try:
-        process.terminate()
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        with contextlib.suppress(Exception):
-            process.wait(timeout=1)
-    except Exception:
-        with contextlib.suppress(Exception):
-            process.kill()
-    finally:
-        _collect_process_output(process)
-
-
-def _build_outbound_test_config(outbound_tag: str, all_outbounds: list, test_port: int) -> dict:
-    processed_outbounds = []
-    for outbound in deepcopy(all_outbounds):
-        if not isinstance(outbound, dict):
-            processed_outbounds.append(outbound)
-            continue
-        protocol = str(outbound.get("protocol") or "").strip().lower()
-        if protocol == "wireguard":
-            settings = outbound.get("settings")
-            if isinstance(settings, dict):
-                settings["noKernelTun"] = True
-            else:
-                outbound["settings"] = {"noKernelTun": True}
-        processed_outbounds.append(outbound)
-
-    return {
-        "log": {
-            "loglevel": "warning",
-            "access": "none",
-            "error": "none",
-            "dnsLog": False,
-        },
-        "inbounds": [
-            {
-                "tag": "test-inbound",
-                "listen": "127.0.0.1",
-                "port": test_port,
-                "protocol": "socks",
-                "settings": {"auth": "noauth", "udp": True},
-            }
-        ],
-        "outbounds": processed_outbounds,
-        "routing": {
-            "domainStrategy": "AsIs",
-            "rules": [
-                {
-                    "type": "field",
-                    "outboundTag": outbound_tag,
-                    "network": "tcp,udp",
-                }
-            ],
-        },
-        "policy": {},
-        "stats": {},
-    }
-
-
-def _measure_outbound_delay(proxy_port: int, test_url: str) -> tuple[int, int]:
-    proxy_url = f"socks5h://127.0.0.1:{proxy_port}"
-    session = requests.Session()
-    session.trust_env = False
-    session.proxies.update({"http": proxy_url, "https": proxy_url})
-    session.headers.update({"Accept-Encoding": "identity"})
-    try:
-        warmup_response = session.get(test_url, timeout=10)
-        _ = warmup_response.content
-        warmup_response.close()
-
-        start = time.perf_counter()
-        response = session.get(test_url, timeout=10)
-        delay_ms = int(round((time.perf_counter() - start) * 1000))
-        status_code = response.status_code
-        _ = response.content
-        response.close()
-        return delay_ms, status_code
-    except requests.RequestException as exc:
-        raise RuntimeError("Request failed") from exc
-    finally:
-        session.close()
-
-
-def _measure_direct_delay(test_url: str) -> tuple[int, int]:
-    session = requests.Session()
-    session.trust_env = False
-    session.headers.update({"Accept-Encoding": "identity"})
-    try:
-        warmup_response = session.get(test_url, timeout=10)
-        _ = warmup_response.content
-        warmup_response.close()
-
-        start = time.perf_counter()
-        response = session.get(test_url, timeout=10)
-        delay_ms = int(round((time.perf_counter() - start) * 1000))
-        status_code = response.status_code
-        _ = response.content
-        response.close()
-        return delay_ms, status_code
-    except requests.RequestException as exc:
-        raise RuntimeError("Direct request failed") from exc
-    finally:
-        session.close()
-
-
 def _get_outbound_test_url() -> str:
     return (os.getenv("XRAY_OUTBOUND_TEST_URL", "") or "").strip() or OUTBOUND_TEST_DEFAULT_URL
 
 
-def _run_outbound_ping_test(outbound_tag: str, all_outbounds: list, outbound_protocol: str = "") -> dict:
-    # Fast path for direct/freedom: no isolated test-xray process required.
-    if (outbound_protocol or "").strip().lower() in {"freedom"} or outbound_tag.lower() == "direct":
+def _run_node_outbound_ping_test(outbound_tag: str, all_outbounds: list, outbound_protocol: str = "") -> dict | None:
+    for node_id, node in list(getattr(xray, "nodes", {}).items()):
         try:
-            delay, status_code = _measure_direct_delay(_get_outbound_test_url())
-            return {"success": True, "delay": delay, "statusCode": status_code}
-        except RuntimeError:
-            return {"success": False, "error": "Direct request failed"}
+            if not node.connected:
+                continue
+            result = node.test_outbound(
+                outbound_tag=outbound_tag,
+                all_outbounds=all_outbounds,
+                outbound_protocol=outbound_protocol,
+                test_url=_get_outbound_test_url(),
+            )
+            if isinstance(result, dict):
+                return result
+        except Exception as exc:
+            logger.warning("Node %s failed to run outbound test: %s", node_id, exc)
+    return None
 
-    if not xray or not getattr(xray, "core", None):
-        return {"success": False, "error": "Xray runtime is not available"}
 
-    core = xray.core
-    if not getattr(core, "available", False):
-        return {"success": False, "error": "Xray core is not available"}
+def _run_outbound_ping_test(outbound_tag: str, all_outbounds: list, outbound_protocol: str = "") -> dict:
+    node_result = _run_node_outbound_ping_test(outbound_tag, all_outbounds, outbound_protocol)
+    if node_result is not None:
+        return node_result
 
-    executable_path = str(getattr(core, "executable_path", "") or "").strip()
-    if not executable_path:
-        return {"success": False, "error": "Xray executable path is not configured"}
-
-    try:
-        test_port = _find_available_test_port()
-    except OSError:
-        return {"success": False, "error": "Failed to find available test port"}
-
-    test_config = _build_outbound_test_config(outbound_tag, all_outbounds, test_port)
-    process = None
-    try:
-        process_env = os.environ.copy()
-        core_env = getattr(core, "_env", None)
-        if isinstance(core_env, dict):
-            process_env.update({str(key): str(value) for key, value in core_env.items() if value is not None})
-        assets_path = str(getattr(core, "assets_path", "") or "").strip()
-        if assets_path:
-            process_env["XRAY_LOCATION_ASSET"] = assets_path
-
-        process = subprocess.Popen(
-            [executable_path, "run", "-config", "stdin:"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=process_env,
-        )
-
-        if process.stdin is None:
-            return {"success": False, "error": "Failed to create stdin pipe for test Xray process"}
-        process.stdin.write(json.dumps(test_config))
-        process.stdin.flush()
-        process.stdin.close()
-
-        ready, ready_error = _wait_for_test_port(process, test_port, timeout_seconds=3.0)
-        if not ready:
-            return {"success": False, "error": ready_error}
-
-        delay, status_code = _measure_outbound_delay(test_port, _get_outbound_test_url())
-        return {
-            "success": True,
-            "delay": delay,
-            "statusCode": status_code,
-        }
-    except FileNotFoundError:
-        logger.warning("Failed to start test xray instance: executable not found", exc_info=True)
-        return {"success": False, "error": "Failed to start test xray instance"}
-    except RuntimeError:
-        logger.warning("Outbound connectivity test request failed", exc_info=True)
-        return {"success": False, "error": "Request failed"}
-    except Exception:
-        logger.warning("Outbound test failed", exc_info=True)
-        return {"success": False, "error": "Outbound test failed"}
-    finally:
-        if process is not None:
-            _stop_test_process(process)
+    return {"success": False, "error": "No connected node is available for outbound test"}
 
 
 def _public_outbound_test_result(result: dict) -> dict:
@@ -1297,26 +888,8 @@ def _public_outbound_test_result(result: dict) -> dict:
         }
 
     error = result.get("error")
-    if error == "Xray runtime is not available":
-        return {"success": False, "error": "Xray runtime is not available"}
-    if error == "Xray core is not available":
-        return {"success": False, "error": "Xray core is not available"}
-    if error == "Xray executable path is not configured":
-        return {"success": False, "error": "Xray executable path is not configured"}
-    if error == "Failed to create stdin pipe for test Xray process":
-        return {"success": False, "error": "Failed to create stdin pipe for test Xray process"}
-    if error == "Failed to find available test port":
-        return {"success": False, "error": "Failed to find available test port"}
-    if error == "Xray test instance exited before it was ready":
-        return {"success": False, "error": "Xray test instance exited before it was ready"}
-    if error == "Xray test instance did not become ready":
-        return {"success": False, "error": "Xray test instance did not become ready"}
-    if error == "Request failed":
-        return {"success": False, "error": "Request failed"}
-    if error == "Direct request failed":
-        return {"success": False, "error": "Direct request failed"}
-    if error == "Failed to start test xray instance":
-        return {"success": False, "error": "Failed to start test xray instance"}
+    if error == "No connected node is available for outbound test":
+        return {"success": False, "error": "No connected node is available for outbound test"}
     return {"success": False, "error": "Outbound test failed"}
 
 
@@ -1359,7 +932,7 @@ def test_outbound(
             },
         }
 
-    return {"success": True, "obj": {"success": False, "error": "Outbound test failed"}}
+    return {"success": True, "obj": _public_outbound_test_result(result)}
 
 
 def _iter_outbound_config_targets(db: Session) -> list[tuple[str, int | None, str, dict]]:

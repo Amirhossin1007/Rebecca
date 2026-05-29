@@ -156,6 +156,29 @@ const convertLimitInputToBytes = (value: string): number | null | undefined => {
 	return Math.round(numeric * BYTES_IN_GB);
 };
 
+const formatNodeBytes = (value?: number | null, precision = 2) =>
+	value !== null && value !== undefined ? formatBytes(value, precision) : "-";
+
+const formatNodePercent = (value?: number | null) =>
+	value !== null && value !== undefined && Number.isFinite(value)
+		? `${Math.round(value * 10) / 10}%`
+		: "-";
+
+const formatCPUFrequency = (value?: number | null) => {
+	if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+		return "-";
+	}
+	return `${Math.round((value / 1_000_000_000) * 100) / 100} GHz`;
+};
+
+const formatNodeLimit = (value?: number | null) =>
+	value !== null && value !== undefined && value > 0
+		? formatBytes(value, 2)
+		: "Unlimited";
+
+const formatNodeSpeed = (value?: number | null) =>
+	value !== null && value !== undefined ? `${formatBytes(value, 2)}/s` : "-";
+
 interface CoreStatsResponse {
 	version: string | null;
 	started: string | null;
@@ -1542,6 +1565,29 @@ export const NodesPage: FC = () => {
 								hostActionsAvailable && node.node_install_mode === "binary";
 							const nodeRuntimeVersion =
 								node.node_binary_tag || node.node_service_version;
+							const nodeInstallLabel =
+								[node.node_install_mode, node.node_update_channel]
+									.filter(Boolean)
+									.join(" / ") || "-";
+							const nodeTotalUsage = (node.uplink ?? 0) + (node.downlink ?? 0);
+							const nodeTrafficLimitDisplay = `${formatNodeBytes(
+								nodeTotalUsage,
+								2,
+							)} / ${
+								node.data_limit != null && node.data_limit > 0
+									? formatNodeLimit(node.data_limit)
+									: t("nodes.unlimited", "Unlimited")
+							}`;
+							const nodeCPUDisplay = `${formatCPUFrequency(
+								node.cpu_frequency_hz,
+							)} / ${formatNodePercent(node.cpu_usage_percent)}`;
+							const nodeRAMDisplay = `${formatNodeBytes(
+								node.memory_used,
+								2,
+							)} / ${formatNodeBytes(node.memory_total, 2)}`;
+							const nodeBandwidthDisplay = `${formatNodeSpeed(
+								node.upload_speed,
+							)} / ${formatNodeSpeed(node.download_speed)}`;
 							const statusBadge = (
 								<NodeModalStatusBadge status={status} compact />
 							);
@@ -1577,6 +1623,7 @@ export const NodesPage: FC = () => {
 											<Text fontWeight="semibold" fontSize="lg">
 												{node.name || t("nodes.unnamedNode", "Unnamed node")}
 											</Text>
+											{statusDisplay}
 											<Switch
 												size="sm"
 												colorScheme="primary"
@@ -1601,37 +1648,24 @@ export const NodesPage: FC = () => {
 											)}
 										</HStack>
 										<HStack spacing={2} flexWrap="wrap">
-											{statusDisplay}
-											<HStack spacing={1} align="center">
-												<Tag colorScheme="blue" size="sm">
-													{node.xray_version
-														? `Xray ${node.xray_version}`
-														: t("nodes.versionUnknown", "Version unknown")}
-												</Tag>
-												<Tag colorScheme="green" size="sm">
-													{nodeRuntimeVersion
-														? t("nodes.nodeServiceVersionTag", {
-																version: nodeRuntimeVersion,
-															})
-														: t(
-																"nodes.nodeServiceVersionUnknown",
-																"Node version unknown",
-															)}
-												</Tag>
-												<Button
-													size="xs"
-													variant="ghost"
-													colorScheme="primary"
-													onClick={() =>
-														nodeId &&
-														setVersionDialogTarget({ type: "node", node })
-													}
-													isLoading={isCoreUpdating}
-													isDisabled={!nodeId || !nodeHostActionsAvailable}
-												>
-													{t("nodes.updateCoreAction")}
-												</Button>
-											</HStack>
+											<Tag colorScheme="blue" size="sm">
+												{node.xray_version
+													? `Xray ${node.xray_version}`
+													: t("nodes.versionUnknown", "Version unknown")}
+											</Tag>
+											<Button
+												size="xs"
+												variant="ghost"
+												colorScheme="primary"
+												onClick={() =>
+													nodeId &&
+													setVersionDialogTarget({ type: "node", node })
+												}
+												isLoading={isCoreUpdating}
+												isDisabled={!nodeId || !nodeHostActionsAvailable}
+											>
+												{t("nodes.updateCoreAction")}
+											</Button>
 											<Button
 												size="xs"
 												variant="ghost"
@@ -1741,7 +1775,11 @@ export const NodesPage: FC = () => {
 									</Stack>
 
 									<Divider />
-									<SimpleGrid columns={{ base: 1, sm: 2 }} spacingY={2}>
+									<SimpleGrid
+										columns={{ base: 1, sm: 2, lg: 3 }}
+										spacingY={2}
+										spacingX={3}
+									>
 										<Box>
 											<Text
 												fontSize="xs"
@@ -1758,43 +1796,20 @@ export const NodesPage: FC = () => {
 												textTransform="uppercase"
 												color="gray.500"
 											>
-												{t("nodes.nodePort")}
+												{t("nodes.runtime", "Runtime")}
 											</Text>
-											<Text fontWeight="medium">{node.port}</Text>
-										</Box>
-										<Box>
-											<Text
-												fontSize="xs"
-												textTransform="uppercase"
-												color="gray.500"
-											>
-												{t("nodes.nodeAPIPort")}
+											<Text fontWeight="medium" lineHeight="short">
+												{nodeRuntimeVersion
+													? t("nodes.nodeServiceVersionTag", {
+															version: nodeRuntimeVersion,
+														})
+													: t(
+															"nodes.nodeServiceVersionUnknown",
+															"Node version unknown",
+														)}
 											</Text>
-											<Text fontWeight="medium">{node.api_port}</Text>
-										</Box>
-										<Box>
-											<Text
-												fontSize="xs"
-												textTransform="uppercase"
-												color="gray.500"
-											>
-												{t("nodes.usageCoefficient", "Usage coefficient")}
-											</Text>
-											<Text fontWeight="medium">{node.usage_coefficient}</Text>
-										</Box>
-										<Box>
-											<Text
-												fontSize="xs"
-												textTransform="uppercase"
-												color="gray.500"
-											>
-												{t("nodes.totalUsage", "Total usage")}
-											</Text>
-											<Text fontWeight="medium">
-												{formatBytes(
-													(node.uplink ?? 0) + (node.downlink ?? 0),
-													2,
-												)}
+											<Text fontSize="xs" color="gray.500">
+												{nodeInstallLabel}
 											</Text>
 										</Box>
 										<Box>
@@ -1803,13 +1818,39 @@ export const NodesPage: FC = () => {
 												textTransform="uppercase"
 												color="gray.500"
 											>
-												{t("nodes.dataLimitLabel", "Data limit")}
+												{t("nodes.trafficLimit", "Traffic / Limit")}
 											</Text>
-											<Text fontWeight="medium">
-												{node.data_limit != null && node.data_limit > 0
-													? formatBytes(node.data_limit, 2)
-													: t("nodes.unlimited", "Unlimited")}
+											<Text fontWeight="medium">{nodeTrafficLimitDisplay}</Text>
+										</Box>
+										<Box>
+											<Text
+												fontSize="xs"
+												textTransform="uppercase"
+												color="gray.500"
+											>
+												{t("nodes.bandwidthSpeed", "Upload / Download")}
 											</Text>
+											<Text fontWeight="medium">{nodeBandwidthDisplay}</Text>
+										</Box>
+										<Box>
+											<Text
+												fontSize="xs"
+												textTransform="uppercase"
+												color="gray.500"
+											>
+												{t("nodes.cpu", "CPU")}
+											</Text>
+											<Text fontWeight="medium">{nodeCPUDisplay}</Text>
+										</Box>
+										<Box>
+											<Text
+												fontSize="xs"
+												textTransform="uppercase"
+												color="gray.500"
+											>
+												{t("nodes.ram", "RAM")}
+											</Text>
+											<Text fontWeight="medium">{nodeRAMDisplay}</Text>
 										</Box>
 									</SimpleGrid>
 									<Divider />
@@ -1871,10 +1912,13 @@ export const NodesPage: FC = () => {
 												cursor="pointer"
 											>
 												<VStack align="flex-start" spacing={0} flex="1">
-													<Text fontWeight="semibold">
-														{node.name ||
-															t("nodes.unnamedNode", "Unnamed node")}
-													</Text>
+													<HStack spacing={2} align="center" flexWrap="wrap">
+														<Text fontWeight="semibold">
+															{node.name ||
+																t("nodes.unnamedNode", "Unnamed node")}
+														</Text>
+														{statusDisplay}
+													</HStack>
 													<Text
 														fontSize="sm"
 														color="gray.500"
@@ -1883,7 +1927,6 @@ export const NodesPage: FC = () => {
 														{node.address}
 													</Text>
 												</VStack>
-												{statusDisplay}
 											</HStack>
 											<Collapse
 												in={Boolean(expandedNodeKeys[nodeKey])}

@@ -1,13 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import threading
 from typing import Union
 
 from sqlalchemy import and_, bindparam, insert, select, update
 from sqlalchemy.exc import OperationalError, TimeoutError as SQLTimeoutError
 
-from app.db import GetDB, crud
+from app.db import GetDB
 from app.db.models import Node, NodeUsage, System
-from app.jobs.usage.collectors import get_outbounds_stats
 from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from app.jobs.usage.outbound_traffic import _persist_outbound_traffic
 from app.jobs.usage.utils import hour_bucket, is_retryable_db_error, retry_delay, safe_execute, utcnow_naive
@@ -17,7 +17,9 @@ from app.utils import report
 from config import DISABLE_RECORDING_NODE_USAGE
 
 
-"""Node and master usage pipeline: aggregate outbound stats, enforce limits, and persist to DB."""
+"""Node usage pipeline: aggregate outbound stats, enforce limits, and persist to DB."""
+
+_record_node_usages_lock = threading.Lock()
 
 # region Limit helpers (node and master)
 
@@ -57,34 +59,6 @@ def _update_node_limits(db, dbnode: Node, total_up: int, total_down: int, *, com
     return limited_triggered, limit_cleared, status_change_payload
 
 
-def _update_master_limits(db, total_up: int, total_down: int, *, commit: bool = True):
-    limited_triggered = False
-    limit_cleared = False
-    status_change_payload = None
-
-    master_record = crud._ensure_master_state(db, for_update=True)
-    master_record.uplink = (master_record.uplink or 0) + total_up
-    master_record.downlink = (master_record.downlink or 0) + total_down
-
-    limit = master_record.data_limit
-    current_usage = (master_record.uplink or 0) + (master_record.downlink or 0)
-
-    if limit is not None and current_usage >= limit:
-        if master_record.status != NodeStatus.limited:
-            master_record.status = NodeStatus.limited
-            master_record.message = "Data limit reached"
-            master_record.updated_at = utcnow_naive()
-    else:
-        if master_record.status == NodeStatus.limited:
-            master_record.status = NodeStatus.connected
-            master_record.message = None
-            master_record.updated_at = utcnow_naive()
-
-    if commit:
-        db.commit()
-    return limited_triggered, limit_cleared, status_change_payload
-
-
 # endregion
 
 
@@ -94,18 +68,19 @@ def _is_missing_node_usage_endpoint(exc: Exception) -> bool:
 
 def _collect_node_outbound_stats(node):
     if not hasattr(node, "collect_outbound_stats"):
-        return {"stats": get_outbounds_stats(node.api), "node_batch_id": ""}
+        raise RuntimeError("Node does not support buffered outbound usage collection")
+
     try:
         payload = node.collect_outbound_stats()
-        return {
-            "stats": payload.get("stats") or [],
-            "node_batch_id": payload.get("batch_id") or "",
-        }
     except Exception as exc:
-        if not _is_missing_node_usage_endpoint(exc):
-            raise
+        if _is_missing_node_usage_endpoint(exc):
+            raise RuntimeError("Node does not support buffered outbound usage collection") from exc
+        raise
 
-    return {"stats": get_outbounds_stats(node.api), "node_batch_id": ""}
+    return {
+        "stats": payload.get("stats") or [],
+        "node_batch_id": payload.get("batch_id") or "",
+    }
 
 
 def _ack_node_outbound_batches(node_batches: dict[int, str]) -> None:
@@ -158,10 +133,6 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
                 limited_triggered, limit_cleared, status_change_payload = _update_node_limits(
                     db, dbnode, total_up, total_down
                 )
-        elif node_id is None and (total_up or total_down):
-            limited_triggered, limit_cleared, status_change_payload = _update_master_limits(
-                db, total_up, total_down
-            )
 
     if status_change_payload:
         node_resp, prev_status = status_change_payload
@@ -202,8 +173,6 @@ def _persist_node_stats_in_session(db, params: list, node_id: Union[int, None], 
         dbnode = db.query(Node).filter(Node.id == node_id).with_for_update().first()
         if dbnode:
             return _update_node_limits(db, dbnode, total_up, total_down, commit=False)
-    elif node_id is None and (total_up or total_down):
-        return _update_master_limits(db, total_up, total_down, commit=False)
 
     return False, False, None
 
@@ -257,15 +226,19 @@ def _dispatch_node_limit_events(status_events):
 
 
 def record_node_usages():
-    collectors = {}
+    if not _record_node_usages_lock.acquire(blocking=False):
+        logger.warning("record_node_usages is already running; skipping overlapping run")
+        return
     try:
-        if getattr(xray.core, "available", False) and getattr(xray.core, "started", False):
-            collectors[None] = partial(get_outbounds_stats, xray.api)
-    except Exception:
-        # Skip master core if it's unavailable; still record from nodes
-        pass
+        return _record_node_usages_once()
+    finally:
+        _record_node_usages_lock.release()
+
+
+def _record_node_usages_once():
+    collectors = {}
     for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
+        if node.connected:
             collectors[node_id] = partial(_collect_node_outbound_stats, node)
 
     with ThreadPoolExecutor(max_workers=10) as executor:

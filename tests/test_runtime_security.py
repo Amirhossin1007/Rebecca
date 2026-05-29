@@ -1,24 +1,9 @@
-import io
 import socket
-import zipfile
 
 import pytest
 from fastapi import HTTPException
 
-from app.routers.core import _install_xray_zip, _safe_geo_filename, _validate_download_url
-
-
-def test_install_xray_zip_rejects_zip_slip(tmp_path):
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as zf:
-        zf.writestr("../escape.txt", "owned")
-        zf.writestr("xray", "binary")
-
-    with pytest.raises(HTTPException) as exc:
-        _install_xray_zip(archive.getvalue(), tmp_path / "xray-core")
-
-    assert exc.value.status_code == 400
-    assert not (tmp_path / "escape.txt").exists()
+from app.routers.runtime import _safe_geo_filename, _validate_download_url
 
 
 def test_safe_geo_filename_only_allows_expected_assets():

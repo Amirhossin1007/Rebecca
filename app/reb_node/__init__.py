@@ -1,8 +1,6 @@
 from . import operations
 from .state import (
-    api,
     config,
-    core,
     exc,
     exceptions,
     hosts,
@@ -10,7 +8,6 @@ from .state import (
     service_hosts_cache,
     types,
     XRayConfig,
-    XRayCore,
     XRayNode,
     get_service_host_map,
     rebuild_service_hosts_cache,
@@ -20,8 +17,6 @@ from .state import (
 __all__ = [
     "config",
     "hosts",
-    "core",
-    "api",
     "nodes",
     "operations",
     "exceptions",
@@ -32,6 +27,5 @@ __all__ = [
     "invalidate_service_hosts_cache",
     "types",
     "XRayConfig",
-    "XRayCore",
     "XRayNode",
 ]

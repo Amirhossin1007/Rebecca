@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 
 from app.db import GetDB, crud
 from app.reb_node import XRayConfig, state
@@ -15,16 +15,15 @@ from app.utils.xray_targets import (
 )
 
 
-def restart_xray_and_invalidate_cache(startup_config=None):
+def restart_default_runtimes_and_invalidate_cache(startup_config=None):
     """
-    Restart Xray core and invalidate hosts cache.
-    This should be called whenever Xray is restarted to ensure cache is fresh.
+    Restart node runtimes and invalidate hosts cache.
+    The master stores default config only; all runtime work happens on nodes.
     """
     if startup_config is None:
-        restart_xray_targets()
+        restart_runtime_targets()
         return
 
-    xray.core.restart(startup_config)
     xray.invalidate_service_hosts_cache()
     xray.hosts.update()
 
@@ -52,9 +51,9 @@ def _refresh_master_runtime_config(raw_config: dict | None = None) -> XRayConfig
     return config
 
 
-def restart_xray_targets(target_ids: set[str] | list[str] | tuple[str, ...] | None = None) -> None:
+def restart_runtime_targets(target_ids: set[str] | list[str] | tuple[str, ...] | None = None) -> None:
     """
-    Restart master/default/custom targets with their own effective configs.
+    Restart default/custom node targets with their own effective configs.
     None means restart every runtime target.
     """
     normalized_targets = set(target_ids or [])
@@ -82,7 +81,6 @@ def restart_xray_targets(target_ids: set[str] | list[str] | tuple[str, ...] | No
         master_startup_config = master_config.include_db_users() if restart_master else None
 
     if restart_master and master_startup_config is not None:
-        xray.core.restart(master_startup_config)
         xray.invalidate_service_hosts_cache()
         xray.hosts.update()
 
@@ -94,18 +92,12 @@ def restart_xray_targets(target_ids: set[str] | list[str] | tuple[str, ...] | No
 
 def apply_config(payload: Dict[str, Any]) -> XRayConfig:
     """
-    Persist a new Xray configuration without restarting the core.
+    Persist a new default Xray configuration without touching a local runtime.
     """
     try:
         config = XRayConfig(payload, api_port=xray.config.api_port)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
-
-    if not xray.core.available:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="XRay core is not available in this environment. Please install XRay before applying a configuration.",
-        )
 
     xray.config = config
     state.config = config
@@ -115,16 +107,16 @@ def apply_config(payload: Dict[str, Any]) -> XRayConfig:
     return config
 
 
-def apply_config_and_restart(payload: Dict[str, Any]) -> None:
+def apply_runtime_config_and_restart(payload: Dict[str, Any]) -> None:
     """
-    Persist a new Xray configuration, restart the master core and refresh nodes.
+    Persist a new Xray configuration and refresh affected nodes.
     """
     config = apply_config(payload)
     startup_config = config.include_db_users()
-    restart_xray_and_invalidate_cache(startup_config)
+    restart_default_runtimes_and_invalidate_cache(startup_config)
 
 
-def apply_target_config_and_restart(target_id: str, payload: Dict[str, Any]) -> None:
+def apply_target_runtime_config_and_restart(target_id: str, payload: Dict[str, Any]) -> None:
     """
     Persist a target config. Master updates refresh xray.config; node updates switch that node to custom.
     """
@@ -141,24 +133,24 @@ def apply_target_config_and_restart(target_id: str, payload: Dict[str, Any]) -> 
         xray.config = config
         state.config = config
 
-    restart_xray_targets({target_id})
+    restart_runtime_targets({target_id})
 
 
 def soft_reload_panel():
     """
-    Soft reload the panel without restarting Xray core.
+    Soft reload the panel without restarting the panel process.
     This performs a full reload similar to startup:
     - Reloads config from database
     - Refreshes users in config
-    - Reconnects all nodes (without restarting their Xray cores)
+    - Reconnects all nodes
     - Invalidates caches
-    But keeps the main Xray core running (does not stop/restart it).
+    The master has no local runtime.
     """
     import logging
 
     logger = logging.getLogger("uvicorn.error")
 
-    logger.info("Generating Xray core config")
+    logger.info("Generating default Xray config")
 
     # Reload config from database
     with GetDB() as db:
@@ -172,7 +164,7 @@ def soft_reload_panel():
     # Generate config with users (like in startup)
     try:
         xray.config.include_db_users()
-        logger.info("Xray core config generated successfully")
+        logger.info("Default Xray config generated successfully")
     except Exception as e:
         logger.error(f"Failed to generate Xray config: {e}")
         raise
@@ -181,7 +173,7 @@ def soft_reload_panel():
     xray.invalidate_service_hosts_cache()
     xray.hosts.update()
 
-    # Reconnect all nodes (like in startup, but without restarting their cores)
+    # Reconnect all nodes (like in startup).
     logger.info("Reconnecting nodes")
     try:
         from app.models.node import NodeStatus
@@ -203,10 +195,7 @@ def soft_reload_panel():
                 if dbnode.status not in (NodeStatus.connecting, NodeStatus.connected):
                     crud.update_node_status(db, dbnode, NodeStatus.connecting)
 
-        # Reconnect nodes (this will update their config)
-        # Note: connect_node will call node.start() which will restart the node's Xray core
-        # if it's already started. This is acceptable for soft reload as it only affects nodes,
-        # not the main Xray core.
+        # Reconnect nodes (this will update their config).
         for node_id, node_config in node_configs.items():
             try:
                 # Disconnect first if connected, then reconnect with new config
@@ -218,14 +207,11 @@ def soft_reload_panel():
                         except Exception:
                             pass
 
-                # Reconnect with new config (this will start/restart the node's Xray core)
+                # Reconnect with new config (this will start/restart node-side Xray).
                 xray.operations.connect_node(node_id, node_config)
             except Exception as e:
                 logger.error(f"Failed to reconnect node {node_id}: {e}")
     except Exception as e:
         logger.error(f"Failed to reconnect nodes: {e}")
 
-    # Note: We intentionally do NOT:
-    # - Restart main Xray core (xray.core.restart) - this keeps connections active
-    # - Restart node Xray cores (xray.operations.restart_node) - we use connect_node instead
-    # This keeps all connections active while refreshing the panel state
+    # Only node runtimes are affected; the master has no local runtime.

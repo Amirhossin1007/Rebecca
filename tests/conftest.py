@@ -61,8 +61,6 @@ mock_xray.config.inbounds_by_tag = {
     "VLESS TCP": {"tag": "VLESS TCP", "protocol": "vless"},
 }
 mock_xray.config.include_db_users = MagicMock(return_value=MagicMock())
-mock_xray.core.available = True
-mock_xray.core.restart = MagicMock()
 mock_xray.operations.remove_user = MagicMock()
 mock_xray.operations.restart_node = MagicMock()
 mock_xray.nodes = {}
@@ -74,7 +72,6 @@ class _MockConnectionError(Exception):
 
 class _MockRebNode:
     def __init__(self):
-        self.core = mock_xray
         self.exc = MagicMock(ConnectionError=_MockConnectionError)
         self.state = MagicMock()
         self.state.get_service_host_map = MagicMock(return_value={})
@@ -191,7 +188,6 @@ def auth_client(client):
 def xray_mock():
     """Provides access to the mock xray for assertions in tests"""
     # Reset call counts before each test
-    mock_xray.core.restart.reset_mock()
     mock_xray.operations.restart_node.reset_mock()
     mock_xray.operations.remove_user.reset_mock()
     mock_xray.config.include_db_users.reset_mock()

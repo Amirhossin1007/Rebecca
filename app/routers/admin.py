@@ -26,6 +26,7 @@ from app.models.admin import (
 from app.db.models import Admin as DBAdmin, Node as DBNode, User as DBUser
 from app.utils import report, responses
 from app.utils.jwt import create_admin_token
+from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
 from config import LOGIN_NOTIFY_WHITE_LIST
 from app.services import metrics_service
 
@@ -84,15 +85,12 @@ def validate_dates(start: str, end: str) -> tuple[datetime, datetime]:
     return start_date, end_date
 
 
-def _restart_xray_with_nodes(startup_config):
-    """Restart master core and connected nodes; best-effort to keep request fast."""
+def _restart_node_runtimes(startup_config):
+    """Restart connected node runtimes; best-effort to keep request fast."""
     try:
-        xray.core.restart(startup_config)
-        for node_id, node in list(xray.nodes.items()):
-            if node.connected:
-                xray.operations.restart_node(node_id, startup_config)
+        restart_default_runtimes_and_invalidate_cache(startup_config)
     except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Failed to restart Xray after admin status change: %s", exc, exc_info=True)
+        logger.warning("Failed to restart runtime after admin status change: %s", exc, exc_info=True)
 
 
 @router.post("/admin/token", response_model=Token)
@@ -293,7 +291,7 @@ def disable_admin_account(
     except Exception as exc:
         logger.warning("Failed to build Xray config after disabling admin %s: %s", dbadmin.username, exc)
     else:
-        background_tasks.add_task(_restart_xray_with_nodes, startup_config)
+        background_tasks.add_task(_restart_node_runtimes, startup_config)
 
     admin_schema = Admin.model_validate(updated_admin)
     report.admin_updated(admin_schema, current_admin, previous=previous_state)
@@ -336,7 +334,7 @@ def enable_admin_account(
     except Exception as exc:
         logger.warning("Failed to build Xray config after enabling admin %s: %s", dbadmin.username, exc)
     else:
-        background_tasks.add_task(_restart_xray_with_nodes, startup_config)
+        background_tasks.add_task(_restart_node_runtimes, startup_config)
 
     admin_schema = Admin.model_validate(updated_admin)
     report.admin_updated(admin_schema, current_admin, previous=previous_state)
@@ -354,10 +352,7 @@ def disable_all_active_users(
 
     # Restart xray with updated config to remove disabled users
     startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    restart_default_runtimes_and_invalidate_cache(startup_config)
 
     return {"detail": "Users successfully disabled"}
 
@@ -376,10 +371,7 @@ def activate_all_disabled_users(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    restart_default_runtimes_and_invalidate_cache(startup_config)
     return {"detail": "Users successfully activated"}
 
 
