@@ -1,7 +1,9 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from itertools import islice
 import threading
+import time
 from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, bindparam, case, func, insert, or_, select, text, update
@@ -10,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db import GetDB, crud
 from app.db.models import Admin, AdminServiceLink, NodeUserUsage, Service, User
+from app.jobs.usage.collectors import get_users_stats, resolve_stats_api
 from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from app.jobs.usage.utils import hour_bucket, is_retryable_db_error, retry_delay, safe_execute, utcnow_naive
 from app.models.admin import Admin as AdminSchema, AdminStatus
@@ -33,6 +36,31 @@ from config import (
 """User/admin/service usage pipeline: collect, aggregate, and persist usage in the database."""
 
 _record_user_usages_lock = threading.Lock()
+
+
+def _chunked(items, size: int):
+    iterator = iter(items)
+    size = max(int(size or 1), 1)
+    while chunk := list(islice(iterator, size)):
+        yield chunk
+
+
+def _execute_in_chunks(connection, stmt, params, *, batch_size: int):
+    if not params:
+        return
+    for chunk in _chunked(params, batch_size):
+        connection.execute(stmt, chunk)
+
+
+def _set_usage_lock_wait_timeout(db) -> None:
+    timeout = int(JOB_USAGE_DB_LOCK_WAIT_TIMEOUT or 0)
+    if timeout <= 0:
+        return
+    try:
+        if getattr(db.bind, "name", "") == "mysql":
+            db.execute(text("SET SESSION innodb_lock_wait_timeout = :timeout"), {"timeout": timeout})
+    except Exception as exc:  # pragma: no cover - advisory tuning only
+        logger.debug(f"Failed to set usage DB lock wait timeout: {exc}")
 
 # region Collect & aggregate per-user stats from Xray
 

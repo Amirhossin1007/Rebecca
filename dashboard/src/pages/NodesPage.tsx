@@ -195,6 +195,113 @@ const convertLimitInputToBytes = (value: string): number | null | undefined => {
 	return Math.round(numeric * BYTES_IN_GB);
 };
 
+const formatCellValue = (value?: string | number | null): string => {
+	if (value === null || value === undefined || value === "") {
+		return EMPTY_CELL_VALUE;
+	}
+	return String(value);
+};
+
+const uniqueValues = (items: string[]): string[] =>
+	Array.from(new Set(items.filter(Boolean)));
+
+const getConfigInbounds = (config: NodeType["xray_config"]): string[] => {
+	if (!config || typeof config !== "object" || Array.isArray(config)) {
+		return [];
+	}
+
+	const inbounds = (config as { inbounds?: unknown }).inbounds;
+	if (!Array.isArray(inbounds)) {
+		return [];
+	}
+
+	return inbounds
+		.map((inbound) => {
+			if (!inbound || typeof inbound !== "object") {
+				return "";
+			}
+			const item = inbound as {
+				tag?: unknown;
+				remark?: unknown;
+			};
+			return typeof item.tag === "string" && item.tag
+				? item.tag
+				: typeof item.remark === "string" && item.remark
+					? item.remark
+					: "inbound";
+		})
+		.filter(Boolean);
+};
+
+const getNodeServiceUpdateAvailable = (
+	currentVersion?: string | null,
+	latestVersion?: string | null,
+): boolean => {
+	const current = normalizeVersion(currentVersion);
+	const latest = normalizeVersion(latestVersion);
+	return Boolean(current && latest && current !== latest);
+};
+
+const NodeInboundTags: FC<{
+	tags: string[];
+	emptyLabel: string;
+	detailsLabel: string;
+}> = ({ tags, emptyLabel, detailsLabel }) => {
+	const visibleTags = tags.slice(0, 3);
+	const hiddenTags = tags.slice(3);
+
+	if (!tags.length) {
+		return <Text color="gray.400">{emptyLabel}</Text>;
+	}
+
+	return (
+		<HStack spacing={1.5} align="center" flexWrap="wrap">
+			{visibleTags.map((tag) => (
+				<Tag key={tag} size="sm" colorScheme="teal">
+					{tag}
+				</Tag>
+			))}
+			{hiddenTags.length > 0 && (
+				<Popover
+					trigger="hover"
+					placement="bottom-start"
+					openDelay={120}
+					closeDelay={120}
+					isLazy
+				>
+					<PopoverTrigger>
+						<Tag
+							size="sm"
+							colorScheme="teal"
+							variant="outline"
+							cursor="default"
+						>
+							+{hiddenTags.length}
+						</Tag>
+					</PopoverTrigger>
+					<PopoverContent w="auto" minW="180px" maxW="320px" p={2}>
+						<PopoverArrow />
+						<PopoverBody p={1}>
+							<VStack align="stretch" spacing={1}>
+								<Text fontSize="xs" fontWeight="semibold" color="gray.500">
+									{detailsLabel}
+								</Text>
+								<HStack spacing={1.5} align="center" flexWrap="wrap">
+									{tags.map((tag) => (
+										<Tag key={tag} size="sm" colorScheme="teal">
+											{tag}
+										</Tag>
+									))}
+								</HStack>
+							</VStack>
+						</PopoverBody>
+					</PopoverContent>
+				</Popover>
+			)}
+		</HStack>
+	);
+};
+
 const formatNodeBytes = (value?: number | null, precision = 2) =>
 	value !== null && value !== undefined ? formatBytes(value, precision) : "-";
 
@@ -2634,44 +2741,7 @@ export const NodesPage: FC = () => {
 									_hover={{ boxShadow: "md" }}
 									transition="box-shadow 0.2s ease-in-out"
 								>
-									{viewMode === "list" ? (
-										<VStack align="stretch" spacing={3}>
-											<HStack
-												justify="space-between"
-												align="center"
-												onClick={() => toggleExpandedNode(nodeKey)}
-												cursor="pointer"
-											>
-												<VStack align="flex-start" spacing={0} flex="1">
-													<HStack spacing={2} align="center" flexWrap="wrap">
-														<Text fontWeight="semibold">
-															{node.name ||
-																t("nodes.unnamedNode", "Unnamed node")}
-														</Text>
-														{statusDisplay}
-													</HStack>
-													<Text
-														fontSize="sm"
-														color="gray.500"
-														_dark={{ color: "gray.400" }}
-													>
-														{node.address}
-													</Text>
-												</VStack>
-											</HStack>
-											<Collapse
-												in={Boolean(expandedNodeKeys[nodeKey])}
-												animateOpacity
-											>
-												<Box pt={4}>
-													<Divider mb={4} />
-													{nodeContent}
-												</Box>
-											</Collapse>
-										</VStack>
-									) : (
-										nodeContent
-									)}
+									{nodeContent}
 								</Box>
 							);
 						})

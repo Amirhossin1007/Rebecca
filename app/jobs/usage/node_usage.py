@@ -8,6 +8,7 @@ from sqlalchemy.exc import OperationalError, TimeoutError as SQLTimeoutError
 
 from app.db import GetDB
 from app.db.models import Node, NodeUsage, System
+from app.jobs.usage.collectors import get_outbounds_stats, resolve_stats_api
 from app.jobs.usage.delivery_buffer import usage_delivery_buffer
 from app.jobs.usage.outbound_traffic import _persist_outbound_traffic
 from app.jobs.usage.utils import hour_bucket, is_retryable_db_error, retry_delay, safe_execute, utcnow_naive
