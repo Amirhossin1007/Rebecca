@@ -10,11 +10,15 @@ export const fetcher = <T = any>(
 	ops: FetchOptions<"json"> = {},
 ) => {
 	const token = getAuthToken();
+	const method = String(ops.method || "GET").toUpperCase();
 	if (token) {
 		ops.headers = {
 			...(ops?.headers || {}),
 			Authorization: `Bearer ${getAuthToken()}`,
 		};
+	}
+	if (method === "GET") {
+		ops.cache = "no-store";
 	}
 	return $fetch<T>(url, ops);
 };

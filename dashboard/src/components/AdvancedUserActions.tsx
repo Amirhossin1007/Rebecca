@@ -80,7 +80,7 @@ const AdvancedUserActions = () => {
 	const [selectedServiceValue, setSelectedServiceValue] = useState("");
 	const [targetServiceValue, setTargetServiceValue] = useState("");
 	const [isChangingService, setIsChangingService] = useState(false);
-	const { admins: adminList, fetchAdmins } = useAdminsStore();
+	const { adminOptions: adminList, fetchAdminOptions } = useAdminsStore();
 	const servicesStore = useServicesStore();
 
 	const hasScopeSelect =
@@ -96,12 +96,12 @@ const AdvancedUserActions = () => {
 
 	useEffect(() => {
 		if (isOpen && hasScopeSelect) {
-			fetchAdmins({ limit: 200, offset: 0 });
+			fetchAdminOptions({ limit: 1000, offset: 0, sort: "username" });
 		}
-		if (isOpen && servicesStore.services.length === 0) {
-			servicesStore.fetchServices({ limit: 200, offset: 0 });
+		if (isOpen && servicesStore.serviceOptions.length === 0) {
+			servicesStore.fetchServiceOptions({ limit: 1000, offset: 0 });
 		}
-	}, [fetchAdmins, hasScopeSelect, isOpen, servicesStore]);
+	}, [fetchAdminOptions, hasScopeSelect, isOpen, servicesStore]);
 
 	const resolveTargetAdminUsername = () => {
 		if (!hasScopeSelect) {
@@ -470,7 +470,7 @@ const AdvancedUserActions = () => {
 													"No service",
 												)}
 											</option>
-											{servicesStore.services.map((service) => (
+											{servicesStore.serviceOptions.map((service) => (
 												<option key={service.id} value={String(service.id)}>
 													{service.name}
 												</option>
@@ -516,7 +516,7 @@ const AdvancedUserActions = () => {
 														"No service",
 													)}
 												</option>
-												{servicesStore.services.map((service) => (
+												{servicesStore.serviceOptions.map((service) => (
 													<option key={service.id} value={String(service.id)}>
 														{service.name}
 													</option>

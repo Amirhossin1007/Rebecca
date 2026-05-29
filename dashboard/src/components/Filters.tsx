@@ -153,8 +153,9 @@ export const Filters: FC<FilterProps> = ({
 		filters: adminFilters,
 		onFilterChange: onAdminFilterChange,
 		fetchAdmins,
+		fetchAdminOptions,
 		openAdminDialog,
-		admins: adminList,
+		adminOptions,
 	} = useAdminsStore();
 	const { t } = useTranslation();
 	const [search, setSearch] = useState("");
@@ -185,7 +186,7 @@ export const Filters: FC<FilterProps> = ({
 	const activeFilters: string[] = userFiltersOnly?.advancedFilters ?? [];
 	const serviceId = userFiltersOnly?.serviceId;
 	const ownerFilter = userFiltersOnly?.owner;
-	const { services, fetchServices } = useServicesStore();
+	const { serviceOptions, fetchServiceOptions } = useServicesStore();
 	const debouncedSearchChange = useMemo(
 		() =>
 			debounce((nextSearch: string) => {
@@ -211,14 +212,14 @@ export const Filters: FC<FilterProps> = ({
 	}, [debouncedSearchChange]);
 
 	useEffect(() => {
-		fetchServices({ limit: 500 });
-	}, [fetchServices]);
+		fetchServiceOptions({ limit: 1000 });
+	}, [fetchServiceOptions]);
 
 	useEffect(() => {
 		if (isUserFilters && hasPrivilegedRole) {
-			fetchAdmins({ search: "", limit: 200, offset: 0, sort: "username" });
+			fetchAdminOptions({ limit: 1000, offset: 0, sort: "username" });
 		}
-	}, [fetchAdmins, hasPrivilegedRole, isUserFilters]);
+	}, [fetchAdminOptions, hasPrivilegedRole, isUserFilters]);
 
 	useEffect(() => {
 		const nextSearch = isUserFilters
@@ -440,7 +441,7 @@ export const Filters: FC<FilterProps> = ({
 													<option value="">
 														{t("filters.advanced.serviceAll", "All services")}
 													</option>
-													{services.map((service) => (
+													{serviceOptions.map((service) => (
 														<option key={service.id} value={String(service.id)}>
 															{service.name}
 														</option>
@@ -465,7 +466,7 @@ export const Filters: FC<FilterProps> = ({
 														<option value={userData.username}>
 															{t("filters.advanced.adminMyUsers", "My users")}
 														</option>
-														{adminList.map((record) => (
+														{adminOptions.map((record) => (
 															<option
 																key={record.username}
 																value={record.username}
@@ -546,7 +547,7 @@ export const Filters: FC<FilterProps> = ({
 										<TagLabel>
 											{t("filters.advanced.serviceTag", "Service: {{name}}", {
 												name:
-													services.find((service) => service.id === serviceId)
+													serviceOptions.find((service) => service.id === serviceId)
 														?.name ?? serviceId,
 											})}
 										</TagLabel>

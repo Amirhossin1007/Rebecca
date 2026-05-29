@@ -191,6 +191,7 @@ export const DateTimePicker: FC<DateTimePickerProps> = ({
 			onOpen={onOpen}
 			onClose={handleClose}
 			placement="bottom-start"
+			strategy="fixed"
 			isLazy
 		>
 			<PopoverTrigger>
@@ -206,13 +207,15 @@ export const DateTimePicker: FC<DateTimePickerProps> = ({
 					_dark={{ bg: "transparent" }}
 				/>
 			</PopoverTrigger>
-			<Portal>
+			<Portal appendToParentPortal={false}>
 				<PopoverContent
+					className="date-time-picker-popover"
 					w="auto"
 					maxW="min(90vw, 420px)"
 					bg={popoverBg}
 					borderColor={popoverBorderColor}
 					color={popoverText}
+					zIndex={17020}
 					_focus={{ boxShadow: "none" }}
 				>
 					<PopoverBody p={0}>

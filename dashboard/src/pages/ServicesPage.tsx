@@ -845,27 +845,27 @@ const ServicesPage: FC = () => {
 			return;
 		}
 		servicesStore.fetchServices();
-		adminStore.fetchAdmins({ limit: 500, offset: 0 });
+		adminStore.fetchAdminOptions({ limit: 1000, offset: 0, sort: "username" });
 		fetchInbounds();
 		hostsStore.fetchHosts();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		getUserIsSuccess,
 		canManageServices,
-		adminStore.fetchAdmins,
+		adminStore.fetchAdminOptions,
 		hostsStore.fetchHosts,
 		servicesStore.fetchServices,
 	]);
 
 	const adminOptions = useMemo(() => {
-		return adminStore.admins
+		return adminStore.adminOptions
 			.slice()
 			.sort((a, b) => a.username.localeCompare(b.username))
 			.map((admin) => ({
 				id: admin.id!,
 				username: admin.username,
 			}));
-	}, [adminStore.admins]);
+	}, [adminStore.adminOptions]);
 
 	const hostOptions: HostOption[] = useMemo(() => {
 		const options: HostOption[] = [];
@@ -1343,7 +1343,7 @@ const ServicesPage: FC = () => {
 		setSavingAdminLimitId(adminId);
 		try {
 			if (payload.delete_user_usage_limit_enabled === true) {
-				const targetAdmin = adminStore.admins.find(
+				const targetAdmin = adminStore.adminOptions.find(
 					(item) => item.id === adminId,
 				);
 				if (targetAdmin && !adminCanDeleteUsers(targetAdmin)) {

@@ -370,7 +370,11 @@ table thead {
 }
 
 .chakra-popover__popper {
-  z-index: 9999 !important;
+  z-index: 17020 !important;
+}
+
+.date-time-picker-popover {
+  z-index: 17020 !important;
 }
 
 .inbound-item .chakra-checkbox__label {

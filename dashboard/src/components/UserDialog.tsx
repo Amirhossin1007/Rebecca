@@ -961,8 +961,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		},
 	] as const;
 
-	const services = useServicesStore((state) => state.services);
-	const servicesLoading = useServicesStore((state) => state.isLoading);
+	const services = useServicesStore((state) => state.serviceOptions);
+	const servicesLoading = useServicesStore((state) => state.isOptionsLoading);
 	const { userData, getUserIsSuccess } = useGetUser();
 	const hasPrivilegedRole = Boolean(
 		getUserIsSuccess &&
@@ -1081,7 +1081,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
 	useEffect(() => {
 		if (isOpen) {
-			useServicesStore.getState().fetchServices();
+			useServicesStore.getState().fetchServiceOptions({ limit: 1000 });
 		}
 	}, [isOpen]);
 

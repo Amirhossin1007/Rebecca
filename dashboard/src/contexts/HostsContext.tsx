@@ -66,3 +66,11 @@ export const useHosts = create<HostsStore>((set) => ({
 		});
 	},
 }));
+
+export const clearHostsCache = () => {
+	useHosts.setState({
+		isLoading: false,
+		isPostLoading: false,
+		hosts: {},
+	});
+};
