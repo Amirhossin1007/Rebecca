@@ -30,7 +30,7 @@ func LoadConfig() Config {
 		PythonHost:         env("REBECCA_PYTHON_HOST", "127.0.0.1"),
 		PythonPort:         envInt("REBECCA_PYTHON_PORT", 18000),
 		PythonEnvFile:      env("REBECCA_PYTHON_ENV_FILE", ""),
-		PythonStartTimeout: time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 60)) * time.Second,
+		PythonStartTimeout: time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 300)) * time.Second,
 	}
 }
 

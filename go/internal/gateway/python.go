@@ -28,6 +28,7 @@ func StartPython(ctx context.Context, cfg Config) (*PythonRuntime, error) {
 	if cfg.PythonEnvFile != "" {
 		cmd.Env = append(cmd.Env, "REBECCA_ENV_FILE="+cfg.PythonEnvFile)
 	}
+	configurePythonCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -45,7 +46,7 @@ func (r *PythonRuntime) Stop() {
 	if r == nil || r.cmd == nil || r.cmd.Process == nil {
 		return
 	}
-	_ = r.cmd.Process.Kill()
+	killPythonCommand(r.cmd)
 	_, _ = r.cmd.Process.Wait()
 }
 
