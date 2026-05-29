@@ -153,6 +153,10 @@ def _is_missing_node_usage_endpoint(exc: Exception) -> bool:
 
 
 def _collect_node_outbound_stats(node):
+    api = resolve_stats_api(node)
+    if api is not None:
+        return {"stats": get_outbounds_stats(api), "node_batch_id": ""}
+
     if not hasattr(node, "collect_outbound_stats"):
         raise RuntimeError("Node does not support buffered outbound usage collection")
 

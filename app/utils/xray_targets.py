@@ -10,7 +10,11 @@ from app.db import crud
 from app.db.models import Node as DBNode
 from app.models.node import XrayConfigMode
 from app.reb_node.config import XRayConfig
-from app.utils.xray_defaults import apply_log_paths
+from app.utils.xray_defaults import (
+    VERIFY_PEER_CERT_BY_NAME_MIN_VERSION,
+    apply_log_paths,
+    is_xray_version_at_least,
+)
 
 
 MASTER_TARGET_ID = "master"
@@ -67,7 +71,11 @@ def get_node_runtime_config(
     master_config: dict | None = None,
 ) -> XRayConfig:
     master = master_config if master_config is not None else crud.get_xray_config(db)
-    return XRayConfig(get_node_effective_raw_config(dbnode, master), api_port=api_port)
+    return XRayConfig(
+        get_node_effective_raw_config(dbnode, master),
+        api_port=api_port,
+        use_verify_peer_cert_by_name=_node_use_verify_peer_cert_by_name(dbnode),
+    )
 
 
 def get_target_raw_config(db: Session, target_id: str | None = None) -> dict:
@@ -82,8 +90,24 @@ def get_target_raw_config(db: Session, target_id: str | None = None) -> dict:
     return get_node_effective_raw_config(dbnode, master_config)
 
 
+def _node_use_verify_peer_cert_by_name(dbnode: DBNode) -> bool:
+    return is_xray_version_at_least(
+        getattr(dbnode, "xray_version", None),
+        VERIFY_PEER_CERT_BY_NAME_MIN_VERSION,
+        default=True,
+    )
+
+
 def get_target_runtime_config(db: Session, target_id: str | None, *, api_port: int) -> XRayConfig:
-    return XRayConfig(get_target_raw_config(db, target_id), api_port=api_port)
+    kind, node_id = parse_target_id(target_id)
+    master_config = crud.get_xray_config(db)
+    if kind == MASTER_TARGET_ID:
+        return XRayConfig(normalize_config_payload(master_config), api_port=api_port)
+
+    dbnode = crud.get_node_by_id(db, node_id)
+    if not dbnode:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return get_node_runtime_config(db, dbnode, api_port=api_port, master_config=master_config)
 
 
 def _ensure_node_custom_config(dbnode: DBNode, master_config: dict) -> None:

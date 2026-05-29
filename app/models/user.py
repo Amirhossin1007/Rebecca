@@ -364,6 +364,7 @@ class User(BaseModel):
 class UserCreate(User):
     username: str
     status: UserStatusCreate = None
+    inbounds: Dict[ProxyTypes, List[str]] = Field(default_factory=dict, validate_default=True)
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -413,6 +414,7 @@ class UserCreate(User):
         from app.db import GetDB
         from app.models.proxy import ProxyTypes
 
+        inbounds = dict(inbounds or {})
         proxies = values.data.get("proxies", {})
         service_id = values.data.get("service_id")
         with GetDB() as db:

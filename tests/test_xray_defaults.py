@@ -1,6 +1,7 @@
 from app.utils.xray_defaults import (
     LOG_CLEANUP_INTERVAL_DISABLED,
     apply_log_paths,
+    is_xray_version_at_least,
     normalize_log_cleanup_interval,
     normalize_tls_verify_peer_cert_fields,
 )
@@ -36,6 +37,16 @@ def test_apply_log_paths_normalizes_cleanup_values():
     )
     assert config["log"]["accessCleanupInterval"] == 3600
     assert config["log"]["errorCleanupInterval"] == LOG_CLEANUP_INTERVAL_DISABLED
+
+
+def test_is_xray_version_at_least_compares_padded_version_parts():
+    assert is_xray_version_at_least("26.3.27", "26.1.31") is True
+    assert is_xray_version_at_least("25.12.8", "26.1.31") is False
+
+
+def test_is_xray_version_at_least_uses_default_for_unknown_versions():
+    assert is_xray_version_at_least(None, "26.1.31", default=True) is True
+    assert is_xray_version_at_least("not-a-version", "26.1.31", default=False) is False
 
 
 def test_normalize_tls_verify_peer_cert_fields_migrates_old_key_to_new():

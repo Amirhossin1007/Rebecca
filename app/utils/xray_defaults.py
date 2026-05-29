@@ -81,6 +81,32 @@ def normalize_log_cleanup_interval(value: Any) -> int:
     return LOG_CLEANUP_INTERVAL_DISABLED
 
 
+def is_xray_version_at_least(
+    current_version: str | None,
+    target_version: str,
+    *,
+    default: bool = True,
+) -> bool:
+    """
+    Compare Xray version strings in YY.M.DD format.
+
+    Unknown or malformed versions return ``default`` so callers can choose a
+    conservative compatibility mode for their runtime target.
+    """
+    if not current_version or not target_version:
+        return default
+
+    try:
+        current_parts = [int(x) for x in str(current_version).split(".")]
+        target_parts = [int(x) for x in str(target_version).split(".")]
+        max_len = max(len(current_parts), len(target_parts))
+        current_parts.extend([0] * (max_len - len(current_parts)))
+        target_parts.extend([0] * (max_len - len(target_parts)))
+        return tuple(current_parts) >= tuple(target_parts)
+    except (TypeError, ValueError, AttributeError):
+        return default
+
+
 def _first_non_empty_string(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()

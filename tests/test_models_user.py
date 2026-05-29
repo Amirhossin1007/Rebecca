@@ -159,6 +159,30 @@ def test_user_create_validate_inbounds(mock_xray):
         UserCreate(username="testuser", proxies={"vmess": {}}, inbounds={"vmess": ["Invalid Tag"]})
 
 
+def test_user_create_populates_missing_no_service_inbounds_from_enabled_hosts():
+    inbound_map = {
+        "VMess TCP": {"tag": "VMess TCP", "protocol": "vmess"},
+        "VMess Disabled": {"tag": "VMess Disabled", "protocol": "vmess"},
+        "VLESS TCP": {"tag": "VLESS TCP", "protocol": "vless"},
+    }
+    host_map = {
+        "VMess TCP": [{"is_disabled": False}],
+        "VMess Disabled": [{"is_disabled": True}],
+        "VLESS TCP": [{"is_disabled": False}],
+    }
+
+    with (
+        patch("app.services.data_access.get_inbounds_by_tag_cached", return_value=inbound_map),
+        patch("app.services.data_access.get_service_host_map_cached", return_value=host_map),
+    ):
+        user_create = UserCreate(username="testuser", proxies={"vmess": {}})
+        excluded = user_create.excluded_inbounds
+
+    assert user_create.inbounds == {"vmess": ["VMess TCP"]}
+    assert "VMess TCP" not in excluded["vmess"]
+    assert "VMess Disabled" in excluded["vmess"]
+
+
 def test_user_create_ensure_proxies():
     from app.models.proxy import VMessSettings
 

@@ -24,6 +24,7 @@ from app.utils.credentials import runtime_proxy_settings, UUID_PROTOCOLS, normal
 from app.utils.xray_defaults import (
     VERIFY_PEER_CERT_BY_NAME_MIN_VERSION,
     apply_log_paths,
+    is_xray_version_at_least as is_target_xray_version_at_least,
     normalize_tls_verify_peer_cert_fields,
 )
 from config import (
@@ -190,29 +191,17 @@ def is_xray_version_at_least(target_version: str) -> bool:
         >>> is_xray_version_at_least("26.1.31")  # Check if current version is at least 26.1.31
     """
 
-    current_version = get_xray_version()
-
-    if not current_version or not target_version:
-        return True  # Assume true if version cannot be determined
-
-    try:
-        # Parse versions into tuples of integers for comparison
-        current_parts = [int(x) for x in current_version.split(".")]
-        target_parts = [int(x) for x in target_version.split(".")]
-
-        # Pad shorter version with zeros for comparison
-        max_len = max(len(current_parts), len(target_parts))
-        current_parts.extend([0] * (max_len - len(current_parts)))
-        target_parts.extend([0] * (max_len - len(target_parts)))
-
-        # Compare versions
-        return tuple(current_parts) >= tuple(target_parts)
-    except (ValueError, AttributeError):
-        return True  # Assume true if version cannot be determined
+    return is_target_xray_version_at_least(get_xray_version(), target_version, default=True)
 
 
 class XRayConfig(dict):
-    def __init__(self, config: Union[dict, str, PosixPath] = {}, api_host: str = "127.0.0.1", api_port: int = 8080):
+    def __init__(
+        self,
+        config: Union[dict, str, PosixPath] = {},
+        api_host: str = "127.0.0.1",
+        api_port: int = 8080,
+        use_verify_peer_cert_by_name: bool | None = None,
+    ):
         if isinstance(config, str):
             try:
                 # considering string as json
@@ -232,6 +221,7 @@ class XRayConfig(dict):
 
         self.api_host = api_host
         self.api_port = api_port
+        self.use_verify_peer_cert_by_name = use_verify_peer_cert_by_name
 
         super().__init__(config)
         self._validate()
@@ -319,9 +309,14 @@ class XRayConfig(dict):
         ):
             rules.insert(0, rule)
 
+    def _use_verify_peer_cert_by_name(self) -> bool:
+        if self.use_verify_peer_cert_by_name is not None:
+            return bool(self.use_verify_peer_cert_by_name)
+        return is_xray_version_at_least(VERIFY_PEER_CERT_BY_NAME_MIN_VERSION)
+
     def _migrate_deprecated_configs(self):
         """Migrate deprecated config formats to new formats to avoid deprecation warnings."""
-        use_verify_peer_cert_by_name = is_xray_version_at_least(VERIFY_PEER_CERT_BY_NAME_MIN_VERSION)
+        use_verify_peer_cert_by_name = self._use_verify_peer_cert_by_name()
 
         def migrate_stream_settings(stream):
             """Helper function to migrate stream settings for both inbound and outbound."""
@@ -680,7 +675,7 @@ class XRayConfig(dict):
         config = self.copy()
         # Ensure migration is applied to the copied config before adding users
         config._migrate_deprecated_configs()
-        use_verify_peer_cert_by_name = is_xray_version_at_least(VERIFY_PEER_CERT_BY_NAME_MIN_VERSION)
+        use_verify_peer_cert_by_name = config._use_verify_peer_cert_by_name()
 
         with GetDB() as db:
             base_columns = (
