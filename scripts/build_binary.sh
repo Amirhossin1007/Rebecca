@@ -83,6 +83,7 @@ COMMON_PYINSTALLER_ARGS=(
     --hidden-import dashboard
     --hidden-import main
     --hidden-import passlib.handlers.bcrypt
+    --hidden-import httpx
     --hidden-import pkg_resources
     --hidden-import pymysql
 )
@@ -109,9 +110,16 @@ env REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false python -m PyInstaller \
     --add-data "$(pyinstaller_add_data "dashboard/build" "dashboard/build")" \
     packaging/binary_launcher.py
 
-env REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false python -m PyInstaller \
-    "${COMMON_PYINSTALLER_ARGS[@]}" \
-    "${XRAY_PROTO_HIDDEN_IMPORT_ARGS[@]}" \
-    "${JOB_HIDDEN_IMPORT_ARGS[@]}" \
-    --name rebecca-cli \
-    rebecca-cli.py
+go_cli_status=0
+bash scripts/build_go_cli.sh || go_cli_status=$?
+if [ "$go_cli_status" -ne 0 ]; then
+    if [ "$go_cli_status" -ne 2 ]; then
+        exit "$go_cli_status"
+    fi
+    env REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false python -m PyInstaller \
+        "${COMMON_PYINSTALLER_ARGS[@]}" \
+        "${XRAY_PROTO_HIDDEN_IMPORT_ARGS[@]}" \
+        "${JOB_HIDDEN_IMPORT_ARGS[@]}" \
+        --name rebecca-cli \
+        rebecca-cli.py
+fi

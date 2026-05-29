@@ -1,9 +1,40 @@
 #!/usr/bin/env python3
 import os  # noqa
 import sys  # noqa
+from pathlib import Path
 
 os.environ.setdefault("REBECCA_SKIP_RUNTIME_INIT", "1")
-sys.path.insert(0, os.getcwd())  # noqa
+
+
+def _prepend_safe_import_root() -> None:
+    """
+    Prefer the bundled/source project root over the caller's current directory.
+
+    The CLI is commonly invoked from /root on production servers. If that
+    directory contains an app.py file, putting cwd first shadows Rebecca's
+    app package and breaks commands before they can start.
+    """
+    cwd = Path.cwd().resolve()
+
+    filtered_paths = []
+    for entry in sys.path:
+        try:
+            resolved = Path(entry or str(cwd)).resolve()
+        except OSError:
+            filtered_paths.append(entry)
+            continue
+        if resolved != cwd:
+            filtered_paths.append(entry)
+    sys.path[:] = filtered_paths
+
+    if getattr(sys, "frozen", False):
+        import_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)).resolve()
+    else:
+        import_root = Path(__file__).resolve().parent
+    sys.path.insert(0, str(import_root))
+
+
+_prepend_safe_import_root()
 
 try:
     import readline  # noqa: F401
