@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Set, Tuple, Union, Literal
 
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, inspect
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import set_committed_value
 from app.db.models import (
@@ -168,7 +168,10 @@ class ServiceRepository:
         for proxy in list(dbuser.proxies):
             proxy_type = ProxyTypes(proxy.type)
             if proxy_type not in allowed_protocols:
-                self.db.delete(proxy)
+                if inspect(proxy).persistent:
+                    self.db.delete(proxy)
+                elif proxy in dbuser.proxies:
+                    dbuser.proxies.remove(proxy)
                 continue
             existing_proxies[proxy_type] = proxy
 
