@@ -67,13 +67,12 @@ def _send_with_retry(send_callable: Callable[[], None], *, category: str, target
             should_retry = exc.error_code == 429 and retry_delay and attempt + 1 < attempts
             if should_retry:
                 logger.warning(
-                    "Telegram rate limit triggered while sending '%s' notification to %s; retrying in %s seconds",
+                    "Telegram rate limit triggered while sending '%s' notification to %s; skipping retry after %s seconds",
                     category,
                     target_desc,
                     retry_delay,
                 )
-                time.sleep(retry_delay)
-                continue
+                return False
             error_msg = str(exc)
             error_code = getattr(exc, "error_code", None)
             error_description = getattr(exc, "description", error_msg)

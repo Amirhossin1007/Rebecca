@@ -109,7 +109,7 @@ func (r Repository) systemUsage(ctx context.Context) (int64, int64, error) {
 	var downlink sql.NullInt64
 	err := r.db.QueryRowContext(
 		ctx,
-		`SELECT COALESCE(uplink, 0), COALESCE(downlink, 0) FROM system ORDER BY id LIMIT 1`,
+		"SELECT COALESCE(uplink, 0), COALESCE(downlink, 0) FROM `system` ORDER BY id LIMIT 1",
 	).Scan(&uplink, &downlink)
 	if err == sql.ErrNoRows {
 		return 0, 0, nil

@@ -1686,28 +1686,27 @@ export const NodesPage: FC = () => {
 					boxShadow="sm"
 					overflowX="auto"
 				>
-					<Table size="sm" variant="simple" minW="1680px">
+					<Table size="sm" variant="simple" minW="1240px">
 						<Thead bg={nodePanelBg}>
 							<Tr>
-								<Th minW="180px">{t("nodes.columns.name", "Name")}</Th>
-								<Th minW="170px">{t("nodes.columns.address", "Address")}</Th>
-								<Th minW="180px">{t("nodes.columns.ports", "Ports")}</Th>
-								<Th minW="130px">{t("nodes.columns.status", "Status")}</Th>
-								<Th minW="240px">{t("nodes.columns.inbounds", "Inbounds")}</Th>
-								<Th minW="140px">
+								<Th minW="210px">{t("nodes.columns.name", "Name")}</Th>
+								<Th minW="150px">{t("nodes.columns.address", "Address")}</Th>
+								<Th minW="180px">{t("nodes.columns.inbounds", "Inbounds")}</Th>
+								<Th minW="130px">
 									{t("nodes.columns.xrayVersion", "Xray version")}
 								</Th>
 								<Th minW="150px">
-									{t("nodes.columns.nodeVersion", "Node version")}
+									{t("nodes.columns.nodeRuntime", "Node / install")}
 								</Th>
-								<Th minW="170px">{t("nodes.columns.install", "Install")}</Th>
-								<Th minW="210px">{t("nodes.columns.traffic", "Traffic")}</Th>
-								<Th minW="240px">{t("nodes.columns.limit", "Limit")}</Th>
 								<Th minW="150px">
-									{t("nodes.columns.coefficient", "Coefficient")}
+									{t("nodes.columns.trafficLimit", "Traffic / Limit")}
 								</Th>
-								<Th minW="210px">{t("nodes.columns.proxy", "Proxy")}</Th>
-								<Th minW="220px">
+								<Th minW="130px">
+									{t("nodes.columns.bandwidth", "Upload / Download")}
+								</Th>
+								<Th minW="110px">{t("nodes.columns.cpu", "CPU")}</Th>
+								<Th minW="130px">{t("nodes.columns.ram", "RAM")}</Th>
+								<Th minW="160px">
 									{t("nodes.columns.certificate", "Certificate")}
 								</Th>
 							</Tr>
@@ -1771,7 +1770,15 @@ export const NodesPage: FC = () => {
 												</Portal>
 											</Menu>
 											<VStack align="flex-start" spacing={1}>
-												<Text fontWeight="semibold">{masterLabel}</Text>
+												<HStack spacing={2} align="center" flexWrap="wrap">
+													<Text fontWeight="semibold">{masterLabel}</Text>
+													<NodeModalStatusBadge status={masterStatus} compact />
+													{masterState?.limit_exceeded && (
+														<Tag colorScheme="red" size="sm">
+															{t("nodes.limitReached", "Limit reached")}
+														</Tag>
+													)}
+												</HStack>
 												<Text
 													fontSize="xs"
 													color="gray.500"
@@ -1783,17 +1790,6 @@ export const NodesPage: FC = () => {
 										</HStack>
 									</Td>
 									<Td>{EMPTY_CELL_VALUE}</Td>
-									<Td>{EMPTY_CELL_VALUE}</Td>
-									<Td>
-										<VStack align="flex-start" spacing={2}>
-											<NodeModalStatusBadge status={masterStatus} compact />
-											{masterState?.limit_exceeded && (
-												<Tag colorScheme="red" size="sm">
-													{t("nodes.limitReached", "Limit reached")}
-												</Tag>
-											)}
-										</VStack>
-									</Td>
 									<Td>
 										<NodeInboundTags
 											tags={defaultInboundSummaries}
@@ -1816,31 +1812,22 @@ export const NodesPage: FC = () => {
 										>
 											{coreStats?.version
 												? `Xray ${coreStats.version}`
-												: t("nodes.versionUnknown", "Version unknown")}
-										</Tag>
-									</Td>
-									<Td>{EMPTY_CELL_VALUE}</Td>
-									<Td>
-										<Tag size="sm" colorScheme="gray">
-											{panelInstallMode}
+											: t("nodes.versionUnknown", "Version unknown")}
 										</Tag>
 									</Td>
 									<Td>
 										<VStack align="flex-start" spacing={1}>
-											<Text fontWeight="medium">{masterUsageDisplay}</Text>
-											<Text fontSize="xs" color="gray.500">
-												{t("nodes.uplink", "Uplink")}:{" "}
-												{formatBytes(masterState?.uplink ?? 0, 2)}
-											</Text>
-											<Text fontSize="xs" color="gray.500">
-												{t("nodes.downlink", "Downlink")}:{" "}
-												{formatBytes(masterState?.downlink ?? 0, 2)}
-											</Text>
+											<Text fontWeight="medium">{EMPTY_CELL_VALUE}</Text>
+											<Tag size="sm" colorScheme="gray">
+												{panelInstallMode}
+											</Tag>
 										</VStack>
 									</Td>
 									<Td>
 										<VStack align="flex-start" spacing={1}>
-											<Text fontWeight="medium">{masterDataLimitDisplay}</Text>
+											<Text fontWeight="medium">
+												{masterUsageDisplay} / {masterDataLimitDisplay}
+											</Text>
 											{masterRemainingDisplay && (
 												<Text fontSize="xs" color="gray.500">
 													{t("nodes.remainingData", "Remaining data")}:{" "}
@@ -1849,6 +1836,7 @@ export const NodesPage: FC = () => {
 											)}
 										</VStack>
 									</Td>
+									<Td>{EMPTY_CELL_VALUE}</Td>
 									<Td>{EMPTY_CELL_VALUE}</Td>
 									<Td>{EMPTY_CELL_VALUE}</Td>
 									<Td>{EMPTY_CELL_VALUE}</Td>
@@ -1885,22 +1873,34 @@ export const NodesPage: FC = () => {
 										latestNodeVersion,
 									);
 								const totalUsage = (node.uplink ?? 0) + (node.downlink ?? 0);
-								const remainingData =
+								const nodeInstallLabel =
+									[node.node_install_mode, node.node_update_channel]
+										.filter(Boolean)
+										.join(" / ") || EMPTY_CELL_VALUE;
+								const nodeTrafficLimitDisplay = `${formatNodeBytes(
+									totalUsage,
+									2,
+								)} / ${
 									node.data_limit != null && node.data_limit > 0
-										? Math.max(node.data_limit - totalUsage, 0)
-										: null;
+										? formatNodeLimit(node.data_limit)
+										: t("nodes.unlimited", "Unlimited")
+								}`;
+								const nodeCPUDisplay = `${formatCPUFrequency(
+									node.cpu_frequency_hz,
+								)} / ${formatNodePercent(node.cpu_usage_percent)}`;
+								const nodeRAMDisplay = `${formatNodeBytes(
+									node.memory_used,
+									2,
+								)} / ${formatNodeBytes(node.memory_total, 2)}`;
+								const nodeBandwidthDisplay = `${formatNodeSpeed(
+									node.upload_speed,
+								)} / ${formatNodeSpeed(node.download_speed)}`;
 								const customInbounds = uniqueValues(
 									getConfigInbounds(node.xray_config),
 								);
 								const inboundSummaries = customInbounds.length
 									? customInbounds
 									: defaultInboundSummaries;
-								const proxyLabel =
-									node.proxy_enabled && node.proxy_type
-										? `${node.proxy_type} ${formatCellValue(
-												node.proxy_host,
-											)}:${formatCellValue(node.proxy_port)}`
-										: t("nodes.proxyDisabled", "Disabled");
 								const certificateCopyValue =
 									node.node_certificate || node.certificate_public_key || "";
 								const statusBadge = (
@@ -2085,10 +2085,13 @@ export const NodesPage: FC = () => {
 													</Portal>
 												</Menu>
 												<VStack align="flex-start" spacing={1}>
-													<Text fontWeight="semibold">
-														{node.name ||
-															t("nodes.unnamedNode", "Unnamed node")}
-													</Text>
+													<HStack spacing={2} align="center" flexWrap="wrap">
+														<Text fontWeight="semibold">
+															{node.name ||
+																t("nodes.unnamedNode", "Unnamed node")}
+														</Text>
+														{statusDisplay}
+													</HStack>
 													<Text fontSize="xs" color="gray.500">
 														{t("nodes.id", "ID")}: {node.id ?? EMPTY_CELL_VALUE}
 													</Text>
@@ -2116,25 +2119,6 @@ export const NodesPage: FC = () => {
 												</Text>
 											</Tooltip>
 										</Td>
-										<Td>
-											<VStack align="flex-start" spacing={1}>
-												<Text dir="ltr">
-													{t("nodes.nodePort", "Node port")}:{" "}
-													{formatCellValue(node.port)}
-												</Text>
-												<Text fontSize="xs" color="gray.500" dir="ltr">
-													{t("nodes.nodeAPIPort", "API port")}:{" "}
-													{formatCellValue(node.api_port)}
-												</Text>
-												{node.use_nobetci && (
-													<Text fontSize="xs" color="gray.500" dir="ltr">
-														{t("nodes.nobetciPort", "Nobetci")}:{" "}
-														{formatCellValue(node.nobetci_port)}
-													</Text>
-												)}
-											</VStack>
-										</Td>
-										<Td>{statusDisplay}</Td>
 										<Td>
 											<NodeInboundTags
 												tags={inboundSummaries}
@@ -2172,9 +2156,12 @@ export const NodesPage: FC = () => {
 															})
 														: t(
 																"nodes.nodeServiceVersionUnknown",
-																"Node version unknown",
+														"Node version unknown",
 															)}
 												</Tag>
+												<Text fontSize="xs" color="gray.500">
+													{nodeInstallLabel}
+												</Text>
 												{nodeServiceUpdateAvailable && (
 													<Button
 														size="xs"
@@ -2191,61 +2178,16 @@ export const NodesPage: FC = () => {
 											</VStack>
 										</Td>
 										<Td>
-											<VStack align="flex-start" spacing={1}>
-												<Tag size="sm" colorScheme="gray">
-													{formatCellValue(node.node_install_mode)}
-												</Tag>
-												<Text fontSize="xs" color="gray.500">
-													{t("nodes.updateChannel", "Channel")}:{" "}
-													{formatCellValue(node.node_update_channel)}
-												</Text>
-											</VStack>
+											<Text fontWeight="medium">{nodeTrafficLimitDisplay}</Text>
 										</Td>
 										<Td>
-											<VStack align="flex-start" spacing={1}>
-												<Text fontWeight="medium">
-													{formatBytes(totalUsage, 2)}
-												</Text>
-												<Text fontSize="xs" color="gray.500">
-													{t("nodes.uplink", "Uplink")}:{" "}
-													{formatBytes(node.uplink ?? 0, 2)}
-												</Text>
-												<Text fontSize="xs" color="gray.500">
-													{t("nodes.downlink", "Downlink")}:{" "}
-													{formatBytes(node.downlink ?? 0, 2)}
-												</Text>
-											</VStack>
+											<Text fontWeight="medium">{nodeBandwidthDisplay}</Text>
 										</Td>
 										<Td>
-											<VStack align="flex-start" spacing={1}>
-												<Text fontWeight="medium">
-													{node.data_limit != null && node.data_limit > 0
-														? formatBytes(node.data_limit, 2)
-														: t("nodes.unlimited", "Unlimited")}
-												</Text>
-												{remainingData !== null && (
-													<Text fontSize="xs" color="gray.500">
-														{t("nodes.remainingData", "Remaining data")}:{" "}
-														{formatBytes(remainingData, 2)}
-													</Text>
-												)}
-											</VStack>
+											<Text fontWeight="medium">{nodeCPUDisplay}</Text>
 										</Td>
-										<Td>{formatCellValue(node.usage_coefficient)}</Td>
 										<Td>
-											<VStack align="flex-start" spacing={1}>
-												<Tag
-													size="sm"
-													colorScheme={node.proxy_enabled ? "green" : "gray"}
-												>
-													{proxyLabel}
-												</Tag>
-												{node.proxy_username && (
-													<Text fontSize="xs" color="gray.500">
-														{node.proxy_username}
-													</Text>
-												)}
-											</VStack>
+											<Text fontWeight="medium">{nodeRAMDisplay}</Text>
 										</Td>
 										<Td>
 											<VStack align="flex-start" spacing={1}>
@@ -2327,7 +2269,7 @@ export const NodesPage: FC = () => {
 							})}
 							{!masterMatchesSearch && filteredNodes.length === 0 && (
 								<Tr>
-									<Td colSpan={13}>
+									<Td colSpan={10}>
 										<Text
 											fontSize="sm"
 											color="gray.500"
