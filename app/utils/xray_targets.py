@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db import crud
 from app.db.models import Node as DBNode
 from app.models.node import XrayConfigMode
-from app.reb_node.config import XRayConfig
+from app.xray.config import XRayConfig
 from app.utils.xray_defaults import (
     VERIFY_PEER_CERT_BY_NAME_MIN_VERSION,
     apply_log_paths,

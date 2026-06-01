@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload
 from app.models.proxy import ProxyHostSecurity
 from app.utils.store import DictStorage
 from app.utils.system import check_port
-from app.reb_node.config import XRayConfig
+from app.xray.config import XRayConfig
 from app.reb_node.node import XRayNode
 from xray_api import exceptions, types
 from xray_api import exceptions as exc  # noqa: F401

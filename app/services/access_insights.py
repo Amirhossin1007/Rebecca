@@ -13,7 +13,7 @@ import os
 import requests
 from urllib.parse import urlsplit, urlunsplit
 
-from app.runtime import xray
+from app.services import go_node
 from config import XRAY_ASSETS_PATH, XRAY_LOG_DIR
 from app.proto.rebecca.app.router import config_pb2
 
@@ -175,31 +175,34 @@ def get_all_log_sources() -> list[NodeLogSource]:
     except Exception:
         pass
 
-    # Add node logs via REST API. The master has no local runtime.
-    if xray and hasattr(xray, "nodes"):
-        node_metadata = _load_node_metadata()
-        for node_id, node in xray.nodes.items():
+    node_metadata = _load_node_metadata()
+    try:
+        runtime_nodes = go_node.list_nodes()
+    except Exception:
+        runtime_nodes = []
+    for runtime_node in runtime_nodes:
+        try:
+            node_id = int(runtime_node.get("id"))
             metadata = node_metadata.get(int(node_id), {})
             status_raw = metadata.get("status")
             status = str(getattr(status_raw, "value", status_raw)).strip().lower() if status_raw is not None else ""
             if status in {"disabled", "limited"}:
                 continue
 
-            node_name = metadata.get("name") or getattr(node, "name", None) or f"Node-{node_id}"
-            connected = bool(getattr(node, "_session_id", None))
-            try:
-                sources.append(
-                    NodeLogSource(
-                        node_id=node_id,
-                        node_name=node_name,
-                        log_path=None,
-                        is_master=False,
-                        fetch_lines=lambda max_lines, _node=node: _fetch_node_access_logs(_node, max_lines),
-                        connected=connected,
-                    )
+            node_name = metadata.get("name") or runtime_node.get("name") or f"Node-{node_id}"
+            connected = str(runtime_node.get("status", "")).lower() == "connected"
+            sources.append(
+                NodeLogSource(
+                    node_id=node_id,
+                    node_name=node_name,
+                    log_path=None,
+                    is_master=False,
+                    fetch_lines=lambda max_lines, _node_id=node_id: _fetch_node_access_logs(_node_id, max_lines),
+                    connected=connected,
                 )
-            except Exception:
-                continue
+            )
+        except Exception:
+            continue
 
     return sources
 
@@ -227,7 +230,11 @@ def resolve_access_log_path() -> Path:
     # 1) Use the configured log.access value (respecting relative/None/empty)
     log_config: dict[str, Any] = {}
     try:
-        log_config = getattr(getattr(xray, "config", None), "get", lambda *_: {})("log", {}) or {}
+        from app.db import GetDB, crud
+
+        with GetDB() as db:
+            raw_config = crud.get_xray_config(db)
+        log_config = raw_config.get("log", {}) if isinstance(raw_config, dict) else {}
     except Exception:
         log_config = {}
 
@@ -1102,7 +1109,7 @@ def build_access_insights(
     }
 
 
-def _fetch_node_access_logs(node, max_lines: int = 500) -> list[str]:
+def _fetch_node_access_logs(node_id: int, max_lines: int = 500) -> list[str]:
     """
     Fetch access logs from a remote node.
     Uses websocket transport when available on the node, otherwise REST fallback.
@@ -1110,26 +1117,7 @@ def _fetch_node_access_logs(node, max_lines: int = 500) -> list[str]:
     """
     max_lines = max(1, int(max_lines))
     try:
-        # New node client API (websocket-preferred + REST fallback)
-        if hasattr(node, "get_access_logs"):
-            lines = node.get_access_logs(max_lines=max_lines)
-            if isinstance(lines, list):
-                return [str(line) for line in lines]
-            raise RuntimeError("Invalid access logs response from node")
-
-        # Legacy fallback for older node client objects.
-        if hasattr(node, "_ensure_connected"):
-            node._ensure_connected()
-
-        response = node.make_request("/access_logs", timeout=40, max_lines=max_lines)
-        if isinstance(response, dict):
-            if not response.get("exists"):
-                return []
-            lines = response.get("lines") or []
-            if isinstance(lines, list):
-                return [str(line) for line in lines]
-            raise RuntimeError("Invalid access logs payload from node")
-        return []
+        return go_node.logs(node_id, max_lines=max_lines)
     except Exception as exc:
         raise RuntimeError(str(exc)) from exc
 

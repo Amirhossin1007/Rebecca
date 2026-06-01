@@ -190,6 +190,7 @@ SUB_SUPPORT_URL = "https://t.me/"
 SUB_PROFILE_TITLE = "Subscription"
 
 # Interval jobs, all values are in seconds
+# Legacy Python node runtime setting; ignored by the Go/gRPC node controller.
 NODE_RUNTIME_HEALTH_CHECK_INTERVAL = config("NODE_RUNTIME_HEALTH_CHECK_INTERVAL", cast=int, default=10)
 JOB_RECORD_NODE_USAGES_INTERVAL = config("JOB_RECORD_NODE_USAGES_INTERVAL", cast=int, default=30)
 NODE_HEALTH_CACHE_SECONDS = config("NODE_HEALTH_CACHE_SECONDS", cast=int, default=60)

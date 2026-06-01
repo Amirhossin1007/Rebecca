@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocke
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
-from app.runtime import logger, xray
+from app.runtime import logger
 from app.db import Session, crud, get_db, GetDB
 from app.dependencies import get_dbnode, validate_dates
 from app.models.admin import Admin, AdminRole
@@ -26,7 +26,7 @@ from app.models.proxy import ProxyHost
 from app.utils import responses, report
 from app.db.models import MasterNodeState as DBMasterNodeState, Node as DBNode
 from app.routers.runtime import GEO_TEMPLATES_INDEX_DEFAULT, _resolve_geo_template_index_url
-from app.services import go_usage
+from app.services import go_node, go_usage, node_operations
 from app.utils.binary_control import build_rebecca_update_args, require_binary_runtime
 from app.utils.xray_logs import normalize_log_chunk, sort_log_lines
 from app.utils.crypto import (
@@ -50,10 +50,9 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
             remark=f"{new_node.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
             address=new_node.address,
         )
-        inbound_tags = collect_all_inbound_tags(db) or set(xray.config.inbounds_by_tag)
+        inbound_tags = collect_all_inbound_tags(db)
         for inbound_tag in inbound_tags:
             crud.add_host(db, inbound_tag, host)
-        xray.hosts.update()
 
 
 MASTER_NODE_NAME = "Master"
@@ -66,27 +65,57 @@ NODE_BINARY_REQUIRED_DETAIL = (
 def _serialize_node_response(dbnode: Union[DBNode, NodeResponse]) -> NodeResponse:
     """Convert DB node rows to API responses enriched with runtime metadata."""
     node_response = dbnode if isinstance(dbnode, NodeResponse) else NodeResponse.model_validate(dbnode)
-    runtime_node = xray.nodes.get(node_response.id)
-    if runtime_node:
-        try:
-            runtime_node.refresh_health()
-        except Exception as exc:
-            logger.debug("Unable to refresh node runtime metadata for %s: %s", node_response.id, exc)
-        node_response.node_service_version = getattr(runtime_node, "node_version", None)
-        node_response.node_install_mode = getattr(runtime_node, "install_mode", None)
-        node_response.node_binary_tag = getattr(runtime_node, "node_binary_tag", None)
-        node_response.node_update_channel = getattr(runtime_node, "update_channel", None)
-        for attr in (
-            "cpu_cores",
-            "cpu_frequency_hz",
-            "cpu_usage_percent",
-            "memory_used",
-            "memory_total",
-            "memory_usage_percent",
-            "upload_speed",
-            "download_speed",
-        ):
-            setattr(node_response, attr, getattr(runtime_node, attr, None))
+    try:
+        runtime = go_node.get_node(int(node_response.id))
+    except Exception as exc:
+        logger.debug("Unable to refresh node runtime metadata for %s via Go bridge: %s", node_response.id, exc)
+        return node_response
+
+    runtime = _flatten_go_node_payload(runtime)
+    for field, value in runtime.items():
+        if hasattr(node_response, field) and value is not None:
+            setattr(node_response, field, value)
+    return node_response
+
+
+def _flatten_go_node_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    result = dict(payload)
+    cpu = payload.get("cpu") if isinstance(payload.get("cpu"), dict) else {}
+    memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
+    transfer = payload.get("transfer") if isinstance(payload.get("transfer"), dict) else {}
+    if cpu:
+        result["cpu_cores"] = cpu.get("cores")
+        result["cpu_frequency_hz"] = cpu.get("frequency_hz")
+        result["cpu_usage_percent"] = cpu.get("usage_percent")
+    if memory:
+        result["memory_used"] = memory.get("used_bytes")
+        result["memory_total"] = memory.get("total_bytes")
+        result["memory_usage_percent"] = memory.get("usage_percent")
+    if transfer:
+        result["upload_speed"] = transfer.get("upload_bytes_per_second")
+        result["download_speed"] = transfer.get("download_bytes_per_second")
+    return result
+
+
+def _node_response_from_go(payload: dict) -> NodeResponse:
+    return NodeResponse.model_validate(_flatten_go_node_payload(payload))
+
+
+def _apply_runtime_fields(node_response: NodeResponse, runtime: dict) -> NodeResponse:
+    runtime = _flatten_go_node_payload(runtime)
+    node_response.node_service_version = runtime.get("node_service_version") or node_response.node_service_version
+    node_response.node_install_mode = runtime.get("node_install_mode") or node_response.node_install_mode
+    node_response.node_update_channel = runtime.get("node_update_channel") or node_response.node_update_channel
+    node_response.cpu_cores = runtime.get("cpu_cores")
+    node_response.cpu_frequency_hz = runtime.get("cpu_frequency_hz")
+    node_response.cpu_usage_percent = runtime.get("cpu_usage_percent")
+    node_response.memory_used = runtime.get("memory_used")
+    node_response.memory_total = runtime.get("memory_total")
+    node_response.memory_usage_percent = runtime.get("memory_usage_percent")
+    node_response.upload_speed = runtime.get("upload_speed")
+    node_response.download_speed = runtime.get("download_speed")
     return node_response
 
 
@@ -124,7 +153,8 @@ def _augment_node_cert_fields(
 
 
 def _require_node_binary_runtime(node) -> None:
-    if getattr(node, "install_mode", None) != "binary":
+    install_mode = getattr(node, "install_mode", None) or getattr(node, "node_install_mode", None)
+    if install_mode != "binary":
         raise HTTPException(status_code=409, detail=NODE_BINARY_REQUIRED_DETAIL)
 
 
@@ -225,7 +255,7 @@ def add_node(
         db.rollback()
         raise HTTPException(status_code=409, detail=f'Node "{new_node.name}" already exists')
 
-    bg.add_task(xray.operations.connect_node, node_id=dbnode.id)
+    bg.add_task(go_node.connect_node, node_id=dbnode.id)
     bg.add_task(add_host_if_needed, new_node, db)
     bg.add_task(
         report.node_created,
@@ -245,13 +275,20 @@ def add_node(
 
 @router.get("/node/{node_id}", response_model=NodeResponse)
 def get_node(
-    dbnode: NodeResponse = Depends(get_dbnode),
+    node_id: int,
+    db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Retrieve details of a specific node by its ID."""
-    with GetDB() as db:
+    dbnode = crud.get_node_by_id(db, node_id)
+    if not dbnode:
+        raise HTTPException(status_code=404, detail="Node not found")
+    try:
+        return _node_response_from_go(go_node.get_node(node_id))
+    except Exception as exc:
+        logger.warning("Go node get failed for %s, falling back to DB row: %s", node_id, exc)
         default_cert = crud.get_tls_certificate(db).certificate
-    return _augment_node_cert_fields(_serialize_node_response(dbnode), dbnode, default_cert)
+        return _augment_node_cert_fields(NodeResponse.model_validate(dbnode), dbnode, default_cert)
 
 
 @router.post("/node/{node_id}/certificate/regenerate", response_model=NodeResponse)
@@ -266,14 +303,6 @@ def regenerate_node_certificate(
         raise HTTPException(status_code=404, detail="Node not found")
 
     updated = crud.regenerate_node_certificate(db, dbnode)
-
-    # Clear cached TLS so new cert is used immediately
-    try:
-        from app.reb_node.operations import get_tls
-
-        get_tls.cache_clear()
-    except Exception:
-        pass
 
     default_cert = crud.get_tls_certificate(db).certificate
     resp = _augment_node_cert_fields(_serialize_node_response(updated), updated, default_cert)
@@ -295,11 +324,10 @@ async def node_logs(node_id: int, websocket: WebSocket):
     if admin.role not in (AdminRole.sudo, AdminRole.full_access):
         return await websocket.close(reason="You're not allowed", code=4403)
 
-    if not xray.nodes.get(node_id):
-        return await websocket.close(reason="Node not found", code=4404)
-
-    if not xray.nodes[node_id].connected:
-        return await websocket.close(reason="Node is not connected", code=4400)
+    try:
+        go_node.health(node_id)
+    except Exception as exc:
+        return await websocket.close(reason=f"Node is not connected: {exc}", code=4400)
 
     interval = websocket.query_params.get("interval")
     if interval:
@@ -314,8 +342,6 @@ async def node_logs(node_id: int, websocket: WebSocket):
 
     cache: list[str] = []
     last_sent_ts = 0
-    node = xray.nodes[node_id]
-
     async def _flush_cache() -> bool:
         nonlocal cache, last_sent_ts
         if not cache:
@@ -329,48 +355,52 @@ async def node_logs(node_id: int, websocket: WebSocket):
         last_sent_ts = time.time()
         return True
 
-    with node.get_logs() as logs:
-        while True:
-            if not node == xray.nodes[node_id]:
+    sent: set[str] = set()
+    while True:
+        try:
+            lines = go_node.logs(node_id, max_lines=200)
+        except Exception as exc:
+            try:
+                await websocket.send_text(str(exc))
+            except (WebSocketDisconnect, RuntimeError):
                 break
+            await asyncio.sleep(2)
+            continue
 
-            if interval and time.time() - last_sent_ts >= interval and cache:
+        fresh = [line for line in sort_log_lines(lines) if line not in sent]
+        for line in fresh:
+            sent.add(line)
+
+        if interval:
+            cache.extend(fresh)
+            if time.time() - last_sent_ts >= interval:
                 if not await _flush_cache():
                     break
-
-            if not logs:
-                try:
-                    await asyncio.wait_for(websocket.receive(), timeout=4)
-                    continue
-                except asyncio.TimeoutError:
-                    continue
-                except (WebSocketDisconnect, RuntimeError):
-                    break
-
-            log_chunk = str(logs.popleft())
-            lines = normalize_log_chunk(log_chunk)
-
-            if interval:
-                cache.extend(lines)
-                continue
-
-            send_failed = False
-            for line in sort_log_lines(lines):
+        else:
+            for line in fresh:
                 try:
                     await websocket.send_text(line)
                 except (WebSocketDisconnect, RuntimeError):
-                    send_failed = True
-                    break
-            if send_failed:
-                break
+                    return
+
+        try:
+            await asyncio.wait_for(websocket.receive(), timeout=2)
+        except asyncio.TimeoutError:
+            continue
+        except (WebSocketDisconnect, RuntimeError):
+            break
 
 
 @router.get("/nodes", response_model=List[NodeResponse])
 def get_nodes(db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)):
     """Retrieve a list of all nodes. Accessible only to sudo admins."""
-    nodes = crud.get_nodes(db)
-    default_cert = crud.get_tls_certificate(db).certificate
-    return [_augment_node_cert_fields(_serialize_node_response(node), node, default_cert) for node in nodes]
+    try:
+        return [_node_response_from_go(node) for node in go_node.list_nodes()]
+    except Exception as exc:
+        logger.warning("Go node list failed, falling back to DB rows: %s", exc)
+        nodes = crud.get_nodes(db)
+        default_cert = crud.get_tls_certificate(db).certificate
+        return [_augment_node_cert_fields(NodeResponse.model_validate(node), node, default_cert) for node in nodes]
 
 
 @router.put("/node/{node_id}", response_model=NodeResponse)
@@ -389,9 +419,8 @@ def modify_node(
     if modified_node.status is not None and updated_node_resp.status != previous_status:
         bg.add_task(report.node_status_change, updated_node_resp, previous_status=previous_status)
 
-    bg.add_task(xray.operations.remove_node, updated_node.id)
     if updated_node.status not in {NodeStatus.disabled, NodeStatus.limited}:
-        bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
+        bg.add_task(go_node.sync_node, node_id=updated_node.id)
 
     logger.info(f'Node "{dbnode.name}" modified')
     default_cert = crud.get_tls_certificate(db).certificate
@@ -407,7 +436,7 @@ def reset_node_usage(
 ):
     """Reset the tracked data usage of a node."""
     updated_node = crud.reset_node_usage(db, dbnode)
-    bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
+    bg.add_task(go_node.sync_node, node_id=updated_node.id)
     report.node_usage_reset(updated_node, admin)
     logger.info(f'Node "{dbnode.name}" usage reset')
     default_cert = crud.get_tls_certificate(db).certificate
@@ -424,8 +453,22 @@ def reconnect_node(
     if dbnode.status in {NodeStatus.disabled, NodeStatus.limited}:
         raise HTTPException(status_code=400, detail="Node is disabled or limited")
 
-    bg.add_task(xray.operations.connect_node, node_id=dbnode.id, force=True)
+    bg.add_task(go_node.reconnect_node, node_id=dbnode.id)
     return {"detail": "Reconnection task scheduled", "node_id": dbnode.id}
+
+
+@router.post("/node/{node_id}/restart")
+def restart_node_runtime(
+    bg: BackgroundTasks,
+    dbnode: DBNode = Depends(get_dbnode),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Restart a node runtime through the Go gRPC node controller."""
+    if dbnode.status in {NodeStatus.disabled, NodeStatus.limited}:
+        raise HTTPException(status_code=400, detail="Node is disabled or limited")
+
+    bg.add_task(node_operations.queue_restart_node, dbnode.id)
+    return {"detail": "Restart task scheduled", "node_id": dbnode.id}
 
 
 @router.delete("/node/{node_id}")
@@ -437,7 +480,6 @@ def remove_node(
 ):
     """Delete a node and schedule xray cleanup in the background."""
     crud.remove_node(db, dbnode)
-    bg.add_task(xray.operations.remove_node, dbnode.id)
 
     report.node_deleted(dbnode, admin)
 
@@ -498,20 +540,12 @@ def update_node_runtime(
     if not version or not isinstance(version, str):
         raise HTTPException(status_code=422, detail="version is required")
 
-    node = xray.nodes.get(node_id)
-    if not node:
-        raise HTTPException(404, detail="Node not connected")
-    _require_node_binary_runtime(node)
-
-    _node_operation_or_raise(
-        node_id=node_id,
-        node_name=dbnode.name,
-        action=lambda: node.update_core(version=version),
-        failure_message=f"Unable to update node runtime for {dbnode.name}",
-    )
-    startup_config = xray.config.include_db_users()
-    xray.operations.restart_node(node_id, startup_config)
-    xray.operations.schedule_node_reconnect(node_id, config=startup_config, delay_seconds=8)
+    _require_node_binary_runtime(dbnode)
+    try:
+        go_node.update_runtime(node_id, version=version)
+        go_node.sync_node(node_id)
+    except Exception as exc:
+        raise HTTPException(502, detail=f'Node "{dbnode.name}" runtime update failed: {exc}') from exc
 
     return {"detail": f"Node {dbnode.name} switched to {version}"}
 
@@ -570,19 +604,12 @@ def update_node_geo(
     if not files or not isinstance(files, list):
         raise HTTPException(422, detail="'files' must be a non-empty list of {name,url}.")
 
-    node = xray.nodes.get(node_id)
-    if not node:
-        raise HTTPException(404, detail="Node not connected")
-    _require_node_binary_runtime(node)
-
-    _node_operation_or_raise(
-        node_id=node_id,
-        node_name=dbnode.name,
-        action=lambda: node.update_geo(files=files),
-        failure_message=f"Unable to update geo assets for {dbnode.name}",
-    )
-    startup_config = xray.config.include_db_users()
-    xray.operations.restart_node(node_id, startup_config)
+    _require_node_binary_runtime(dbnode)
+    try:
+        go_node.update_geo(node_id, files=files)
+        go_node.sync_node(node_id)
+    except Exception as exc:
+        raise HTTPException(502, detail=f'Node "{dbnode.name}" geo update failed: {exc}') from exc
 
     return {"detail": f"Geo assets updated on node {dbnode.name}"}
 
@@ -593,10 +620,6 @@ def _node_operation_or_raise(node_id: int, node_name: str, action, failure_messa
     except Exception as exc:
         logger.exception(failure_message)
         detail = getattr(exc, "detail", None) or str(exc) or "Unknown node error"
-        try:
-            xray.operations.register_node_runtime_error(node_id, detail, fallback_name=node_name)
-        except Exception:
-            pass
         status_code = getattr(exc, "status_code", None) or 502
         if not isinstance(status_code, int) or status_code < 400:
             status_code = 502
@@ -611,19 +634,11 @@ def restart_node_service(
 ):
     """Trigger the Rebecca-node binary service to restart on a node."""
     require_binary_runtime()
-    node = xray.nodes.get(node_id)
-    if not node:
-        raise HTTPException(404, detail="Node not connected")
-    _require_node_binary_runtime(node)
-
-    _node_operation_or_raise(
-        node_id=node_id,
-        node_name=dbnode.name,
-        action=node.restart_host_service,
-        failure_message=f"Unable to restart node service for {dbnode.name}",
-    )
-    startup_config = xray.config.include_db_users()
-    xray.operations.schedule_node_reconnect(node_id, config=startup_config, delay_seconds=10)
+    _require_node_binary_runtime(dbnode)
+    try:
+        go_node.restart_service(node_id)
+    except Exception as exc:
+        raise HTTPException(502, detail=f'Node "{dbnode.name}" service restart failed: {exc}') from exc
     return {"detail": f"Restart requested for node {dbnode.name}"}
 
 
@@ -636,21 +651,14 @@ def update_node_service(
 ):
     """Trigger the Rebecca-node binary service to update itself on a node."""
     require_binary_runtime()
-    node = xray.nodes.get(node_id)
-    if not node:
-        raise HTTPException(404, detail="Node not connected")
-    _require_node_binary_runtime(node)
+    _require_node_binary_runtime(dbnode)
     payload = payload or {}
     channel = payload.get("channel")
     version = payload.get("version")
     build_rebecca_update_args(channel=channel, version=version)
 
-    _node_operation_or_raise(
-        node_id=node_id,
-        node_name=dbnode.name,
-        action=lambda: node.update_host_service(channel=channel, version=version),
-        failure_message=f"Unable to update Rebecca-node service for {dbnode.name}",
-    )
-    startup_config = xray.config.include_db_users()
-    xray.operations.schedule_node_reconnect(node_id, config=startup_config, delay_seconds=20)
+    try:
+        go_node.update_service(node_id, channel=channel, version=version)
+    except Exception as exc:
+        raise HTTPException(502, detail=f'Node "{dbnode.name}" service update failed: {exc}') from exc
     return {"detail": f"Update requested for node {dbnode.name}"}

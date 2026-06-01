@@ -15,12 +15,11 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, st
 from pydantic import BaseModel
 
 from app import __version__
-from app.runtime import xray
 from app.db import Session, crud, get_db
 from app.db.models import ProxyHost as DbProxyHost, ServiceHostLink
 from app.models.admin import Admin, AdminRole
 from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
-from app.services import go_dashboard
+from app.services import go_dashboard, go_node, node_operations
 from app.models.system import (
     AdminOverviewStats,
     PersonalUsageStats,
@@ -36,8 +35,7 @@ from app.utils.binary_control import (
 )
 from app.utils.update_check import get_binary_update_status
 from app.utils.system import cpu_usage, realtime_bandwidth
-from app.reb_node.config import XRayConfig
-from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache, restart_runtime_targets
+from app.xray.config import XRayConfig
 from app.utils.xray_targets import (
     MASTER_TARGET_ID,
     ensure_target_configs_for_mutation,
@@ -74,28 +72,22 @@ _PANEL_PROCESS.cpu_percent(interval=None)
 
 
 def _call_node_runtime_helper(method_name: str, *args):
-    last_error = None
-    for node_id, node in list(getattr(xray, "nodes", {}).items()):
-        try:
-            if not node.connected:
-                continue
-            return getattr(node, method_name)(*args)
-        except Exception as exc:
-            last_error = exc
-            logger.warning("Node %s failed to run runtime helper %s: %s", node_id, method_name, exc)
-
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("No connected node is available for runtime helper")
+    del method_name, args
+    raise RuntimeError("Runtime helpers are node-only and are not available through the Python master runtime")
 
 
 def _queue_runtime_restart(bg: BackgroundTasks, target_ids: set[str] | None = None) -> None:
     def _restart() -> None:
         try:
             if target_ids:
-                restart_runtime_targets(target_ids)
+                for target_id in target_ids:
+                    kind, node_id = parse_target_id(target_id)
+                    if kind == MASTER_TARGET_ID:
+                        node_operations.queue_sync_config()
+                    elif node_id is not None:
+                        node_operations.queue_sync_config(node_id=node_id)
             else:
-                restart_default_runtimes_and_invalidate_cache()
+                node_operations.queue_sync_config()
         except Exception as exc:  # pragma: no cover - best effort background task
             logger.error("Failed to restart runtime after inbound change: %s", exc)
 
@@ -104,10 +96,7 @@ def _queue_runtime_restart(bg: BackgroundTasks, target_ids: set[str] | None = No
 
 def _queue_hosts_cache_refresh(bg: BackgroundTasks) -> None:
     def _refresh() -> None:
-        try:
-            xray.hosts.update()
-        except Exception as exc:  # pragma: no cover - best effort background task
-            logger.error("Failed to refresh hosts cache: %s", exc)
+        return None
 
     bg.add_task(_refresh)
 
@@ -120,7 +109,7 @@ def _queue_service_users_refresh(bg: BackgroundTasks, service_ids: set[int]) -> 
         try:
             from app.db import GetDB, crud
             from app.services.data_access import get_service_allowed_inbounds_cached
-            from app.runtime import xray as runtime_xray
+            from app.services import node_operations
 
             with GetDB() as db:
                 for service_id in sorted(service_ids):
@@ -131,7 +120,7 @@ def _queue_service_users_refresh(bg: BackgroundTasks, service_ids: set[int]) -> 
                     users_to_update = crud.refresh_service_users(db, service, allowed)
                     db.commit()
                     for dbuser in users_to_update:
-                        runtime_xray.operations.update_user(dbuser=dbuser)
+                        node_operations.queue_user_operation(dbuser.id, node_operations.UPDATE_USER)
         except Exception as exc:  # pragma: no cover - best effort background task
             logger.warning("Failed to refresh service users after host update: %s", exc)
 
@@ -178,13 +167,14 @@ def get_system_stats(admin: Admin = Depends(Admin.get_current)):
     xray_uptime_seconds = 0
     xray_version = None
     last_xray_error = None
-    for node in list(getattr(xray, "nodes", {}).values()):
-        try:
-            if node.connected and node.started:
+    try:
+        for node in go_node.list_nodes():
+            if str(node.get("status", "")).lower() == "connected":
                 xray_running = True
+                xray_version = node.get("xray_version") or xray_version
                 break
-        except Exception:
-            continue
+    except Exception:
+        pass
 
     timestamp = int(now)
     _system_history["cpu"].append({"timestamp": timestamp, "value": float(cpu.percent)})
@@ -351,7 +341,7 @@ def get_inbounds(admin: Admin = Depends(Admin.get_current), db: Session = Depend
     seen_tags: set[str] = set()
     for _target_id, raw_config in iter_stored_raw_configs(db):
         try:
-            config = XRayConfig(raw_config, api_port=xray.config.api_port)
+            config = XRayConfig(raw_config, api_port=8080)
         except Exception:
             continue
         for protocol, inbounds in config.inbounds_by_protocol.items():
@@ -539,9 +529,6 @@ def create_inbound(
     _queue_runtime_restart(bg, set(configs.keys()))
 
     crud.get_or_create_inbound(db, tag)
-    # Ensure hosts cache is updated after inbound is created
-    xray.hosts.update()
-
     return _sanitize_inbound(
         inbound,
         targets=sorted(_direct_targets_for_inbound(db, tag)),
@@ -579,9 +566,6 @@ def update_inbound(
     _queue_runtime_restart(bg, set(configs.keys()))
 
     crud.get_or_create_inbound(db, tag)
-    # Ensure hosts cache is updated after inbound is updated
-    xray.hosts.update()
-
     return _sanitize_inbound(
         inbound,
         targets=sorted(_direct_targets_for_inbound(db, tag)),
@@ -634,10 +618,8 @@ def delete_inbound(
                 users_to_refresh[user.id] = user
 
     db.commit()
-    xray.hosts.update()
-
     for user in users_to_refresh.values():
-        xray.operations.update_user(dbuser=user)
+        node_operations.queue_user_operation(user.id, node_operations.UPDATE_USER)
 
     return {"detail": "Inbound removed"}
 
@@ -661,9 +643,6 @@ def get_hosts(db: Session = Depends(get_db), admin: Admin = Depends(Admin.requir
     from app.services.data_access import get_inbounds_by_tag_cached
 
     inbound_map = get_inbounds_by_tag_cached(db)
-    if not inbound_map:
-        inbound_map = xray.config.inbounds_by_tag
-
     hosts_dict = {}
     for tag in inbound_map:
         try:
@@ -713,11 +692,6 @@ def update_host_status(
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to resolve service links for host %s: %s", host_id, exc)
 
-    # Update host cache asynchronously to keep subscriptions up to date.
-    try:
-        xray.invalidate_service_hosts_cache()
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.warning("Failed to invalidate service hosts cache: %s", exc)
     _queue_hosts_cache_refresh(bg)
     _queue_service_users_refresh(bg, affected_service_ids)
 
@@ -768,11 +742,6 @@ def modify_hosts(
             )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to resolve affected services for host update: %s", exc)
-
-    try:
-        xray.invalidate_service_hosts_cache()
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.warning("Failed to invalidate service hosts cache: %s", exc)
     _queue_hosts_cache_refresh(bg)
     _queue_service_users_refresh(bg, affected_service_ids)
 

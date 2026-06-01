@@ -9,9 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.runtime import xray
 from app.db import GetDB, crud, get_db
-from app.services import metrics_service
+from app.services import metrics_service, node_operations
 from app.services.data_access import get_inbounds_by_tag_cached
 from app.utils.concurrency import threaded_function
 from app.db.models import Service, User
@@ -40,9 +39,8 @@ from app.models.user import (
     UserStatus,
     UsersResponse,
 )
-from app.reb_node import operations as node_operations
 from app.utils import responses
-from app.utils.xray_config import apply_config, restart_default_runtimes_and_invalidate_cache
+from app.utils.xray_config import apply_config
 
 router = APIRouter(
     prefix="/api/v2/services",
@@ -57,7 +55,7 @@ _AUTO_INBOUND_PREFIX = "setservice-"
 def _queue_runtime_restart(bg: BackgroundTasks) -> None:
     def _restart() -> None:
         try:
-            restart_default_runtimes_and_invalidate_cache()
+            node_operations.queue_sync_config()
         except Exception as exc:  # pragma: no cover - best effort background task
             logger.error("Failed to restart runtime after service inbound change: %s", exc)
 
@@ -106,11 +104,6 @@ def _extract_used_ports(config: dict) -> tuple[Set[int], List[Tuple[int, int]]]:
     for inbound in config.get("inbounds", []) or []:
         if isinstance(inbound, dict):
             _collect_ports(inbound.get("port"), used, ranges)
-    if getattr(xray, "config", None):
-        try:
-            used.add(int(xray.config.api_port))
-        except Exception:
-            pass
     return used, ranges
 
 
@@ -151,7 +144,7 @@ def _refresh_service_users_background(service_id: int):
         users_to_update = crud.refresh_service_users(db, service, allowed)
         db.commit()
         for dbuser in users_to_update:
-            xray.operations.update_user(dbuser=dbuser)
+            node_operations.queue_user_operation(dbuser.id, node_operations.UPDATE_USER)
 
 
 def _ensure_service_visibility(service: Service, admin: Admin) -> None:
@@ -292,8 +285,6 @@ def create_service(
     service = crud.get_service(db, service.id)
     if not service:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Service not available")
-    xray.hosts.update()
-
     return _service_to_detail(db, service)
 
 
@@ -382,12 +373,6 @@ def modify_service(
         _refresh_service_users_background(service.id)
 
     db.refresh(service)
-    if hosts_modified:
-        # Avoid blocking the response on host refresh.
-        import threading
-
-        threading.Thread(target=xray.hosts.update, daemon=True).start()
-
     return _service_to_detail(db, service)
 
 
@@ -428,7 +413,6 @@ def create_service_auto_inbound(
     _queue_runtime_restart(bg)
 
     crud.get_or_create_inbound(db, tag)
-    xray.hosts.update()
     _refresh_inbounds_cache(db)
 
     return {"detail": "Auto inbound created", "tag": tag, "port": port}
@@ -470,7 +454,6 @@ def delete_service_auto_inbound(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     db.commit()
-    xray.hosts.update()
     _refresh_inbounds_cache(db)
 
     return {"detail": "Auto inbound removed"}
@@ -509,10 +492,9 @@ def delete_service(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     for dbuser in deleted_users:
-        node_operations.remove_user(dbuser=dbuser)
+        node_operations.queue_user_operation(dbuser.id, node_operations.REMOVE_USER)
     for dbuser in transferred_users:
-        node_operations.update_user(dbuser=dbuser)
-    xray.hosts.update()
+        node_operations.queue_user_operation(dbuser.id, node_operations.UPDATE_USER)
 
 
 @router.post("/{service_id}/reset-usage", response_model=ServiceDetail)
@@ -787,6 +769,6 @@ def perform_service_users_action(
             raise
         raise HTTPException(status_code=500, detail=str(exc))
 
-    restart_default_runtimes_and_invalidate_cache(xray.config.include_db_users())
+    node_operations.queue_sync_config()
 
     return {"detail": detail, "count": affected}

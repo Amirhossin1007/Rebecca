@@ -1,8 +1,9 @@
 from datetime import datetime, UTC
 
-from app.runtime import logger, scheduler, xray
+from app.runtime import logger, scheduler
 from app.db import crud, GetDB, get_users
 from app.models.user import UserDataLimitResetStrategy, UserStatus
+from app.services import node_operations
 
 RESET_STRATEGY_TO_DAYS = {
     UserDataLimitResetStrategy.day.value: 1,
@@ -54,9 +55,9 @@ def reset_user_data_usage():
                 was_limited = user.status == UserStatus.limited
                 updated_user = crud.reset_user_data_usage(db, user)
 
-                # User was limited before reset and is now active => re-add to xray.
+                # User was limited before reset and is now active => queue runtime sync.
                 if was_limited and updated_user.status == UserStatus.active:
-                    xray.operations.add_user(updated_user)
+                    node_operations.queue_user_operation(updated_user.id, node_operations.ENABLE_USER)
 
                 logger.info(f'User data usage reset for User "{updated_user.username}"')
             except Exception as exc:

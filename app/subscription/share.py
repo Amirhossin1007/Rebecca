@@ -401,11 +401,10 @@ def process_inbounds_and_tags(
     host_map: dict | None = None,
     force_refresh: bool = True,
 ) -> Union[List, str]:
-    from app.runtime import xray
     from app.services.data_access import get_service_host_map_cached
     from app.db import GetDB
     from app.db import crud
-    from app.reb_node.config import XRayConfig
+    from app.xray.config import XRayConfig
 
     service_id = extra_data.get("service_id")
     service_ids: List[int] = []
@@ -432,16 +431,9 @@ def process_inbounds_and_tags(
         try:
             with GetDB() as db:
                 raw_config = crud.get_xray_config(db)
-                runtime_config = getattr(xray, "config", None)
-                xray_config = XRayConfig(raw_config, api_port=getattr(runtime_config, "api_port", 0))
+                xray_config = XRayConfig(raw_config, api_port=8080)
         except Exception:
-            xray_config = getattr(xray, "config", None)
-
-        runtime_config = getattr(xray, "config", None)
-        if xray_config and not getattr(xray_config, "inbounds_by_tag", None):
-            runtime_inbounds = getattr(runtime_config, "inbounds_by_tag", None)
-            if runtime_inbounds:
-                xray_config = runtime_config
+            xray_config = None
 
         if not xray_config:
             return [] if isinstance(conf, list) else ""
@@ -489,23 +481,12 @@ def process_inbounds_and_tags(
             return
         refreshed_inbounds = True
         try:
-            xray.invalidate_service_hosts_cache()
-        except Exception:
-            pass
-        try:
-            xray.hosts.update()
-        except Exception:
-            pass
-        try:
             with GetDB() as db:
                 raw_config = crud.get_xray_config(db)
-                runtime_config = getattr(xray, "config", None)
-                xray_config = XRayConfig(raw_config, api_port=getattr(runtime_config, "api_port", 0))
+                xray_config = XRayConfig(raw_config, api_port=8080)
             inbounds_by_tag = getattr(xray_config, "inbounds_by_tag", {}) or {}
-            if not inbounds_by_tag:
-                inbounds_by_tag = getattr(getattr(xray, "config", None), "inbounds_by_tag", {}) or {}
         except Exception:
-            inbounds_by_tag = getattr(getattr(xray, "config", None), "inbounds_by_tag", {}) or {}
+            inbounds_by_tag = {}
         inbound_index = {tag: index for index, tag in enumerate(inbounds_by_tag.keys())}
         if service_ids and not os.getenv("PYTEST_CURRENT_TEST") and os.getenv("REBECCA_SKIP_RUNTIME_INIT") != "1":
             try:

@@ -7,7 +7,6 @@ import secrets
 from hashlib import sha256
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from types import SimpleNamespace
 
 from sqlalchemy import and_, case, func, or_, select, delete
 from sqlalchemy.exc import IntegrityError
@@ -311,27 +310,21 @@ def _disable_admin_and_active_users(db: Session, dbadmin: Admin, reason: str) ->
 
     disable_all_active_users(db, dbadmin)
     try:
-        from app.runtime import xray
-    except ImportError:
-        xray = None
+        from app.services import node_operations
 
-    if xray:
         for user_row in active_users:
-            try:
-                xray.operations.remove_user(dbuser=SimpleNamespace(id=user_row.id, username=user_row.username))
-            except Exception:
-                continue
+            node_operations.queue_user_operation(user_row.id, node_operations.DISABLE_USER)
+    except Exception:
+        pass
 
 
 def _restore_admin_users_and_nodes(db: Session, dbadmin: Admin) -> None:
     """Reload nodes after admin re-enable without auto-changing user statuses."""
     try:
-        from app.runtime import xray
-        from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
+        from app.services import node_operations
 
-        startup_config = xray.config.include_db_users()
-        restart_default_runtimes_and_invalidate_cache(startup_config)
-    except ImportError:
+        node_operations.queue_sync_config()
+    except Exception:
         return
 
 
@@ -405,16 +398,12 @@ def enforce_admin_service_data_limit(db: Session, link: AdminServiceLink) -> boo
         synchronize_session=False,
     )
     try:
-        from app.runtime import xray
-    except ImportError:
-        xray = None
+        from app.services import node_operations
 
-    if xray:
         for user_row in active_users:
-            try:
-                xray.operations.remove_user(dbuser=SimpleNamespace(id=user_row.id, username=user_row.username))
-            except Exception:
-                continue
+            node_operations.queue_user_operation(user_row.id, node_operations.DISABLE_USER)
+    except Exception:
+        pass
     return True
 
 

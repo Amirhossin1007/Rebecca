@@ -5,7 +5,7 @@ import threading
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 
-from app.runtime import logger, scheduler, xray
+from app.runtime import logger, scheduler
 from app.db import (
     GetDB,
     get_user_queryset,
@@ -15,6 +15,7 @@ from app.db import (
 )
 from app.db.models import User
 from app.models.user import UserResponse, UserStatus
+from app.services import node_operations
 from app.utils import report
 from config import JOB_REVIEW_USERS_BATCH_SIZE, JOB_REVIEW_USERS_INTERVAL
 
@@ -51,7 +52,7 @@ def _batch_users_by_status(db: Session, status: UserStatus, after_id: Optional[i
 def reset_user_by_next_report(db: Session, user: User):
     user = reset_user_by_next(db, user)
 
-    xray.operations.update_user(user)
+    node_operations.queue_user_operation(user.id, node_operations.UPDATE_USER)
 
     report.user_data_reset_by_next(user=UserResponse.model_validate(user), user_admin=user.admin)
 
@@ -102,15 +103,14 @@ def review():
                             continue
 
                         try:
-                            xray.operations.remove_user(user)
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to remove user {user.id} ({user.username}) from XRay: {e}. "
-                                f"Status will still be updated to {status}."
-                            )
-
-                        try:
                             update_user_status(db, user, status)
+                            try:
+                                node_operations.queue_user_operation(user.id, node_operations.DISABLE_USER)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to queue node disable for user {user.id} ({user.username}): {e}. "
+                                    f"Status was still updated to {status}."
+                                )
                             logger.info(f'User "{user.username}" status changed to {status}')
                             try:
                                 report.status_change(
@@ -168,10 +168,10 @@ def review():
 
                         if status == UserStatus.active:
                             try:
-                                xray.operations.add_user(user)
+                                node_operations.queue_user_operation(user.id, node_operations.ENABLE_USER)
                             except Exception as e:
                                 logger.warning(
-                                    f"Failed to add user {user.id} ({user.username}) to XRay: {e}. "
+                                    f"Failed to queue node enable for user {user.id} ({user.username}): {e}. "
                                     f"Status will still be updated to {status}."
                                 )
 

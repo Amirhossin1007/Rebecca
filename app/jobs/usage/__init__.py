@@ -2,9 +2,7 @@ from config import JOB_RECORD_NODE_USAGES_INTERVAL, JOB_RECORD_USER_USAGES_INTER
 
 from app.runtime import scheduler
 
-from .node_usage import record_node_stats, record_node_usages
-from .user_usage import record_user_stats, record_user_usages
-from .outbound_traffic import record_outbound_traffic
+from .go_collector import record_node_usages, record_user_usages
 
 
 """Public interface for usage jobs: exports record functions and registers scheduler tasks."""
@@ -39,6 +37,21 @@ def register_usage_jobs():
 # endregion
 
 # region Public exports
+
+
+def record_node_stats(*args, **kwargs):
+    del args, kwargs
+    return record_node_usages()
+
+
+def record_user_stats(*args, **kwargs):
+    del args, kwargs
+    return record_user_usages()
+
+
+def record_outbound_traffic(*args, **kwargs):
+    del args, kwargs
+    return record_node_usages()
 
 __all__ = [
     "record_node_stats",

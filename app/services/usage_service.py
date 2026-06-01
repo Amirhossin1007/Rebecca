@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.db import crud
 from app.db.models import User
 from app.models.user import UserResponse, UserStatus
-from app.runtime import xray
+from app.services import node_operations
 from app.utils import report
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ def _enforce_user_limits_after_sync(db, users: List[User]) -> None:
             if (limited or expired) and trigger_matches:
                 try:
                     crud.reset_user_by_next(db, db_user)
-                    xray.operations.update_user(db_user)
+                    node_operations.queue_user_operation(db_user.id, node_operations.UPDATE_USER)
                     user_resp = UserResponse.model_validate(db_user)
                     report.user_data_reset_by_next(user=user_resp, user_admin=db_user.admin)
                     report.user_auto_renew_applied(user=user_resp, user_admin=db_user.admin)
@@ -130,9 +130,9 @@ def _enforce_user_limits_after_sync(db, users: List[User]) -> None:
                 continue
             removed_ids.add(user.id)
             try:
-                xray.operations.remove_user(user)
+                node_operations.queue_user_operation(user.id, node_operations.DISABLE_USER)
             except Exception as exc:  # pragma: no cover - best-effort
-                logger.warning("Failed to remove limited/expired user %s from XRay: %s", user.id, exc)
+                logger.warning("Failed to queue node disable for limited/expired user %s: %s", user.id, exc)
 
         for user in changed:
             try:
@@ -149,9 +149,9 @@ def _enforce_user_limits_after_sync(db, users: List[User]) -> None:
             if user.id in changed_ids:
                 continue
             try:
-                xray.operations.add_user(user)
+                node_operations.queue_user_operation(user.id, node_operations.ENABLE_USER)
             except Exception as exc:  # pragma: no cover - best-effort
-                logger.warning("Failed to add re-activated user %s to XRay: %s", user.id, exc)
+                logger.warning("Failed to queue node enable for re-activated user %s: %s", user.id, exc)
 
             try:
                 report.status_change(

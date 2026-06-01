@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.db import crud
-from app.reb_node import state as xray_state
+from app.db import GetDB, crud
+from app.db import models as db_models
 
 
 def get_xray_config_cached(db: Session, force_refresh: bool = False) -> dict:
@@ -17,36 +17,61 @@ def get_service_allowed_inbounds_cached(db: Session, service) -> Dict[str, Any]:
     return crud.get_service_allowed_inbounds(service)
 
 
+def _host_to_dict(host, service_ids: list[int]) -> dict:
+    return {
+        "remark": host.remark,
+        "address": [i.strip() for i in host.address.split(",")] if host.address else [],
+        "port": host.port,
+        "path": host.path if host.path else None,
+        "sni": [i.strip() for i in host.sni.split(",")] if host.sni else [],
+        "host": [i.strip() for i in host.host.split(",")] if host.host else [],
+        "alpn": host.alpn.value,
+        "fingerprint": host.fingerprint.value,
+        "tls": None if host.security.name == "inbound_default" else host.security.value,
+        "allowinsecure": host.allowinsecure,
+        "mux_enable": host.mux_enable,
+        "fragment_setting": host.fragment_setting,
+        "noise_setting": host.noise_setting,
+        "random_user_agent": host.random_user_agent,
+        "use_sni_as_host": host.use_sni_as_host,
+        "sort": host.sort if host.sort is not None else 0,
+        "id": host.id,
+        "service_ids": service_ids,
+        "is_disabled": host.is_disabled,
+        "inbound_tag": host.inbound_tag,
+    }
+
+
 def get_service_host_map_cached(service_id: Optional[int], force_refresh: bool = False) -> Dict[str, Any]:
-    return xray_state.get_service_host_map(service_id, force_rebuild=force_refresh)
+    del force_refresh
+    with GetDB() as db:
+        inbound_tags = set(get_inbounds_by_tag_cached(db).keys())
+        host_map: Dict[str, list] = {tag: [] for tag in inbound_tags}
+        hosts = db.query(db_models.ProxyHost).all()
+        for host in hosts:
+            if host.is_disabled or host.inbound_tag not in inbound_tags:
+                continue
+            service_ids = [link.service_id for link in getattr(host, "service_links", []) if link.service_id]
+            if service_id is not None and service_id not in service_ids:
+                continue
+            host_map.setdefault(host.inbound_tag, []).append(_host_to_dict(host, service_ids))
+        for tag in inbound_tags:
+            host_map.setdefault(tag, [])
+            host_map[tag].sort(key=lambda h: (h.get("sort", 0), h.get("id") or 0))
+        return host_map
 
 
 def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict[str, Any]:
     del force_refresh
-    from app.runtime import xray
-    from app.reb_node.config import XRayConfig
     from app.utils.xray_targets import iter_stored_raw_configs
+    from app.xray.config import XRayConfig
 
     inbounds: Dict[str, Any] = {}
     for _target_id, raw_config in iter_stored_raw_configs(db):
         try:
-            runtime_config = getattr(xray, "config", None)
-            config = XRayConfig(raw_config, api_port=getattr(runtime_config, "api_port", 0))
+            config = XRayConfig(raw_config, api_port=8080)
         except Exception:
             continue
         for tag, inbound in config.inbounds_by_tag.items():
             inbounds.setdefault(tag, inbound)
-    runtime_config = getattr(xray, "config", None)
-    for tag, inbound in getattr(runtime_config, "inbounds_by_tag", {}).items():
-        inbounds.setdefault(tag, inbound)
-    for protocol, protocol_inbounds in getattr(runtime_config, "inbounds_by_protocol", {}).items():
-        protocol_value = protocol.value if hasattr(protocol, "value") else str(protocol)
-        for inbound in protocol_inbounds or []:
-            tag = inbound.get("tag") if isinstance(inbound, dict) else None
-            if not tag:
-                continue
-            current = dict(inbounds.get(tag) or {})
-            current.update(inbound)
-            current.setdefault("protocol", protocol_value)
-            inbounds[tag] = current
     return inbounds

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dashboardread "github.com/rebeccapanel/rebecca/go/internal/app/dashboard"
+	"github.com/rebeccapanel/rebecca/go/internal/app/nodecontroller"
 	"github.com/rebeccapanel/rebecca/go/internal/app/usage"
 	userread "github.com/rebeccapanel/rebecca/go/internal/app/user"
 	"github.com/rebeccapanel/rebecca/go/internal/platform/db"
@@ -30,7 +31,11 @@ func Call(input []byte) []byte {
 		return encodeError(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	timeout := 10 * time.Second
+	if isNodeAction(req.Action) {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	pool, err := db.Open(req.DatabaseURL)
@@ -73,9 +78,160 @@ func Call(input []byte) []byte {
 		return handleUserGet(ctx, pool, req.Payload)
 	case dashboardread.ActionSystemSummary:
 		return handleDashboardSystemSummary(ctx, pool, req.Payload)
+	case nodecontroller.ActionList:
+		return handleNodeList(ctx, pool, req.Payload)
+	case nodecontroller.ActionGet:
+		return handleNodeGet(ctx, pool, req.Payload)
+	case nodecontroller.ActionSync:
+		return handleNodeSync(ctx, pool, req.Payload)
+	case nodecontroller.ActionUpdateRuntime:
+		return handleNodeUpdateRuntime(ctx, pool, req.Payload)
+	case nodecontroller.ActionUpdateGeo:
+		return handleNodeUpdateGeo(ctx, pool, req.Payload)
+	case nodecontroller.ActionRestartService:
+		return handleNodeRestartService(ctx, pool, req.Payload)
+	case nodecontroller.ActionUpdateService:
+		return handleNodeUpdateService(ctx, pool, req.Payload)
+	case nodecontroller.ActionConnect:
+		return handleNodeConnect(ctx, pool, req.Payload)
+	case nodecontroller.ActionReconnect:
+		return handleNodeReconnect(ctx, pool, req.Payload)
+	case nodecontroller.ActionRestart:
+		return handleNodeRestart(ctx, pool, req.Payload)
+	case nodecontroller.ActionHealth:
+		return handleNodeHealth(ctx, pool, req.Payload)
+	case nodecontroller.ActionMetrics:
+		return handleNodeMetrics(ctx, pool, req.Payload)
+	case nodecontroller.ActionLogs:
+		return handleNodeLogs(ctx, pool, req.Payload)
+	case nodecontroller.ActionProcessOperations:
+		return handleNodeOperationsProcess(ctx, pool, req.Payload)
+	case nodecontroller.ActionCollectUsage:
+		return handleUsageCollect(ctx, pool, req.Payload)
 	default:
 		return encodeError(fmt.Errorf("unknown action: %s", req.Action))
 	}
+}
+
+func isNodeAction(action string) bool {
+	switch action {
+	case nodecontroller.ActionList,
+		nodecontroller.ActionGet,
+		nodecontroller.ActionSync,
+		nodecontroller.ActionUpdateRuntime,
+		nodecontroller.ActionUpdateGeo,
+		nodecontroller.ActionRestartService,
+		nodecontroller.ActionUpdateService,
+		nodecontroller.ActionConnect,
+		nodecontroller.ActionReconnect,
+		nodecontroller.ActionRestart,
+		nodecontroller.ActionHealth,
+		nodecontroller.ActionMetrics,
+		nodecontroller.ActionLogs,
+		nodecontroller.ActionProcessOperations,
+		nodecontroller.ActionCollectUsage:
+		return true
+	default:
+		return false
+	}
+}
+
+func handleNodeList(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).List(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result.Nodes)
+}
+
+func handleNodeGet(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Get(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeSync(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Sync(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeUpdateRuntime(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).UpdateRuntime(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeUpdateGeo(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).UpdateGeo(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeRestartService(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).RestartService(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeUpdateService(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).UpdateService(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
 }
 
 func handleUsageUser(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
@@ -292,6 +448,118 @@ func handleDashboardSystemSummary(ctx context.Context, pool db.Pool, payload jso
 		return encodeError(err)
 	}
 	result, err := dashboardread.NewRepository(pool.DB, pool.Dialect).SystemSummary(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeConnect(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := nodecontroller.WithDefaultTimeout(ctx)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Connect(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeReconnect(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := nodecontroller.WithDefaultTimeout(ctx)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Reconnect(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeRestart(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Restart(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeHealth(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := nodecontroller.WithDefaultTimeout(ctx)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Health(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeMetrics(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := nodecontroller.WithDefaultTimeout(ctx)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Metrics(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeLogs(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.Request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).Logs(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleNodeOperationsProcess(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.ProcessOperationsRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).ProcessQueue(ctx, req)
+	if err != nil {
+		return encodeError(err)
+	}
+	return encodeData(result)
+}
+
+func handleUsageCollect(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
+	var req nodecontroller.CollectUsageRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return encodeError(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	result, err := nodecontroller.NewController(nodecontroller.NewRepository(pool.DB, pool.Dialect)).CollectUsage(ctx, req)
 	if err != nil {
 		return encodeError(err)
 	}

@@ -9,7 +9,7 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, Body, BackgroundTasks
 from starlette.websockets import WebSocketDisconnect
 
-from app.runtime import logger, xray
+from app.runtime import logger
 from app.services import access_insights
 from app.db import Session, get_db, crud, GetDB
 from app.db.models import OutboundTraffic
@@ -24,6 +24,7 @@ from app.models.warp import (
     WarpRegisterResponse,
 )
 from app.services.warp import WarpAccountNotFound, WarpService, WarpServiceError
+from app.services import go_node
 from app.utils import responses
 from app.utils.system import get_public_ip, get_public_ipv6
 from app.utils.outbound import extract_outbound_metadata, generate_outbound_id
@@ -62,16 +63,15 @@ def _select_runtime_log_source(node_id_raw: str | None = None):
             node_id = int(node_id_raw)
         except ValueError as exc:
             raise ValueError("Invalid node_id") from exc
-        node = getattr(xray, "nodes", {}).get(node_id)
-        if not node:
-            raise ValueError("Node not found")
-        if not getattr(node, "connected", False):
-            raise ValueError("Node is not connected")
-        return node
+        return node_id
 
-    for node in list(getattr(xray, "nodes", {}).values()):
-        if getattr(node, "connected", False):
-            return node
+    try:
+        nodes = go_node.list_nodes()
+    except Exception as exc:
+        raise ValueError(f"No connected node is available for logs: {exc}") from exc
+    for node in nodes:
+        if str(node.get("status", "")).lower() == "connected":
+            return int(node["id"])
     raise ValueError("No connected node is available for logs")
 
 
@@ -209,37 +209,31 @@ async def runtime_logs(websocket: WebSocket):
         last_sent_ts = time.time()
         return True
 
-    with logs_source.get_logs() as logs:
-        while True:
-            if interval and time.time() - last_sent_ts >= interval and cache:
-                if not await _flush_cache():
-                    break
-
-            if not logs:
-                try:
-                    await asyncio.wait_for(websocket.receive(), timeout=0.2)
-                    continue
-                except asyncio.TimeoutError:
-                    continue
-                except (WebSocketDisconnect, RuntimeError):
-                    break
-
-            log_chunk = str(logs.popleft())
-            lines = normalize_log_chunk(log_chunk)
-
-            if interval:
-                cache.extend(lines)
-                continue
-
-            send_failed = False
-            for line in sort_log_lines(lines):
+    sent: set[str] = set()
+    while True:
+        if interval and time.time() - last_sent_ts >= interval and cache:
+            if not await _flush_cache():
+                break
+        try:
+            lines = go_node.logs(logs_source, max_lines=200)
+        except Exception as exc:
+            lines = [str(exc)]
+        fresh = [line for line in sort_log_lines(lines) if line not in sent]
+        sent.update(fresh)
+        if interval:
+            cache.extend(fresh)
+        else:
+            for line in fresh:
                 try:
                     await websocket.send_text(line)
                 except (WebSocketDisconnect, RuntimeError):
-                    send_failed = True
-                    break
-            if send_failed:
-                break
+                    return
+        try:
+            await asyncio.wait_for(websocket.receive(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+        except (WebSocketDisconnect, RuntimeError):
+            break
 
 
 @router.get("/core/access/insights", responses={403: responses._403})
@@ -454,14 +448,14 @@ def get_runtime_stats(admin: Admin = Depends(Admin.get_current)):
     """Retrieve aggregate node runtime status."""
     started = False
     version = None
-    for node in list(getattr(xray, "nodes", {}).values()):
-        try:
-            if node.connected and node.started:
+    try:
+        for node in go_node.list_nodes():
+            if str(node.get("status", "")).lower() == "connected":
                 started = True
-                version = getattr(node, "node_version", None) or version
+                version = node.get("xray_version") or node.get("node_service_version") or version
                 break
-        except Exception:
-            continue
+    except Exception:
+        pass
     return RuntimeStats(
         version=version,
         started=started,
@@ -650,34 +644,23 @@ def apply_geo_assets(
         raise HTTPException(status_code=409, detail="Master has no local runtime; enable apply_to_nodes.")
 
     files = _validate_geo_files(files)
-    startup_config = xray.config.include_db_users()
-
     results = {
         "master": {"status": "node-only"},
         "nodes": {},
     }
     if apply_to_nodes:
-        for node_id, node in list(xray.nodes.items()):
+        for db_node in crud.get_nodes(db=db, enabled=True):
+            node_id = int(db_node.id)
             if node_id in skip_node_ids:
-                continue
-            if not node.connected:
-                continue
-            db_node = crud.get_node_by_id(db, node_id)
-            if db_node is None:
-                results["nodes"][str(node_id)] = {"status": "error", "detail": "Node not found in database"}
                 continue
             if db_node.geo_mode != "default":
                 continue
             try:
-                node.update_geo(files=files)
-                xray.operations.restart_node(node_id, startup_config)
+                go_node.update_geo(node_id, files=files)
+                go_node.sync_node(node_id)
                 results["nodes"][str(node_id)] = {"status": "ok"}
             except Exception as e:
                 detail = str(e) or "Unknown node error"
-                try:
-                    xray.operations.register_node_runtime_error(node_id, detail, fallback_name=db_node.name)
-                except Exception:
-                    pass
                 results["nodes"][str(node_id)] = {
                     "status": "error",
                     "detail": f'Node "{db_node.name}" has problem: {detail}',
@@ -852,20 +835,7 @@ def _get_outbound_test_url() -> str:
 
 
 def _run_node_outbound_ping_test(outbound_tag: str, all_outbounds: list, outbound_protocol: str = "") -> dict | None:
-    for node_id, node in list(getattr(xray, "nodes", {}).items()):
-        try:
-            if not node.connected:
-                continue
-            result = node.test_outbound(
-                outbound_tag=outbound_tag,
-                all_outbounds=all_outbounds,
-                outbound_protocol=outbound_protocol,
-                test_url=_get_outbound_test_url(),
-            )
-            if isinstance(result, dict):
-                return result
-        except Exception as exc:
-            logger.warning("Node %s failed to run outbound test: %s", node_id, exc)
+    del outbound_tag, all_outbounds, outbound_protocol
     return None
 
 

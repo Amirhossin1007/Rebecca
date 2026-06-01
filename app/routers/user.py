@@ -40,15 +40,11 @@ from app.utils import report, responses
 from app.utils.credentials import ensure_user_credential_key
 from app.utils.request_context import get_request_origin, use_subscription_request_origin
 from app.utils.subscription_links import build_subscription_links
-from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
-from app import runtime
 from app.runtime import logger
-from app.services import metrics_service
+from app.services import metrics_service, node_operations
 from config import USERS_LIST_LINKS_ENABLED, USERS_LIST_TIMEOUT_KILL_QUERY, USERS_LIST_TIMEOUT_SECONDS
 
 # region Helpers
-
-xray = runtime.xray
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -599,7 +595,7 @@ def add_user(
             db.rollback()
             raise HTTPException(status_code=409, detail="User already exists")
 
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.ADD_USER)
         user = _create_user_response(request, dbuser)
         report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
         if user.next_plans or user.next_plan:
@@ -697,7 +693,7 @@ def add_user(
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
 
-    bg.add_task(xray.operations.add_user, dbuser=dbuser)
+    bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.ADD_USER)
     user = _create_user_response(request, dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
     logger.info(f'New user "{dbuser.username}" added')
@@ -934,17 +930,17 @@ def modify_user(
     user = _user_response(request, dbuser)
 
     if user.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.update_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.UPDATE_USER)
     elif old_status in [UserStatus.active, UserStatus.on_hold] and user.status not in [
         UserStatus.active,
         UserStatus.on_hold,
     ]:
-        bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.DISABLE_USER)
     elif old_status not in [UserStatus.active, UserStatus.on_hold] and user.status in [
         UserStatus.active,
         UserStatus.on_hold,
     ]:
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.ENABLE_USER)
 
     bg.add_task(report.user_updated, user=user, user_admin=dbuser.admin, by=admin)
     if user.next_plans or user.next_plan:
@@ -988,8 +984,9 @@ def remove_user(
         db.rollback()
         detail = str(exc) or DELETE_CAP_EXCEEDED_MESSAGE
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+    user_id = dbuser.id
     crud.remove_user(db, dbuser)
-    bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+    bg.add_task(node_operations.queue_user_operation, user_id, node_operations.REMOVE_USER)
 
     bg.add_task(report.user_deleted, username=dbuser.username, user_admin=Admin.model_validate(dbuser.admin), by=admin)
 
@@ -1031,7 +1028,7 @@ def reset_user_data_usage(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.UPDATE_USER)
 
     user = _user_response(request, dbuser)
     bg.add_task(report.user_data_usage_reset, user=user, user_admin=dbuser.admin, by=admin)
@@ -1064,7 +1061,7 @@ def revoke_user_subscription(
     dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.update_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.UPDATE_USER)
     user = _user_response(request, dbuser)
     bg.add_task(report.user_subscription_revoked, user=user, user_admin=dbuser.admin, by=admin)
 
@@ -1410,7 +1407,7 @@ def perform_users_bulk_action(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
 
-    restart_default_runtimes_and_invalidate_cache(xray.config.include_db_users())
+    node_operations.queue_sync_config()
 
     return {"detail": detail, "count": affected}
 
@@ -1472,7 +1469,7 @@ def active_next_plan(
         )
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
-        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        bg.add_task(node_operations.queue_user_operation, dbuser.id, node_operations.ENABLE_USER)
 
     user = _user_response(request, dbuser)
     bg.add_task(

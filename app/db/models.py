@@ -736,6 +736,28 @@ class Node(Base):
     xray_config = Column(JSON, nullable=True)
 
 
+class NodeOperation(Base):
+    __tablename__ = "node_operations"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_node_operations_idempotency_key"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    operation_type = Column(String(32), nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    status = Column(String(16), nullable=False, default="pending", server_default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    last_error = Column(Text, nullable=True)
+    idempotency_key = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    node = relationship("Node")
+    user = relationship("User")
+
+
 class MasterNodeState(Base):
     __tablename__ = "master_node_state"
 

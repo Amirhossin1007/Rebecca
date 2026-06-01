@@ -20,7 +20,7 @@ from websocket import (
     create_connection,
 )
 
-from app.reb_node.config import XRayConfig
+from app.xray.config import XRayConfig
 from config import (
     JOB_RECORD_NODE_USAGE_COLLECT_TIMEOUT,
     JOB_RECORD_USER_USAGE_COLLECT_TIMEOUT,

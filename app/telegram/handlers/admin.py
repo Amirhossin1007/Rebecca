@@ -31,8 +31,7 @@ from app.telegram.utils.shared import (
 )
 from app.utils.store import MemoryStorage
 from app.utils.system import cpu_usage, readable_size, realtime_bandwidth
-from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
-from app.services import TelegramSettingsService
+from app.services import TelegramSettingsService, node_operations
 
 mem_store = MemoryStorage()
 
@@ -833,7 +832,7 @@ def template_charge_command(call: types.CallbackQuery):
                 data_limit=template.data_limit,
             )
             db_user = crud.update_user(db, db_user, modify)
-            xray.operations.add_user(db_user)
+            node_operations.queue_user_operation(db_user.id, node_operations.ENABLE_USER)
             bot.answer_callback_query(call.id, "🔋 User Successfully Charged!")
             bot.edit_message_text(
                 get_user_info_text(db_user),
@@ -1537,7 +1536,7 @@ def confirm_user_command(call: types.CallbackQuery):
         with GetDB() as db:
             db_user = crud.get_user(db, username)
             crud.remove_user(db, db_user)
-            xray.operations.remove_user(db_user)
+            node_operations.queue_user_operation(db_user.id, node_operations.REMOVE_USER)
 
         bot.edit_message_text(
             "✅ User deleted.", call.message.chat.id, call.message.message_id, reply_markup=BotKeyboard.main_menu()
@@ -1561,7 +1560,7 @@ def confirm_user_command(call: types.CallbackQuery):
         with GetDB() as db:
             db_user = crud.get_user(db, username)
             crud.update_user(db, db_user, UserModify(status=UserStatusModify.disabled))
-            xray.operations.remove_user(db_user)
+            node_operations.queue_user_operation(db_user.id, node_operations.DISABLE_USER)
             bot.edit_message_text(
                 get_user_info_text(db_user),
                 call.message.chat.id,
@@ -1585,7 +1584,7 @@ def confirm_user_command(call: types.CallbackQuery):
         with GetDB() as db:
             db_user = crud.get_user(db, username)
             crud.update_user(db, db_user, UserModify(status=UserStatusModify.active))
-            xray.operations.add_user(db_user)
+            node_operations.queue_user_operation(db_user.id, node_operations.ENABLE_USER)
             bot.edit_message_text(
                 get_user_info_text(db_user),
                 call.message.chat.id,
@@ -1610,7 +1609,7 @@ def confirm_user_command(call: types.CallbackQuery):
             db_user = crud.get_user(db, username)
             crud.reset_user_data_usage(db, db_user)
             if db_user.status in [UserStatus.active, UserStatus.on_hold]:
-                xray.operations.add_user(db_user)
+                node_operations.queue_user_operation(db_user.id, node_operations.ENABLE_USER)
             user = UserResponse.model_validate(db_user)
             bot.edit_message_text(
                 get_user_info_text(db_user),
@@ -1632,8 +1631,7 @@ def confirm_user_command(call: types.CallbackQuery):
                 pass
     elif data == "restart":
         m = bot.edit_message_text("🔄 Restarting node runtime...", call.message.chat.id, call.message.message_id)
-        config = xray.config.include_db_users()
-        restart_default_runtimes_and_invalidate_cache(config)
+        node_operations.queue_sync_config()
         bot.edit_message_text(
             "✅ Node runtime restarted successfully.", m.chat.id, m.message_id, reply_markup=BotKeyboard.main_menu()
         )
@@ -1682,7 +1680,7 @@ def confirm_user_command(call: types.CallbackQuery):
                     data_limit=(user.data_limit or 0) - user.used_traffic + template.data_limit,
                 )
             db_user = crud.update_user(db, db_user, modify)
-            xray.operations.add_user(db_user)
+            node_operations.queue_user_operation(db_user.id, node_operations.ENABLE_USER)
             bot.answer_callback_query(call.id, "🔋 User Successfully Charged!")
             bot.edit_message_text(
                 get_user_info_text(db_user),
@@ -1774,7 +1772,7 @@ def confirm_user_command(call: types.CallbackQuery):
             user = UserResponse.model_validate(db_user)
 
             if user.status == UserStatus.active:
-                xray.operations.update_user(db_user)
+                node_operations.queue_user_operation(db_user.id, node_operations.UPDATE_USER)
 
             bot.answer_callback_query(call.id, "✅ User updated successfully.")
             bot.edit_message_text(
@@ -1895,7 +1893,7 @@ def confirm_user_command(call: types.CallbackQuery):
                     db_user = crud.create_user(db, new_user)
                     proxies = db_user.proxies
                     user = UserResponse.model_validate(db_user)
-                    xray.operations.add_user(db_user)
+                    node_operations.queue_user_operation(db_user.id, node_operations.ADD_USER)
                     if mem_store.get(f"{call.message.chat.id}:is_bulk", False):
                         schedule_delete_message(call.message.chat.id, call.message.id)
                         cleanup_messages(call.message.chat.id)
@@ -1959,7 +1957,7 @@ def confirm_user_command(call: types.CallbackQuery):
                 for user in depleted_users:
                     try:
                         crud.remove_user(db, user)
-                        xray.operations.remove_user(user)
+                        node_operations.queue_user_operation(user.id, node_operations.REMOVE_USER)
                         deleted += 1
                         f.write(
                             f"{user.username}\
@@ -2127,7 +2125,7 @@ def confirm_user_command(call: types.CallbackQuery):
                     try:
                         user = crud.update_user(db, user, UserModify(inbounds=new_inbounds, proxies=proxies))
                         if user.status == UserStatus.active:
-                            xray.operations.update_user(user)
+                            node_operations.queue_user_operation(user.id, node_operations.UPDATE_USER)
                     except Exception:
                         db.rollback()
                         unsuccessful += 1

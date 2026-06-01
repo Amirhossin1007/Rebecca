@@ -1,5 +1,4 @@
 import logging
-from types import SimpleNamespace
 from typing import List, Optional, Literal
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -8,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_
 from pydantic import BaseModel, Field
 
-from app.runtime import xray
 from app.models.user import UserStatus
 from app.db import Session, crud, get_db
 from app.db.exceptions import UsersLimitReachedError
@@ -26,9 +24,8 @@ from app.models.admin import (
 from app.db.models import Admin as DBAdmin, Node as DBNode, User as DBUser
 from app.utils import report, responses
 from app.utils.jwt import create_admin_token
-from app.utils.xray_config import restart_default_runtimes_and_invalidate_cache
 from config import LOGIN_NOTIFY_WHITE_LIST
-from app.services import metrics_service
+from app.services import metrics_service, node_operations
 
 router = APIRouter(tags=["Admin"], prefix="/api", responses={401: responses._401})
 logger = logging.getLogger("uvicorn.error")
@@ -85,10 +82,11 @@ def validate_dates(start: str, end: str) -> tuple[datetime, datetime]:
     return start_date, end_date
 
 
-def _restart_node_runtimes(startup_config):
+def _restart_node_runtimes(startup_config=None):
     """Restart connected node runtimes; best-effort to keep request fast."""
+    del startup_config
     try:
-        restart_default_runtimes_and_invalidate_cache(startup_config)
+        node_operations.queue_sync_config()
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning("Failed to restart runtime after admin status change: %s", exc, exc_info=True)
 
@@ -285,13 +283,7 @@ def disable_admin_account(
     crud.disable_all_active_users(db=db, admin=dbadmin)
     updated_admin = crud.disable_admin(db, dbadmin, reason)
 
-    # Restart xray with updated config to remove disabled users (async to avoid client timeouts)
-    try:
-        startup_config = xray.config.include_db_users()
-    except Exception as exc:
-        logger.warning("Failed to build Xray config after disabling admin %s: %s", dbadmin.username, exc)
-    else:
-        background_tasks.add_task(_restart_node_runtimes, startup_config)
+    background_tasks.add_task(_restart_node_runtimes)
 
     admin_schema = Admin.model_validate(updated_admin)
     report.admin_updated(admin_schema, current_admin, previous=previous_state)
@@ -329,12 +321,7 @@ def enable_admin_account(
     previous_state = Admin.model_validate(dbadmin)
     updated_admin = crud.enable_admin(db, dbadmin)
 
-    try:
-        startup_config = xray.config.include_db_users()
-    except Exception as exc:
-        logger.warning("Failed to build Xray config after enabling admin %s: %s", dbadmin.username, exc)
-    else:
-        background_tasks.add_task(_restart_node_runtimes, startup_config)
+    background_tasks.add_task(_restart_node_runtimes)
 
     admin_schema = Admin.model_validate(updated_admin)
     report.admin_updated(admin_schema, current_admin, previous=previous_state)
@@ -350,9 +337,7 @@ def disable_all_active_users(
     """Disable all active users under a specific admin"""
     crud.disable_all_active_users(db=db, admin=dbadmin)
 
-    # Restart xray with updated config to remove disabled users
-    startup_config = xray.config.include_db_users()
-    restart_default_runtimes_and_invalidate_cache(startup_config)
+    node_operations.queue_sync_config()
 
     return {"detail": "Users successfully disabled"}
 
@@ -370,8 +355,7 @@ def activate_all_disabled_users(
         report.admin_users_limit_reached(dbadmin, exc.limit, exc.current_active)
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
-    startup_config = xray.config.include_db_users()
-    restart_default_runtimes_and_invalidate_cache(startup_config)
+    node_operations.queue_sync_config()
     return {"detail": "Users successfully activated"}
 
 

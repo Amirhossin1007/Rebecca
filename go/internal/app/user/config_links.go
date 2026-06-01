@@ -408,6 +408,10 @@ func runtimeProxySettings(settings map[string]any, protocol string, credentialKe
 	return data, nil
 }
 
+func RuntimeProxySettings(settings map[string]any, protocol string, credentialKey string, flow string, masks map[string][]byte) (map[string]any, error) {
+	return runtimeProxySettings(settings, protocol, credentialKey, flow, masks)
+}
+
 func normalizeCredentialKey(value string) (string, error) {
 	cleaned := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "-", "")))
 	if len(cleaned) != 32 {

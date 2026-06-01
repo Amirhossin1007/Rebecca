@@ -34,10 +34,9 @@ runtime.app = None
 logger = logging.getLogger("uvicorn.error")
 runtime.logger = logger
 
-xray = None
-if not SKIP_RUNTIME_INIT:
-    from . import reb_node as xray  # noqa: F401
-runtime.xray = xray
+# The master is node-only: Python must not bootstrap app.reb_node or a local
+# Xray runtime. Node connectivity and runtime control are handled by Go/gRPC.
+runtime.xray = None
 
 if SKIP_RUNTIME_INIT:
     app = None  # type: ignore[assignment]
@@ -110,23 +109,17 @@ if not SKIP_RUNTIME_INIT:
         # Start scheduler first (so server can start quickly)
         scheduler.start()
 
-        # Ensure config is generated and enabled nodes attempt to connect.
+        # Ensure enabled nodes attempt to connect through the Go/gRPC controller.
         try:
-            from app.jobs.node_runtime import start_node_runtime
+            from app.jobs.node_runtime import start_node_runtime  # legacy wrapper
 
             start_node_runtime()
         except Exception as e:
-            logger.error(f"Failed to bootstrap node runtime on startup: {e}", exc_info=True)
+            logger.error(f"Failed to bootstrap Go node controller on startup: {e}", exc_info=True)
 
     def on_shutdown():
         if IS_RUNNING_TESTS:
             return
-        try:
-            from app.jobs.node_runtime import shutdown_node_runtime
-
-            shutdown_node_runtime()
-        except Exception as e:
-            logger.error(f"Failed to shutdown node runtime cleanly: {e}", exc_info=True)
         if scheduler:
             scheduler.shutdown()
 

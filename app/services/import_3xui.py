@@ -36,8 +36,8 @@ from app.models.settings import (
     ThreeXUiUsernameConflictMode,
 )
 from app.models.user import UserDataLimitResetStrategy, UserStatus
-from app.runtime import xray
 from app.services.data_access import get_inbounds_by_tag_cached
+from app.services import node_operations
 from app.utils.credentials import normalize_flow_value, uuid_to_key
 from scripts.migrate_3xui_to_rebecca import (
     MAX_USERNAME_LEN,
@@ -836,9 +836,9 @@ class ThreeXUiImportService:
     def _best_effort_runtime_sync(cls, user: db_models.User, *, created: bool, result: ThreeXUiImportJobResult) -> None:
         try:
             if created:
-                xray.operations.add_user(dbuser=user)
+                node_operations.queue_user_operation(user.id, node_operations.ADD_USER)
             else:
-                xray.operations.update_user(dbuser=user)
+                node_operations.queue_user_operation(user.id, node_operations.UPDATE_USER)
         except Exception as exc:
             result.warnings.append(f"Runtime sync failed for {user.username}: {exc}")
 
