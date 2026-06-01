@@ -38,51 +38,55 @@ runtime.logger = logger
 # Xray runtime. Node connectivity and runtime control are handled by Go/gRPC.
 runtime.xray = None
 
+app = FastAPI(
+    title="RebeccaAPI",
+    description="Unified GUI Censorship Resistant Solution Powered by Xray",
+    version=__version__,
+    docs_url="/docs" if DOCS else None,
+    redoc_url="/redoc" if DOCS else None,
+)
+
 if SKIP_RUNTIME_INIT:
-    app = None  # type: ignore[assignment]
     scheduler = None  # type: ignore[assignment]
 else:
-    app = FastAPI(
-        title="RebeccaAPI",
-        description="Unified GUI Censorship Resistant Solution Powered by Xray",
-        version=__version__,
-        docs_url="/docs" if DOCS else None,
-        redoc_url="/redoc" if DOCS else None,
-    )
-
     from apscheduler.schedulers.background import BackgroundScheduler
 
     scheduler = BackgroundScheduler({"apscheduler.job_defaults.max_instances": 20}, timezone="UTC")
     runtime.scheduler = scheduler
+
+runtime.app = app
+
+from app.db.schema import ensure_runtime_schema
+
+ensure_runtime_schema()
+allowed_origins = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
+if not allowed_origins:
+    allowed_origins = ["*"]
+
+allow_credentials = True
+if "*" in allowed_origins:
+    allowed_origins = ["*"]
+    allow_credentials = False
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+import dashboard  # noqa: F401
+if scheduler is not None:
+    from app import jobs  # noqa
+from app import routers, telegram  # noqa
+
+if scheduler is not None:
     register_scheduler_jobs(scheduler)
+from app.routers import api_router  # noqa
 
-    runtime.app = app
-    from app.db.schema import ensure_runtime_schema
+runtime.telegram = telegram
 
-    ensure_runtime_schema()
-    allowed_origins = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
-    if not allowed_origins:
-        allowed_origins = ["*"]
-
-    allow_credentials = True
-    if "*" in allowed_origins:
-        allowed_origins = ["*"]
-        allow_credentials = False
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_credentials=allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    import dashboard  # noqa: F401
-    from app import jobs, routers, telegram  # noqa
-    from app.routers import api_router  # noqa
-
-    runtime.telegram = telegram
-
-    app.include_router(api_router)
+app.include_router(api_router)
 
 
 def use_route_names_as_operation_ids(app: FastAPI) -> None:
