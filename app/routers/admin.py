@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import List, Optional, Literal
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -85,6 +86,15 @@ def validate_dates(start: str, end: str) -> tuple[datetime, datetime]:
 def _restart_node_runtimes(startup_config=None):
     """Restart connected node runtimes; best-effort to keep request fast."""
     del startup_config
+    if os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1":
+        try:
+            from app import runtime as runtime_state
+
+            include_db_users = getattr(getattr(runtime_state.xray, "config", None), "include_db_users", None)
+            if include_db_users is not None:
+                include_db_users()
+        except Exception:
+            pass
     try:
         node_operations.queue_sync_config()
     except Exception as exc:  # pragma: no cover - defensive logging
