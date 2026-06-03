@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -61,44 +62,56 @@ def get_service_host_map_cached(service_id: Optional[int], force_refresh: bool =
         return host_map
 
 
+def _runtime_inbounds_by_tag() -> Dict[str, Any]:
+    try:
+        from app import runtime as runtime_state
+
+        runtime_xray = runtime_state.xray
+        runtime_config = getattr(runtime_xray, "config", None)
+        runtime_inbounds = getattr(runtime_config, "inbounds_by_tag", None)
+        runtime_protocols = getattr(runtime_config, "inbounds_by_protocol", None)
+        inbounds: Dict[str, Any] = {}
+        if isinstance(runtime_inbounds, dict):
+            inbounds.update(
+                {
+                    tag: dict(inbound) if isinstance(inbound, dict) else {"tag": tag}
+                    for tag, inbound in runtime_inbounds.items()
+                }
+            )
+        if isinstance(runtime_protocols, dict):
+            for protocol, protocol_inbounds in runtime_protocols.items():
+                for inbound in protocol_inbounds or []:
+                    if not isinstance(inbound, dict):
+                        continue
+                    tag = inbound.get("tag")
+                    if not tag:
+                        continue
+                    item = inbounds.setdefault(tag, {"tag": tag})
+                    item.setdefault("tag", tag)
+                    item.setdefault("protocol", protocol)
+        return inbounds
+    except Exception:
+        return {}
+
+
 def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict[str, Any]:
     del force_refresh
     from app.utils.xray_targets import iter_stored_raw_configs
     from app.xray.config import XRayConfig
 
     inbounds: Dict[str, Any] = {}
-    for _target_id, raw_config in iter_stored_raw_configs(db):
+    try:
+        config_sources = list(iter_stored_raw_configs(db))
+    except Exception:
+        config_sources = []
+    for _target_id, raw_config in config_sources:
         try:
             config = XRayConfig(raw_config, api_port=8080)
         except Exception:
             continue
         for tag, inbound in config.inbounds_by_tag.items():
             inbounds.setdefault(tag, inbound)
-    if not inbounds:
-        try:
-            from app import runtime as runtime_state
-
-            runtime_xray = runtime_state.xray
-            runtime_inbounds = getattr(getattr(runtime_xray, "config", None), "inbounds_by_tag", None)
-            runtime_protocols = getattr(getattr(runtime_xray, "config", None), "inbounds_by_protocol", None)
-            if isinstance(runtime_inbounds, dict):
-                inbounds.update(
-                    {
-                        tag: dict(inbound) if isinstance(inbound, dict) else {"tag": tag}
-                        for tag, inbound in runtime_inbounds.items()
-                    }
-                )
-            if isinstance(runtime_protocols, dict):
-                for protocol, protocol_inbounds in runtime_protocols.items():
-                    for inbound in protocol_inbounds or []:
-                        if not isinstance(inbound, dict):
-                            continue
-                        tag = inbound.get("tag")
-                        if not tag:
-                            continue
-                        item = inbounds.setdefault(tag, {"tag": tag})
-                        item.setdefault("tag", tag)
-                        item.setdefault("protocol", protocol)
-        except Exception:
-            pass
+    runtime_inbounds = _runtime_inbounds_by_tag()
+    if runtime_inbounds and (not inbounds or os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1"):
+        inbounds.update(runtime_inbounds)
     return inbounds

@@ -916,7 +916,18 @@ def _get_outbound_test_url() -> str:
 
 
 def _run_node_outbound_ping_test(outbound_tag: str, all_outbounds: list, outbound_protocol: str = "") -> dict | None:
-    del outbound_tag, all_outbounds, outbound_protocol
+    nodes = getattr(xray, "nodes", {}) or {}
+    for node in nodes.values():
+        if not getattr(node, "connected", False):
+            continue
+        test_outbound = getattr(node, "test_outbound", None)
+        if test_outbound is None:
+            continue
+        return test_outbound(
+            outbound_tag=outbound_tag,
+            all_outbounds=all_outbounds,
+            outbound_protocol=outbound_protocol,
+        )
     return None
 
 

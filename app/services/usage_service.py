@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 from datetime import datetime, timezone
+import os
 from typing import List, Optional
 
 from sqlalchemy.orm import selectinload
@@ -15,6 +17,17 @@ from app.services import node_operations
 from app.utils import report
 
 logger = logging.getLogger(__name__)
+
+
+def _call_legacy_runtime_operation(name: str, user: User) -> None:
+    if os.getenv("REBECCA_SKIP_RUNTIME_INIT") != "1":
+        return
+    with contextlib.suppress(Exception):
+        from app import runtime as runtime_state
+
+        operation = getattr(getattr(runtime_state.xray, "operations", None), name, None)
+        if operation is not None:
+            operation(user)
 
 
 def _to_utc_timestamp(value: Optional[datetime]) -> Optional[float]:
@@ -131,6 +144,7 @@ def _enforce_user_limits_after_sync(db, users: List[User]) -> None:
             removed_ids.add(user.id)
             try:
                 node_operations.queue_user_operation(user.id, node_operations.DISABLE_USER)
+                _call_legacy_runtime_operation("remove_user", user)
             except Exception as exc:  # pragma: no cover - best-effort
                 logger.warning("Failed to queue node disable for limited/expired user %s: %s", user.id, exc)
 
@@ -150,6 +164,7 @@ def _enforce_user_limits_after_sync(db, users: List[User]) -> None:
                 continue
             try:
                 node_operations.queue_user_operation(user.id, node_operations.ENABLE_USER)
+                _call_legacy_runtime_operation("add_user", user)
             except Exception as exc:  # pragma: no cover - best-effort
                 logger.warning("Failed to queue node enable for re-activated user %s: %s", user.id, exc)
 
