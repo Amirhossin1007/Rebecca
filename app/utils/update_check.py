@@ -9,6 +9,7 @@ import requests
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
 GITHUB_CACHE_TTL = 300
+DEFAULT_DEV_BUILD_MANIFEST_BRANCH = "dev-build-manifest"
 
 _CACHE: dict[str, tuple[float, Any]] = {}
 
@@ -118,10 +119,10 @@ def _select_manifest_build(data: Any) -> dict[str, Any] | None:
 def _latest_dev_build_from_manifest(
     repo: str,
     *,
-    branch: str = "dev",
+    manifest_branch: str = DEFAULT_DEV_BUILD_MANIFEST_BRANCH,
     manifest_path: str = "dev-builds.json",
 ) -> dict[str, Any] | None:
-    manifest_url = _dev_manifest_url(repo, branch, manifest_path)
+    manifest_url = _dev_manifest_url(repo, manifest_branch, manifest_path)
     data = _get_url_json(manifest_url)
     build = _select_manifest_build(data)
     if not build:
@@ -136,7 +137,7 @@ def _latest_dev_build_from_manifest(
     return {
         "tag": tag,
         "sha": build.get("sha"),
-        "branch": build.get("branch") or branch,
+        "branch": build.get("branch") or "dev",
         "created_at": build.get("created_at"),
         "updated_at": data.get("updated_at"),
         "html_url": html_url,
@@ -151,9 +152,19 @@ def _latest_dev_build(
     branch: str = "dev",
     workflow_path: str = ".github/workflows/binary-build.yml",
     manifest_path: str = "dev-builds.json",
+    manifest_branch: str | None = None,
 ) -> dict[str, Any] | None:
+    manifest_branch = (
+        manifest_branch
+        or os.getenv("REBECCA_BINARY_DEV_MANIFEST_BRANCH", "").strip()
+        or DEFAULT_DEV_BUILD_MANIFEST_BRANCH
+    )
     try:
-        manifest_build = _latest_dev_build_from_manifest(repo, branch=branch, manifest_path=manifest_path)
+        manifest_build = _latest_dev_build_from_manifest(
+            repo,
+            manifest_branch=manifest_branch,
+            manifest_path=manifest_path,
+        )
         if manifest_build:
             return manifest_build
     except Exception:

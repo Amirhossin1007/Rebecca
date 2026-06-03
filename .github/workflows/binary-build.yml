@@ -331,13 +331,14 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DEV_RELEASE_TAG: dev-builds
+      DEV_MANIFEST_BRANCH: dev-build-manifest
       DEV_MANIFEST_PATH: dev-builds.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Download package artifacts
         uses: actions/download-artifact@v4
@@ -385,12 +386,25 @@ jobs:
               --target "${GITHUB_SHA}"
           gh release upload "${DEV_RELEASE_TAG}" dev-upload-assets/* --clobber
 
+      - name: Checkout dev build manifest branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${DEV_MANIFEST_BRANCH}:refs/remotes/origin/${DEV_MANIFEST_BRANCH}" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/${DEV_MANIFEST_BRANCH}"; then
+            git worktree add dev-manifest "origin/${DEV_MANIFEST_BRANCH}"
+          else
+            git worktree add --detach dev-manifest
+            git -C dev-manifest switch --orphan "${DEV_MANIFEST_BRANCH}"
+            git -C dev-manifest rm -rf . >/dev/null 2>&1 || true
+          fi
+
       - name: Update dev build manifest
         shell: bash
         run: |
           set -euo pipefail
           python scripts/update_dev_build_manifest.py \
-            --manifest "${DEV_MANIFEST_PATH}" \
+            --manifest "dev-manifest/${DEV_MANIFEST_PATH}" \
             --assets-dir dev-upload-assets \
             --repo "${GITHUB_REPOSITORY}" \
             --release-tag "${DEV_RELEASE_TAG}" \
@@ -407,12 +421,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- "${DEV_MANIFEST_PATH}"; then
+          git -C dev-manifest add "${DEV_MANIFEST_PATH}"
+          if git -C dev-manifest diff --cached --quiet; then
             echo "Dev build manifest is unchanged."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "${DEV_MANIFEST_PATH}"
-          git commit -m "Update dev binary build manifest [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git -C dev-manifest config user.name "github-actions[bot]"
+          git -C dev-manifest config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C dev-manifest commit -m "Update dev binary build manifest [skip ci]"
+          git -C dev-manifest push origin "HEAD:${DEV_MANIFEST_BRANCH}"

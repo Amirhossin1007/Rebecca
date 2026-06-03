@@ -101,7 +101,7 @@ def test_binary_update_status_reads_latest_dev_from_manifest(monkeypatch):
         requested_urls.append(url)
         if url == "https://api.github.com/repos/rebeccapanel/Rebecca/releases/latest":
             return FakeResponse({"tag_name": "v0.1.3", "html_url": "https://github.com/rebeccapanel/Rebecca/releases/tag/v0.1.3"})
-        if url == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev/dev-builds.json":
+        if url == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev-build-manifest/dev-builds.json":
             return FakeResponse(
                 {
                     "latest": "dev-abc1234",
@@ -133,7 +133,10 @@ def test_binary_update_status_reads_latest_dev_from_manifest(monkeypatch):
     assert status["available"] is True
     assert status["latest_dev"]["tag"] == "dev-abc1234"
     assert status["latest_dev"]["html_url"] == "https://github.com/rebeccapanel/Rebecca/actions/runs/12345"
-    assert status["latest_dev"]["manifest_url"] == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev/dev-builds.json"
+    assert (
+        status["latest_dev"]["manifest_url"]
+        == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev-build-manifest/dev-builds.json"
+    )
     assert status["latest_dev"]["assets"]["linux-amd64"]["url"].endswith("rebecca-linux-amd64-dev-abc1234.tar.gz")
     assert all("/actions/runs" not in url for url in requested_urls)
 
