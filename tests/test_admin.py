@@ -146,7 +146,7 @@ def test_enable_admin(auth_client: TestClient):
     assert response.status_code == 200
 
 
-def test_enable_admin_does_not_auto_activate_users(auth_client: TestClient):
+def test_enable_admin_restores_only_users_disabled_by_admin(auth_client: TestClient):
     import uuid
     from app.db.models import User as DBUser, Admin as DBAdmin
     from app.models.user import UserStatus
@@ -167,15 +167,30 @@ def test_enable_admin_does_not_auto_activate_users(auth_client: TestClient):
         user_active = DBUser(username=f"ena_active_{unique_id}", admin_id=admin.id, status=UserStatus.active)
         user_disabled = DBUser(username=f"ena_disabled_{unique_id}", admin_id=admin.id, status=UserStatus.disabled)
         user_limited = DBUser(username=f"ena_limited_{unique_id}", admin_id=admin.id, status=UserStatus.limited)
-        db.add_all([user_active, user_disabled, user_limited])
+        user_expired = DBUser(username=f"ena_expired_{unique_id}", admin_id=admin.id, status=UserStatus.expired)
+        user_on_hold = DBUser(username=f"ena_hold_{unique_id}", admin_id=admin.id, status=UserStatus.on_hold)
+        db.add_all([user_active, user_disabled, user_limited, user_expired, user_on_hold])
         db.commit()
         db.flush()
         active_id = user_active.id
         disabled_id = user_disabled.id
         limited_id = user_limited.id
+        expired_id = user_expired.id
+        on_hold_id = user_on_hold.id
 
         disable_response = auth_client.post(f"/api/admin/{admin_username}/disable", json={"reason": "maintenance"})
         assert disable_response.status_code == 200
+
+        db.expire_all()
+        user_active = db.query(DBUser).filter(DBUser.id == active_id).first()
+        user_disabled = db.query(DBUser).filter(DBUser.id == disabled_id).first()
+        user_on_hold = db.query(DBUser).filter(DBUser.id == on_hold_id).first()
+        assert user_active.status == UserStatus.disabled
+        assert user_active.admin_disabled_at is not None
+        assert user_disabled.status == UserStatus.disabled
+        assert user_disabled.admin_disabled_at is None
+        assert user_on_hold.status == UserStatus.on_hold
+        assert user_on_hold.admin_disabled_at is None
 
         enable_response = auth_client.post(f"/api/admin/{admin_username}/enable")
         assert enable_response.status_code == 200
@@ -184,11 +199,15 @@ def test_enable_admin_does_not_auto_activate_users(auth_client: TestClient):
         user_active = db.query(DBUser).filter(DBUser.id == active_id).first()
         user_disabled = db.query(DBUser).filter(DBUser.id == disabled_id).first()
         user_limited = db.query(DBUser).filter(DBUser.id == limited_id).first()
+        user_expired = db.query(DBUser).filter(DBUser.id == expired_id).first()
+        user_on_hold = db.query(DBUser).filter(DBUser.id == on_hold_id).first()
 
-        # No automatic user re-activation should happen on admin enable.
-        assert user_active.status == UserStatus.disabled
+        assert user_active.status == UserStatus.active
+        assert user_active.admin_disabled_at is None
         assert user_disabled.status == UserStatus.disabled
         assert user_limited.status == UserStatus.limited
+        assert user_expired.status == UserStatus.expired
+        assert user_on_hold.status == UserStatus.on_hold
     finally:
         db.query(DBUser).filter(
             DBUser.username.in_(
@@ -196,6 +215,8 @@ def test_enable_admin_does_not_auto_activate_users(auth_client: TestClient):
                     f"ena_active_{unique_id}",
                     f"ena_disabled_{unique_id}",
                     f"ena_limited_{unique_id}",
+                    f"ena_expired_{unique_id}",
+                    f"ena_hold_{unique_id}",
                 ]
             )
         ).delete(synchronize_session=False)
@@ -227,14 +248,31 @@ def test_create_admin_with_expired_time_limit_is_disabled(auth_client: TestClien
 def test_admin_time_limit_auto_disable_and_auto_enable(auth_client: TestClient):
     import uuid
     from datetime import datetime, timedelta, timezone
-    from app.db.models import Admin as DBAdmin
+    from app.db.models import Admin as DBAdmin, User as DBUser
     from app.models.admin import AdminStatus
+    from app.models.user import UserStatus
     from tests.conftest import TestingSessionLocal
 
     username = f"expireadmin_{uuid.uuid4().hex[:8]}"
     create_data = {"username": username, "password": "expirepass123", "role": "standard"}
     create_response = auth_client.post("/api/admin", json=create_data)
     assert create_response.status_code == 200
+
+    db = TestingSessionLocal()
+    try:
+        dbadmin = db.query(DBAdmin).filter(DBAdmin.username == username).first()
+        assert dbadmin is not None
+        user_active = DBUser(username=f"{username}_active", admin_id=dbadmin.id, status=UserStatus.active)
+        user_disabled = DBUser(username=f"{username}_disabled", admin_id=dbadmin.id, status=UserStatus.disabled)
+        user_on_hold = DBUser(username=f"{username}_hold", admin_id=dbadmin.id, status=UserStatus.on_hold)
+        db.add_all([user_active, user_disabled, user_on_hold])
+        db.commit()
+        db.flush()
+        active_id = user_active.id
+        disabled_id = user_disabled.id
+        on_hold_id = user_on_hold.id
+    finally:
+        db.close()
 
     expired_ts = int((datetime.now(timezone.utc) - timedelta(minutes=1)).timestamp())
     disable_response = auth_client.put(f"/api/admin/{username}", json={"expire": expired_ts})
@@ -247,6 +285,20 @@ def test_admin_time_limit_auto_disable_and_auto_enable(auth_client: TestClient):
     manual_enable_response = auth_client.post(f"/api/admin/{username}/enable")
     assert manual_enable_response.status_code == 400
     assert "time limit" in manual_enable_response.json()["detail"].lower()
+
+    db = TestingSessionLocal()
+    try:
+        db.expire_all()
+        user_active = db.query(DBUser).filter(DBUser.id == active_id).first()
+        user_disabled = db.query(DBUser).filter(DBUser.id == disabled_id).first()
+        user_on_hold = db.query(DBUser).filter(DBUser.id == on_hold_id).first()
+        assert user_active.status == UserStatus.disabled
+        assert user_active.admin_disabled_at is not None
+        assert user_disabled.status == UserStatus.disabled
+        assert user_disabled.admin_disabled_at is None
+        assert user_on_hold.status == UserStatus.on_hold
+    finally:
+        db.close()
 
     extended_ts = int((datetime.now(timezone.utc) + timedelta(days=3)).timestamp())
     enable_response = auth_client.put(f"/api/admin/{username}", json={"expire": extended_ts})
@@ -263,6 +315,84 @@ def test_admin_time_limit_auto_disable_and_auto_enable(auth_client: TestClient):
         assert dbadmin is not None
         assert dbadmin.status == AdminStatus.active
         assert dbadmin.expire == extended_ts
+        user_active = db.query(DBUser).filter(DBUser.id == active_id).first()
+        user_disabled = db.query(DBUser).filter(DBUser.id == disabled_id).first()
+        user_on_hold = db.query(DBUser).filter(DBUser.id == on_hold_id).first()
+        assert user_active.status == UserStatus.active
+        assert user_active.admin_disabled_at is None
+        assert user_disabled.status == UserStatus.disabled
+        assert user_on_hold.status == UserStatus.on_hold
+    finally:
+        db.close()
+
+
+def test_admin_data_limit_auto_disable_and_enable_restores_active_users(auth_client: TestClient):
+    import uuid
+    from app.db.models import Admin as DBAdmin, User as DBUser
+    from app.models.admin import AdminStatus
+    from app.models.user import UserStatus
+    from tests.conftest import TestingSessionLocal
+
+    username = f"dataadmin_{uuid.uuid4().hex[:8]}"
+    create_response = auth_client.post(
+        "/api/admin",
+        json={"username": username, "password": "datapass123", "role": "standard", "data_limit": 1000},
+    )
+    assert create_response.status_code == 200
+
+    db = TestingSessionLocal()
+    try:
+        dbadmin = db.query(DBAdmin).filter(DBAdmin.username == username).first()
+        assert dbadmin is not None
+        dbadmin.users_usage = 1000
+        user_active = DBUser(username=f"{username}_active", admin_id=dbadmin.id, status=UserStatus.active)
+        user_disabled = DBUser(username=f"{username}_disabled", admin_id=dbadmin.id, status=UserStatus.disabled)
+        user_limited = DBUser(username=f"{username}_limited", admin_id=dbadmin.id, status=UserStatus.limited)
+        user_expired = DBUser(username=f"{username}_expired", admin_id=dbadmin.id, status=UserStatus.expired)
+        user_on_hold = DBUser(username=f"{username}_hold", admin_id=dbadmin.id, status=UserStatus.on_hold)
+        db.add_all([user_active, user_disabled, user_limited, user_expired, user_on_hold])
+        db.commit()
+        db.flush()
+        active_id = user_active.id
+        disabled_id = user_disabled.id
+        limited_id = user_limited.id
+        expired_id = user_expired.id
+        on_hold_id = user_on_hold.id
+    finally:
+        db.close()
+
+    disable_response = auth_client.put(f"/api/admin/{username}", json={"data_limit": 1000})
+    assert disable_response.status_code == 200
+    disabled_payload = disable_response.json()
+    assert disabled_payload["status"] == "disabled"
+    assert disabled_payload["disabled_reason"] == "admin_data_limit_exhausted"
+
+    manual_enable_response = auth_client.post(f"/api/admin/{username}/enable")
+    assert manual_enable_response.status_code == 400
+    assert "data limit" in manual_enable_response.json()["detail"].lower()
+
+    enable_response = auth_client.put(f"/api/admin/{username}", json={"data_limit": 2000})
+    assert enable_response.status_code == 200
+    enabled_payload = enable_response.json()
+    assert enabled_payload["status"] == "active"
+    assert enabled_payload["disabled_reason"] is None
+
+    db = TestingSessionLocal()
+    try:
+        dbadmin = db.query(DBAdmin).filter(DBAdmin.username == username).first()
+        assert dbadmin is not None
+        assert dbadmin.status == AdminStatus.active
+        user_active = db.query(DBUser).filter(DBUser.id == active_id).first()
+        user_disabled = db.query(DBUser).filter(DBUser.id == disabled_id).first()
+        user_limited = db.query(DBUser).filter(DBUser.id == limited_id).first()
+        user_expired = db.query(DBUser).filter(DBUser.id == expired_id).first()
+        user_on_hold = db.query(DBUser).filter(DBUser.id == on_hold_id).first()
+        assert user_active.status == UserStatus.active
+        assert user_active.admin_disabled_at is None
+        assert user_disabled.status == UserStatus.disabled
+        assert user_limited.status == UserStatus.limited
+        assert user_expired.status == UserStatus.expired
+        assert user_on_hold.status == UserStatus.on_hold
     finally:
         db.close()
 
@@ -320,10 +450,13 @@ def test_disable_admin(auth_client: TestClient, xray_mock):
         assert admin.status == AdminStatus.disabled
         assert admin.disabled_reason == "Test disable"
 
-        # Verify all active and on_hold users are disabled in DB
+        # Verify only active users are disabled in DB; on-hold users keep their original status.
         assert user1.status == UserStatus.disabled
+        assert user1.admin_disabled_at is not None
         assert user2.status == UserStatus.disabled
-        assert user3.status == UserStatus.disabled
+        assert user2.admin_disabled_at is not None
+        assert user3.status == UserStatus.on_hold
+        assert user3.admin_disabled_at is None
 
         # Verify xray was restarted with updated config
         xray_mock.config.include_db_users.assert_called_once()

@@ -333,3 +333,113 @@ jobs:
             --existing-body-file release-body.md \
             > release-body-updated.md
           gh release edit "${release_tag}" --notes-file release-body-updated.md
+
+  publish-dev-manifest:
+    needs:
+      - build-linux
+      - build-windows-amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DEV_RELEASE_TAG: dev-builds
+      DEV_MANIFEST_BRANCH: dev-build-manifest
+      DEV_MANIFEST_PATH: dev-builds.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rebecca-*
+          path: dev-release-assets
+          merge-multiple: true
+
+      - name: Prepare dev assets
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tag="dev-${GITHUB_SHA::7}"
+          mkdir -p dev-upload-assets
+          shopt -s nullglob
+          for asset in dev-release-assets/rebecca-*; do
+            name="$(basename "$asset")"
+            case "$name" in
+              rebecca-linux-*.tar.gz)
+                base="${name%.tar.gz}"
+                cp "$asset" "dev-upload-assets/${base}-${build_tag}.tar.gz"
+                ;;
+              rebecca-windows-*.zip)
+                base="${name%.zip}"
+                cp "$asset" "dev-upload-assets/${base}-${build_tag}.zip"
+                ;;
+            esac
+          done
+          if ! compgen -G "dev-upload-assets/*" >/dev/null; then
+            echo "No dev binary assets were prepared" >&2
+            exit 1
+          fi
+          echo "build_tag=${build_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish dev build assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "${DEV_RELEASE_TAG}" >/dev/null 2>&1 || \
+            gh release create "${DEV_RELEASE_TAG}" \
+              --title "Rebecca dev binary builds" \
+              --notes "Rolling prerelease that stores Rebecca dev binary build assets." \
+              --prerelease \
+              --target "${GITHUB_SHA}"
+          gh release upload "${DEV_RELEASE_TAG}" dev-upload-assets/* --clobber
+
+      - name: Checkout dev build manifest branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${DEV_MANIFEST_BRANCH}:refs/remotes/origin/${DEV_MANIFEST_BRANCH}" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/${DEV_MANIFEST_BRANCH}"; then
+            git worktree add dev-manifest "origin/${DEV_MANIFEST_BRANCH}"
+          else
+            git worktree add --detach dev-manifest
+            git -C dev-manifest switch --orphan "${DEV_MANIFEST_BRANCH}"
+            git -C dev-manifest rm -rf . >/dev/null 2>&1 || true
+          fi
+
+      - name: Update dev build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/update_dev_build_manifest.py \
+            --manifest "dev-manifest/${DEV_MANIFEST_PATH}" \
+            --assets-dir dev-upload-assets \
+            --repo "${GITHUB_REPOSITORY}" \
+            --release-tag "${DEV_RELEASE_TAG}" \
+            --project "Rebecca" \
+            --build-tag "${{ steps.meta.outputs.build_tag }}" \
+            --sha "${GITHUB_SHA}" \
+            --branch "${GITHUB_REF_NAME}" \
+            --workflow "${GITHUB_WORKFLOW}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-number "${GITHUB_RUN_NUMBER}" \
+            --max-builds 50
+
+      - name: Commit dev build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C dev-manifest add "${DEV_MANIFEST_PATH}"
+          if git -C dev-manifest diff --cached --quiet; then
+            echo "Dev build manifest is unchanged."
+            exit 0
+          fi
+          git -C dev-manifest config user.name "github-actions[bot]"
+          git -C dev-manifest config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C dev-manifest commit -m "Update dev binary build manifest [skip ci]"
+          git -C dev-manifest push origin "HEAD:${DEV_MANIFEST_BRANCH}"

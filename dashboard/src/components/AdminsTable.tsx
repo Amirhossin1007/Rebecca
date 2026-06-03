@@ -55,6 +55,7 @@ import {
 	ArrowPathIcon,
 	CheckCircleIcon,
 	ChevronDownIcon,
+	ChevronRightIcon,
 	EllipsisVerticalIcon,
 	KeyIcon,
 	PencilIcon,
@@ -92,10 +93,16 @@ import {
 	generateSuccessMessage,
 } from "utils/toastHandler";
 import AdminPermissionsModal from "./AdminPermissionsModal";
-import { DeleteConfirmPopover } from "./DeleteConfirmPopover";
 
 const ADMIN_DATA_LIMIT_EXHAUSTED_REASON_KEY = "admin_data_limit_exhausted";
 const ADMIN_TIME_LIMIT_EXHAUSTED_REASON_KEY = "admin_time_limit_exhausted";
+const ADMIN_TRAFFIC_OPTIONS = [
+	{ label: "100GB", gigabytes: 100 },
+	{ label: "500GB", gigabytes: 500 },
+	{ label: "1TB", gigabytes: 1024 },
+	{ label: "2TB", gigabytes: 2048 },
+	{ label: "5TB", gigabytes: 5120 },
+];
 
 const iconProps = {
 	baseStyle: {
@@ -414,10 +421,16 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		adminInDetails,
 	} = useAdminsStore();
 	const disableCancelRef = useRef<HTMLButtonElement | null>(null);
+	const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 	const {
 		isOpen: isDisableDialogOpen,
 		onOpen: openDisableDialog,
 		onClose: closeDisableDialog,
+	} = useDisclosure();
+	const {
+		isOpen: isDeleteDialogOpen,
+		onOpen: openDeleteDialog,
+		onClose: closeDeleteDialog,
 	} = useDisclosure();
 	const {
 		isOpen: isPermissionsModalOpen,
@@ -425,6 +438,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		onClose: closePermissionsModal,
 	} = useDisclosure();
 	const [adminToDisable, setAdminToDisable] = useState<Admin | null>(null);
+	const [adminToDelete, setAdminToDelete] = useState<Admin | null>(null);
 	const [disableReason, setDisableReason] = useState("");
 	const [expandedMobile, setExpandedMobile] = useState<string | null>(null);
 	const [actionState, setActionState] = useState<{
@@ -433,7 +447,8 @@ export const AdminsTable: FC<TableProps> = (props) => {
 			| "resetDeleted"
 			| "disableAdmin"
 			| "enableAdmin"
-			| "quickPassword";
+			| "quickPassword"
+			| "deleteAdmin";
 		username: string;
 	} | null>(null);
 	const [adminForPermissions, setAdminForPermissions] = useState<Admin | null>(
@@ -613,8 +628,10 @@ export const AdminsTable: FC<TableProps> = (props) => {
 			await deleteAdmin(admin.username);
 			generateSuccessMessage(t("admins.deleteSuccess", "Admin removed"), toast);
 			fetchAdmins();
+			return true;
 		} catch (error) {
 			generateErrorMessage(error, toast);
+			return false;
 		}
 	};
 
@@ -675,6 +692,29 @@ export const AdminsTable: FC<TableProps> = (props) => {
 	const closeContextMenu = useCallback(() => {
 		setContextMenu({ visible: false, x: 0, y: 0, admin: null });
 	}, []);
+	const closeDeleteDialogAndReset = () => {
+		closeDeleteDialog();
+		setAdminToDelete(null);
+	};
+	const startDeleteAdmin = (admin: Admin) => {
+		setAdminToDelete(admin);
+		openDeleteDialog();
+		closeContextMenu();
+	};
+	const confirmDeleteAdmin = async () => {
+		if (!adminToDelete) {
+			return;
+		}
+		setActionState({ type: "deleteAdmin", username: adminToDelete.username });
+		try {
+			const deleted = await handleDeleteAdmin(adminToDelete);
+			if (deleted) {
+				closeDeleteDialogAndReset();
+			}
+		} finally {
+			setActionState(null);
+		}
+	};
 	const handleCloseQuickPass = () => {
 		setQuickPassInfo(null);
 		closeQuickPassModal();
@@ -783,7 +823,11 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		}
 	};
 
-	const handleAddDataLimit = async (admin: Admin, gigabytes: number) => {
+	const handleAddDataLimit = async (
+		admin: Admin,
+		gigabytes: number,
+		onDone?: () => void,
+	) => {
 		if (
 			admin.data_limit === null ||
 			admin.data_limit === 0 ||
@@ -791,7 +835,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		) {
 			return;
 		}
-		setContextAction("addData");
+		setContextAction(`addData-${gigabytes}`);
 		const delta = gigabytes * 1024 * 1024 * 1024;
 		const nextLimit = admin.data_limit + delta;
 		try {
@@ -805,6 +849,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 			generateErrorMessage(error, toast);
 		} finally {
 			setContextAction(null);
+			onDone?.();
 			closeContextMenu();
 		}
 	};
@@ -964,6 +1009,61 @@ export const AdminsTable: FC<TableProps> = (props) => {
 			disabledReasonLabel,
 		};
 	};
+	const renderAddTrafficSubmenu = (admin: Admin, onDone?: () => void) => (
+		<Box position="relative" role="group">
+			<Button
+				variant="ghost"
+				justifyContent="space-between"
+				w="full"
+				leftIcon={<AddDataIcon />}
+				rightIcon={
+					<ChevronRightIcon
+						width={14}
+						style={{
+							transform: isRTL ? "rotate(180deg)" : undefined,
+						}}
+					/>
+				}
+				isLoading={contextAction?.startsWith("addData-")}
+				isDisabled={contextAction?.startsWith("addData-")}
+			>
+				{t("admins.addTraffic", "Add traffic")}
+			</Button>
+			<Stack
+				display="none"
+				_groupHover={{ display: "flex" }}
+				_groupFocusWithin={{ display: "flex" }}
+				position="absolute"
+				top={0}
+				left={isRTL ? "auto" : "100%"}
+				right={isRTL ? "100%" : "auto"}
+				minW="120px"
+				spacing={1}
+				p={2}
+				bg={dialogBg}
+				borderWidth="1px"
+				borderColor={dialogBorderColor}
+				borderRadius="md"
+				boxShadow="lg"
+				zIndex={1501}
+			>
+				{ADMIN_TRAFFIC_OPTIONS.map((option) => (
+					<Button
+						key={option.label}
+						variant="ghost"
+						justifyContent="flex-start"
+						onClick={() =>
+							handleAddDataLimit(admin, option.gigabytes, onDone)
+						}
+						isLoading={contextAction === `addData-${option.gigabytes}`}
+						isDisabled={contextAction?.startsWith("addData-")}
+					>
+						{option.label}
+					</Button>
+				))}
+			</Stack>
+		</Box>
+	);
 	const renderAdminActionsMenu = (admin: Admin) => {
 		const meta = getAdminRowMeta(admin);
 		const hasActions =
@@ -980,118 +1080,117 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		return (
 			<Box onClick={(event) => event.stopPropagation()}>
 				<Menu placement="bottom-start" strategy="fixed" autoSelect={false}>
-					<MenuButton
-						as={IconButton}
-						size="xs"
-						variant="ghost"
-						aria-label={t("admins.actions", "Admin actions")}
-						icon={<MoreIcon />}
-					/>
-					<Portal>
-						<MenuList
-							minW="240px"
-							maxW="calc(100vw - 24px)"
-							maxH="min(70vh, 420px)"
-							overflowY="auto"
-						>
-							{meta.canManage && (
-								<MenuItem
-									icon={<PencilIcon width={16} />}
-									onClick={() => openAdminDialog(admin)}
+					{({ onClose }) => (
+						<>
+							<MenuButton
+								as={IconButton}
+								size="xs"
+								variant="ghost"
+								aria-label={t("admins.actions", "Admin actions")}
+								icon={<MoreIcon />}
+							/>
+							<Portal>
+								<MenuList
+									minW="240px"
+									maxW="calc(100vw - 24px)"
+									maxH="min(70vh, 420px)"
+									overflow="visible"
 								>
-									{t("admins.editAction", "Edit")}
-								</MenuItem>
-							)}
-							{meta.canManage && (
-								<MenuItem
-									icon={<AdjustmentsHorizontalIcon width={16} />}
-									onClick={() => handleOpenPermissionsModal(admin)}
-								>
-									{t("admins.editPermissionsButton", "Edit permissions")}
-								</MenuItem>
-							)}
-							{meta.canManage && (
-								<MenuItem
-									icon={<ResetIcon />}
-									onClick={() => runResetUsage(admin)}
-									isDisabled={
-										actionState?.username === admin.username &&
-										actionState?.type === "reset"
-									}
-								>
-									{t("admins.resetUsage", "Reset usage")}
-								</MenuItem>
-							)}
-							{meta.canManage && (admin.deleted_users_usage ?? 0) > 0 && (
-								<MenuItem
-									icon={<QuickPassIcon />}
-									onClick={() => runResetDeletedUsersUsage(admin)}
-									isDisabled={
-										actionState?.username === admin.username &&
-										actionState?.type === "resetDeleted"
-									}
-								>
-									{t("admins.resetDeletedUsage", "Reset deleted-user usage")}
-								</MenuItem>
-							)}
-							{meta.showEnable && (
-								<MenuItem
-									icon={<EnableIcon />}
-									onClick={() => handleEnableAdmin(admin)}
-									isDisabled={
-										actionState?.username === admin.username &&
-										actionState?.type === "enableAdmin"
-									}
-								>
-									{t("admins.enableAdmin", "Enable admin")}
-								</MenuItem>
-							)}
-							{meta.showDisable && (
-								<MenuItem
-									icon={<DisableIcon />}
-									onClick={() => startDisableAdmin(admin)}
-									isDisabled={
-										actionState?.username === admin.username &&
-										actionState?.type === "disableAdmin"
-									}
-								>
-									{t("admins.disableAdmin", "Disable admin")}
-								</MenuItem>
-							)}
-							{meta.showAddTraffic && (
-								<MenuItem
-									icon={<AddDataIcon />}
-									onClick={() => handleAddDataLimit(admin, 500)}
-									isDisabled={contextAction === "addData"}
-								>
-									{t("admins.add500Gb", "Add 500 GB")}
-								</MenuItem>
-							)}
-							{meta.canManage && (
-								<MenuItem
-									icon={<QuickPassIcon />}
-									onClick={() => handleQuickPassword(admin)}
-									isDisabled={contextAction === "quickPassword"}
-								>
-									{t("admins.quickPassword", "Generate new password")}
-								</MenuItem>
-							)}
-							{meta.showDelete && (
-								<DeleteConfirmPopover
-									message={t(
-										"admins.confirmDeleteMessage",
-										"Are you sure you want to delete {{username}}?",
-										{ username: admin.username },
+									{meta.canManage && (
+										<MenuItem
+											icon={<PencilIcon width={16} />}
+											onClick={() => openAdminDialog(admin)}
+										>
+											{t("admins.editAction", "Edit")}
+										</MenuItem>
 									)}
-									onConfirm={() => handleDeleteAdmin(admin)}
-								>
-									<MenuItem icon={<DeleteIcon />} color="red.500">
-										{t("delete", "Delete")}
-									</MenuItem>
-								</DeleteConfirmPopover>
-							)}
-						</MenuList>
-					</Portal>
+									{meta.canManage && (
+										<MenuItem
+											icon={<AdjustmentsHorizontalIcon width={16} />}
+											onClick={() => handleOpenPermissionsModal(admin)}
+										>
+											{t("admins.editPermissionsButton", "Edit permissions")}
+										</MenuItem>
+									)}
+									{meta.canManage && (
+										<MenuItem
+											icon={<ResetIcon />}
+											onClick={() => runResetUsage(admin)}
+											isDisabled={
+												actionState?.username === admin.username &&
+												actionState?.type === "reset"
+											}
+										>
+											{t("admins.resetUsage", "Reset usage")}
+										</MenuItem>
+									)}
+									{meta.canManage && (admin.deleted_users_usage ?? 0) > 0 && (
+										<MenuItem
+											icon={<QuickPassIcon />}
+											onClick={() => runResetDeletedUsersUsage(admin)}
+											isDisabled={
+												actionState?.username === admin.username &&
+												actionState?.type === "resetDeleted"
+											}
+										>
+											{t(
+												"admins.resetDeletedUsage",
+												"Reset deleted-user usage",
+											)}
+										</MenuItem>
+									)}
+									{meta.showEnable && (
+										<MenuItem
+											icon={<EnableIcon />}
+											onClick={() => handleEnableAdmin(admin)}
+											isDisabled={
+												actionState?.username === admin.username &&
+												actionState?.type === "enableAdmin"
+											}
+										>
+											{t("admins.enableAdmin", "Enable admin")}
+										</MenuItem>
+									)}
+									{meta.showDisable && (
+										<MenuItem
+											icon={<DisableIcon />}
+											onClick={() => startDisableAdmin(admin)}
+											isDisabled={
+												actionState?.username === admin.username &&
+												actionState?.type === "disableAdmin"
+											}
+										>
+											{t("admins.disableAdmin", "Disable admin")}
+										</MenuItem>
+									)}
+									{meta.showAddTraffic &&
+										renderAddTrafficSubmenu(admin, onClose)}
+									{meta.canManage && (
+										<MenuItem
+											icon={<QuickPassIcon />}
+											onClick={() => handleQuickPassword(admin)}
+											isDisabled={contextAction === "quickPassword"}
+										>
+											{t("admins.quickPassword", "Generate new password")}
+										</MenuItem>
+									)}
+									{meta.showDelete && (
+										<MenuItem
+											icon={<DeleteIcon />}
+											color="red.500"
+											onClick={() => startDeleteAdmin(admin)}
+											isDisabled={
+												actionState?.username === admin.username &&
+												actionState?.type === "deleteAdmin"
+											}
+										>
+											{t("delete", "Delete")}
+										</MenuItem>
+									)}
+								</MenuList>
+							</Portal>
+						</>
+					)}
 				</Menu>
 			</Box>
 		);
@@ -2247,7 +2346,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 							minW="220px"
 							maxW="calc(100vw - 24px)"
 							maxH="min(70vh, 420px)"
-							overflowY="auto"
+							overflow="visible"
 							onClick={(e) => e.stopPropagation()}
 							onContextMenu={(e) => {
 								e.preventDefault();
@@ -2311,15 +2410,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 									</Button>
 								)}
 								{showAddTraffic && (
-									<Button
-										variant="ghost"
-										justifyContent="flex-start"
-										leftIcon={<AddDataIcon />}
-										onClick={() => handleAddDataLimit(ctxAdmin, 500)}
-										isLoading={contextAction === "addData"}
-									>
-										{t("admins.add500Gb", "Add 500 GB")}
-									</Button>
+									renderAddTrafficSubmenu(ctxAdmin)
 								)}
 								{canManage && (
 									<Button
@@ -2333,31 +2424,67 @@ export const AdminsTable: FC<TableProps> = (props) => {
 									</Button>
 								)}
 								{showDelete && (
-									<DeleteConfirmPopover
-										message={t(
-											"admins.confirmDeleteMessage",
-											"Are you sure you want to delete {{username}}?",
-											{ username: ctxAdmin.username },
-										)}
-										onConfirm={async () => {
-											await handleDeleteAdmin(ctxAdmin);
-											closeContextMenu();
-										}}
+									<Button
+										variant="ghost"
+										justifyContent="flex-start"
+										colorScheme="red"
+										leftIcon={<DeleteIcon />}
+										onClick={() => startDeleteAdmin(ctxAdmin)}
+										isLoading={
+											actionState?.type === "deleteAdmin" &&
+											actionState?.username === ctxAdmin.username
+										}
 									>
-										<Button
-											variant="ghost"
-											justifyContent="flex-start"
-											colorScheme="red"
-											leftIcon={<DeleteIcon />}
-										>
-											{t("delete", "Delete")}
-										</Button>
-									</DeleteConfirmPopover>
+										{t("delete", "Delete")}
+									</Button>
 								)}
 							</Stack>
 						</Box>
 					);
 				})()}
+
+			<AlertDialog
+				isOpen={isDeleteDialogOpen}
+				leastDestructiveRef={deleteCancelRef}
+				onClose={closeDeleteDialogAndReset}
+			>
+				<AlertDialogOverlay bg="blackAlpha.300" backdropFilter="blur(10px)">
+					<AlertDialogContent
+						bg={dialogBg}
+						borderWidth="1px"
+						borderColor={dialogBorderColor}
+					>
+						<AlertDialogHeader fontSize="lg" fontWeight="bold">
+							{t("delete", "Delete")}
+						</AlertDialogHeader>
+						<AlertDialogBody>
+							{t(
+								"admins.confirmDeleteMessage",
+								"Are you sure you want to delete {{username}}?",
+								{ username: adminToDelete?.username ?? "" },
+							)}
+						</AlertDialogBody>
+						<AlertDialogFooter>
+							<Button
+								ref={deleteCancelRef}
+								onClick={closeDeleteDialogAndReset}
+								isDisabled={actionState?.type === "deleteAdmin"}
+							>
+								{t("cancel", "Cancel")}
+							</Button>
+							<Button
+								colorScheme="red"
+								onClick={confirmDeleteAdmin}
+								ml={3}
+								isLoading={actionState?.type === "deleteAdmin"}
+								isDisabled={!adminToDelete}
+							>
+								{t("delete", "Delete")}
+							</Button>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialogOverlay>
+			</AlertDialog>
 
 			<Modal isOpen={isQuickPassOpen} onClose={handleCloseQuickPass} isCentered>
 				<ModalOverlay />

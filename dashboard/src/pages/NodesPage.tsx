@@ -97,7 +97,6 @@ import {
 	generateSuccessMessage,
 } from "utils/toastHandler";
 import { CoreVersionDialog } from "../components/CoreVersionDialog";
-import { DeleteConfirmPopover } from "../components/DeleteConfirmPopover";
 import { GeoUpdateDialog } from "../components/GeoUpdateDialog";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { NodeModalStatusBadge } from "../components/NodeModalStatusBadge";
@@ -435,6 +434,13 @@ export const NodesPage: FC = () => {
 		onClose: closeResetConfirm,
 	} = useDisclosure();
 	const cancelResetRef = useRef<HTMLButtonElement | null>(null);
+	const [deleteCandidate, setDeleteCandidate] = useState<NodeType | null>(null);
+	const {
+		isOpen: isDeleteConfirmOpen,
+		onOpen: openDeleteConfirm,
+		onClose: closeDeleteConfirm,
+	} = useDisclosure();
+	const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
 	const [masterLimitInput, setMasterLimitInput] = useState<string>("");
 	const [masterLimitDirty, setMasterLimitDirty] = useState(false);
 	const {
@@ -624,6 +630,8 @@ export const NodesPage: FC = () => {
 				);
 				queryClient.invalidateQueries(FetchNodesQueryKey);
 				refetchNodes();
+				closeDeleteConfirm();
+				setDeleteCandidate(null);
 			},
 			onError: (err) => {
 				generateErrorMessage(err, toast);
@@ -862,6 +870,23 @@ export const NodesPage: FC = () => {
 		if (!node?.id) return;
 		setResetCandidate(node);
 		openResetConfirm();
+	};
+
+	const handleDeleteNodeRequest = (node: NodeType) => {
+		if (!node?.id) return;
+		setDeleteCandidate(node);
+		openDeleteConfirm();
+	};
+
+	const handleCloseDeleteConfirm = () => {
+		if (isDeletingNode) return;
+		closeDeleteConfirm();
+		setDeleteCandidate(null);
+	};
+
+	const confirmDeleteNode = () => {
+		if (!deleteCandidate) return;
+		deleteNodeMutate(deleteCandidate);
 	};
 
 	const handleRestartNodeService = (node: NodeType) => {
@@ -2067,20 +2092,14 @@ export const NodesPage: FC = () => {
 																	)}
 																</MenuItem>
 															)}
-															<DeleteConfirmPopover
-																message={t("deleteNode.prompt", {
-																	name: node.name,
-																})}
-																isLoading={isDeletingNode}
-																onConfirm={() => deleteNodeMutate(node)}
+															<MenuItem
+																icon={<DeleteIconStyled />}
+																color="red.500"
+																onClick={() => handleDeleteNodeRequest(node)}
+																isDisabled={isDeletingNode}
 															>
-																<MenuItem
-																	icon={<DeleteIconStyled />}
-																	color="red.500"
-																>
-																	{t("delete")}
-																</MenuItem>
-															</DeleteConfirmPopover>
+																{t("delete")}
+															</MenuItem>
 														</MenuList>
 													</Portal>
 												</Menu>
@@ -2653,19 +2672,13 @@ export const NodesPage: FC = () => {
 												icon={<EditIconStyled />}
 												onClick={() => setEditingNode(node)}
 											/>
-											<DeleteConfirmPopover
-												message={t("deleteNode.prompt", {
-													name: node.name,
-												})}
-												isLoading={isDeletingNode}
-												onConfirm={() => deleteNodeMutate(node)}
-											>
-												<IconButton
-													aria-label={t("delete")}
-													icon={<DeleteIconStyled />}
-													colorScheme="red"
-												/>
-											</DeleteConfirmPopover>
+											<IconButton
+												aria-label={t("delete")}
+												icon={<DeleteIconStyled />}
+												colorScheme="red"
+												onClick={() => handleDeleteNodeRequest(node)}
+												isDisabled={isDeletingNode}
+											/>
 										</ButtonGroup>
 									</HStack>
 								</VStack>
@@ -2796,6 +2809,48 @@ export const NodesPage: FC = () => {
 					</ModalFooter>
 				</ModalContent>
 			</Modal>
+			<AlertDialog
+				isOpen={isDeleteConfirmOpen}
+				leastDestructiveRef={cancelDeleteRef}
+				onClose={handleCloseDeleteConfirm}
+			>
+				<AlertDialogOverlay>
+					<AlertDialogContent>
+						<AlertDialogHeader fontSize="lg" fontWeight="bold">
+							{t("delete")}
+						</AlertDialogHeader>
+
+						<AlertDialogBody>
+							{t("deleteNode.prompt", {
+								name:
+									deleteCandidate?.name ??
+									deleteCandidate?.address ??
+									t("nodes.thisNode", "this node"),
+							})}
+						</AlertDialogBody>
+
+						<AlertDialogFooter>
+							<Button
+								ref={cancelDeleteRef}
+								onClick={handleCloseDeleteConfirm}
+								isDisabled={isDeletingNode}
+							>
+								{t("cancel", "Cancel")}
+							</Button>
+							<Button
+								colorScheme="red"
+								onClick={confirmDeleteNode}
+								ml={3}
+								isLoading={isDeletingNode}
+								isDisabled={!deleteCandidate}
+							>
+								{t("delete")}
+							</Button>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialogOverlay>
+			</AlertDialog>
+
 			<AlertDialog
 				isOpen={isResetConfirmOpen}
 				leastDestructiveRef={cancelResetRef}

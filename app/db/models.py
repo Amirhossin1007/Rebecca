@@ -286,6 +286,7 @@ class User(Base):
 
     edit_at = Column(DateTime, nullable=True, default=None)
     last_status_change = Column(DateTime, default=utcnow, nullable=True)
+    admin_disabled_at = Column(DateTime, nullable=True, default=None)
 
     service_id = Column(Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True, index=True)
     service = relationship("Service", back_populates="users")

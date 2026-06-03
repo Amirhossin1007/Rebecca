@@ -1085,3 +1085,30 @@ def test_update_user_service_change(auth_client: TestClient):
     fetch_resp = auth_client.get(f"/api/user/{username}")
     assert fetch_resp.status_code == 200
     assert fetch_resp.json()["service_id"] == service_two_id
+
+
+def test_update_user_service_change_drops_new_disallowed_proxy(auth_client: TestClient):
+    unique = uuid4().hex[:6]
+    with TestingSessionLocal() as db:
+        service = _create_service_with_host(db, f"svc-drop-proxy-{unique}")
+        service_id = service.id
+
+    username = f"svc-drop-proxy-{unique}"
+    create_resp = auth_client.post("/api/user", json={"username": username, "proxies": {"vmess": {}}})
+    assert create_resp.status_code == 201, create_resp.text
+
+    update_resp = auth_client.put(
+        f"/api/user/{username}",
+        json={
+            "service_id": service_id,
+            "proxies": {
+                "vless": {},
+            },
+        },
+    )
+
+    assert update_resp.status_code == 200, update_resp.text
+    payload = update_resp.json()
+    assert payload["service_id"] == service_id
+    assert "vmess" in payload["proxies"]
+    assert "vless" not in payload["proxies"]

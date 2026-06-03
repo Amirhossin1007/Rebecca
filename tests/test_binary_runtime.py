@@ -78,6 +78,67 @@ def test_build_rebecca_update_args_supports_release_and_dev_channels():
     assert build_rebecca_update_args(channel="dev") == ["update", "--dev"]
     assert build_rebecca_update_args(version="v1.2.3") == ["update", "--version", "v1.2.3"]
     assert build_rebecca_update_args(version="latest") == ["update", "--version", "latest"]
+    assert build_rebecca_update_args(version="dev-abcdef0") == ["update", "--version", "dev-abcdef0"]
+
+
+def test_binary_update_status_reads_latest_dev_from_manifest(monkeypatch):
+    from app.utils import update_check
+
+    update_check._CACHE.clear()
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self.payload
+
+    def fake_get(url: str, **kwargs):
+        requested_urls.append(url)
+        if url == "https://api.github.com/repos/rebeccapanel/Rebecca/releases/latest":
+            return FakeResponse({"tag_name": "v0.1.3", "html_url": "https://github.com/rebeccapanel/Rebecca/releases/tag/v0.1.3"})
+        if url == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev-build-manifest/dev-builds.json":
+            return FakeResponse(
+                {
+                    "latest": "dev-abc1234",
+                    "updated_at": "2026-06-03T08:00:00Z",
+                    "builds": [
+                        {
+                            "tag": "dev-abc1234",
+                            "sha": "abc1234567890",
+                            "branch": "dev",
+                            "run_id": "12345",
+                            "created_at": "2026-06-03T07:59:00Z",
+                            "assets": {
+                                "linux-amd64": {
+                                    "name": "rebecca-linux-amd64-dev-abc1234.tar.gz",
+                                    "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-abc1234.tar.gz",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        raise AssertionError(f"Unexpected GitHub request: {url}")
+
+    monkeypatch.setattr(update_check.requests, "get", fake_get)
+
+    status = update_check.get_binary_update_status("rebeccapanel/Rebecca", "v0.1.3", channel="dev")
+
+    assert status["target"] == "dev-abc1234"
+    assert status["available"] is True
+    assert status["latest_dev"]["tag"] == "dev-abc1234"
+    assert status["latest_dev"]["html_url"] == "https://github.com/rebeccapanel/Rebecca/actions/runs/12345"
+    assert (
+        status["latest_dev"]["manifest_url"]
+        == "https://raw.githubusercontent.com/rebeccapanel/Rebecca/dev-build-manifest/dev-builds.json"
+    )
+    assert status["latest_dev"]["assets"]["linux-amd64"]["url"].endswith("rebecca-linux-amd64-dev-abc1234.tar.gz")
+    assert all("/actions/runs" not in url for url in requested_urls)
 
 
 def test_runtime_info_defaults_to_docker_without_binary_marker(tmp_path: Path, monkeypatch):

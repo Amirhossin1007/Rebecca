@@ -290,8 +290,7 @@ def disable_admin_account(
     reason = reason[:512]
 
     previous_state = Admin.model_validate(dbadmin)
-    crud.disable_all_active_users(db=db, admin=dbadmin)
-    updated_admin = crud.disable_admin(db, dbadmin, reason)
+    updated_admin = crud.disable_admin_with_active_users(db, dbadmin, reason)
 
     background_tasks.add_task(_restart_node_runtimes)
 
@@ -311,7 +310,7 @@ def enable_admin_account(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(Admin.check_sudo_admin),
 ):
-    """Re-activate a previously disabled admin without auto-changing user statuses."""
+    """Re-activate a previously disabled admin and restore users disabled with it."""
     current_admin.ensure_can_manage_admin(Admin.model_validate(dbadmin))
     if dbadmin.status == AdminStatus.deleted:
         raise HTTPException(status_code=400, detail="Admin already deleted")

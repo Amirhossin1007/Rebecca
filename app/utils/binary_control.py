@@ -117,6 +117,7 @@ def run_rebecca_cli(args: list[str], *, timeout: int = 900) -> dict[str, str]:
 
 
 _RELEASE_VERSION_PATTERN = re.compile(r"^v?\d+(?:\.\d+){1,3}(?:[-+._A-Za-z0-9]*)?$")
+_DEV_VERSION_PATTERN = re.compile(r"^dev-[0-9a-fA-F]{7,40}$")
 
 
 def build_rebecca_update_args(channel: str | None = None, version: str | None = None) -> list[str]:
@@ -129,6 +130,8 @@ def build_rebecca_update_args(channel: str | None = None, version: str | None = 
             return [*args, "--version", "latest"]
         if normalized_version == "dev":
             return [*args, "--dev"]
+        if _DEV_VERSION_PATTERN.fullmatch(normalized_version):
+            return [*args, "--version", normalized_version]
         if not _RELEASE_VERSION_PATTERN.fullmatch(normalized_version):
             raise HTTPException(status_code=422, detail="Invalid update version")
         return [*args, "--version", normalized_version]

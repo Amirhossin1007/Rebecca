@@ -43,7 +43,7 @@ from app.models.user import UserStatus
 
 # MasterSettingsService not available in current project structure
 from app.db.exceptions import UsersLimitReachedError
-from .user import _get_active_users_count, disable_all_active_users, activate_all_disabled_users, ONLINE_ACTIVE_WINDOW
+from .user import _get_active_users_count, ONLINE_ACTIVE_WINDOW
 
 _USER_STATUS_ENUM_ENSURED = False
 
@@ -294,10 +294,11 @@ def _admin_within_all_limits(dbadmin: Admin, *, now_ts: Optional[float] = None) 
 
 
 def _disable_admin_and_active_users(db: Session, dbadmin: Admin, reason: str) -> None:
+    now = datetime.now(timezone.utc)
     active_users = (
         db.query(User.id, User.username)
         .filter(User.admin_id == dbadmin.id)
-        .filter(User.status.in_((UserStatus.active, UserStatus.on_hold)))
+        .filter(User.status == UserStatus.active)
         .all()
     )
 
@@ -308,7 +309,14 @@ def _disable_admin_and_active_users(db: Session, dbadmin: Admin, reason: str) ->
     if not active_users:
         return
 
-    disable_all_active_users(db, dbadmin)
+    db.query(User).filter(User.id.in_([row.id for row in active_users])).update(
+        {
+            User.status: UserStatus.disabled,
+            User.last_status_change: now,
+            User.admin_disabled_at: now,
+        },
+        synchronize_session=False,
+    )
     try:
         from app.services import node_operations
 
@@ -318,14 +326,30 @@ def _disable_admin_and_active_users(db: Session, dbadmin: Admin, reason: str) ->
         pass
 
 
-def _restore_admin_users_and_nodes(db: Session, dbadmin: Admin) -> None:
-    """Reload nodes after admin re-enable without auto-changing user statuses."""
-    try:
-        from app.services import node_operations
+def _restore_admin_disabled_users(db: Session, dbadmin: Admin) -> int:
+    now = datetime.now(timezone.utc)
+    restored = (
+        db.query(User)
+        .filter(User.admin_id == dbadmin.id)
+        .filter(User.status == UserStatus.disabled)
+        .filter(User.admin_disabled_at.isnot(None))
+        .update(
+            {
+                User.status: UserStatus.active,
+                User.last_status_change: now,
+                User.admin_disabled_at: None,
+            },
+            synchronize_session=False,
+        )
+    )
+    if restored:
+        try:
+            from app.services import node_operations
 
-        node_operations.queue_sync_config()
-    except Exception:
-        return
+            node_operations.queue_sync_config()
+        except Exception:
+            pass
+    return restored
 
 
 def _maybe_enable_admin_after_data_limit(db: Session, dbadmin: Admin) -> bool:
@@ -334,9 +358,9 @@ def _maybe_enable_admin_after_data_limit(db: Session, dbadmin: Admin) -> bool:
     if not _admin_within_all_limits(dbadmin):
         return False
 
-    _restore_admin_users_and_nodes(db, dbadmin)
     dbadmin.status = AdminStatus.active
     dbadmin.disabled_reason = None
+    _restore_admin_disabled_users(db, dbadmin)
     return True
 
 
@@ -346,9 +370,9 @@ def _maybe_enable_admin_after_time_limit(db: Session, dbadmin: Admin) -> bool:
     if not _admin_within_all_limits(dbadmin):
         return False
 
-    _restore_admin_users_and_nodes(db, dbadmin)
     dbadmin.status = AdminStatus.active
     dbadmin.disabled_reason = None
+    _restore_admin_disabled_users(db, dbadmin)
     return True
 
 
@@ -673,12 +697,21 @@ def disable_admin(db: Session, dbadmin: Admin, reason: str) -> Admin:
     return dbadmin
 
 
+def disable_admin_with_active_users(db: Session, dbadmin: Admin, reason: str) -> Admin:
+    """Disable an admin account and mark only currently active users for restore."""
+    _disable_admin_and_active_users(db, dbadmin, reason)
+    db.commit()
+    db.refresh(dbadmin)
+    return dbadmin
+
+
 def enable_admin(db: Session, dbadmin: Admin) -> Admin:
-    """Re-activate a previously disabled admin account (set-based update)."""
+    """Re-activate an admin and restore users disabled by that admin transition."""
     db.query(Admin).filter(Admin.id == dbadmin.id).update(
         {Admin.status: AdminStatus.active, Admin.disabled_reason: None},
         synchronize_session=False,
     )
+    _restore_admin_disabled_users(db, dbadmin)
     db.commit()
     db.refresh(dbadmin)
     return dbadmin

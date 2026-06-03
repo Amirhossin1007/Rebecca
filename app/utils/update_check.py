@@ -7,7 +7,9 @@ from typing import Any
 import requests
 
 GITHUB_API_BASE = "https://api.github.com"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
 GITHUB_CACHE_TTL = 300
+DEFAULT_DEV_BUILD_MANIFEST_BRANCH = "dev-build-manifest"
 
 _CACHE: dict[str, tuple[float, Any]] = {}
 
@@ -48,13 +50,27 @@ def _github_headers() -> dict[str, str]:
 
 
 def _get_json(path: str) -> Any:
-    key = path
+    key = f"api:{path}"
     now = time.time()
     cached = _CACHE.get(key)
     if cached and now - cached[0] < GITHUB_CACHE_TTL:
         return cached[1]
 
     response = requests.get(f"{GITHUB_API_BASE}{path}", headers=_github_headers(), timeout=8)
+    response.raise_for_status()
+    data = response.json()
+    _CACHE[key] = (now, data)
+    return data
+
+
+def _get_url_json(url: str) -> Any:
+    key = f"url:{url}"
+    now = time.time()
+    cached = _CACHE.get(key)
+    if cached and now - cached[0] < GITHUB_CACHE_TTL:
+        return cached[1]
+
+    response = requests.get(url, headers=_github_headers(), timeout=8)
     response.raise_for_status()
     data = response.json()
     _CACHE[key] = (now, data)
@@ -76,12 +92,84 @@ def _latest_release(repo: str) -> dict[str, Any] | None:
     }
 
 
+def _dev_manifest_url(repo: str, branch: str, manifest_path: str) -> str:
+    clean_path = manifest_path.strip().lstrip("/") or "dev-builds.json"
+    return f"{GITHUB_RAW_BASE}/{repo}/{branch}/{clean_path}"
+
+
+def _select_manifest_build(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    builds = data.get("builds")
+    if not isinstance(builds, list):
+        return None
+
+    latest = str(data.get("latest") or "").strip()
+    if latest:
+        for build in builds:
+            if isinstance(build, dict) and build.get("tag") == latest:
+                return build
+
+    for build in builds:
+        if isinstance(build, dict):
+            return build
+    return None
+
+
+def _latest_dev_build_from_manifest(
+    repo: str,
+    *,
+    manifest_branch: str = DEFAULT_DEV_BUILD_MANIFEST_BRANCH,
+    manifest_path: str = "dev-builds.json",
+) -> dict[str, Any] | None:
+    manifest_url = _dev_manifest_url(repo, manifest_branch, manifest_path)
+    data = _get_url_json(manifest_url)
+    build = _select_manifest_build(data)
+    if not build:
+        return None
+
+    tag = str(build.get("tag") or "").strip()
+    if not tag:
+        return None
+
+    run_id = str(build.get("run_id") or "").strip()
+    html_url = f"https://github.com/{repo}/actions/runs/{run_id}" if run_id else None
+    return {
+        "tag": tag,
+        "sha": build.get("sha"),
+        "branch": build.get("branch") or "dev",
+        "created_at": build.get("created_at"),
+        "updated_at": data.get("updated_at"),
+        "html_url": html_url,
+        "manifest_url": manifest_url,
+        "assets": build.get("assets") if isinstance(build.get("assets"), dict) else {},
+    }
+
+
 def _latest_dev_build(
     repo: str,
     *,
     branch: str = "dev",
     workflow_path: str = ".github/workflows/binary-build.yml",
+    manifest_path: str = "dev-builds.json",
+    manifest_branch: str | None = None,
 ) -> dict[str, Any] | None:
+    manifest_branch = (
+        manifest_branch
+        or os.getenv("REBECCA_BINARY_DEV_MANIFEST_BRANCH", "").strip()
+        or DEFAULT_DEV_BUILD_MANIFEST_BRANCH
+    )
+    try:
+        manifest_build = _latest_dev_build_from_manifest(
+            repo,
+            manifest_branch=manifest_branch,
+            manifest_path=manifest_path,
+        )
+        if manifest_build:
+            return manifest_build
+    except Exception:
+        pass
+
     data = _get_json(f"/repos/{repo}/actions/runs?per_page=50")
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     if not isinstance(runs, list):
