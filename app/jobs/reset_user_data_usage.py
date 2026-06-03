@@ -1,9 +1,13 @@
 from datetime import datetime, UTC
+import contextlib
+import os
 
 from app.runtime import logger, scheduler
 from app.db import crud, GetDB, get_users
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 from app.services import node_operations
+
+xray = None
 
 
 RESET_STRATEGY_TO_DAYS = {
@@ -61,6 +65,11 @@ def reset_user_data_usage():
                     user_id = getattr(updated_user, "id", None)
                     if user_id is not None:
                         node_operations.queue_user_operation(user_id, node_operations.ENABLE_USER)
+                    if os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1":
+                        with contextlib.suppress(Exception):
+                            operation = getattr(getattr(xray, "operations", None), "add_user", None)
+                            if operation is not None:
+                                operation(updated_user)
 
                 logger.info(f'User data usage reset for User "{updated_user.username}"')
             except Exception as exc:

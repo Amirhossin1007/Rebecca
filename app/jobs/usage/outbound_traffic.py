@@ -17,6 +17,21 @@ from app.utils.xray_targets import MASTER_TARGET_ID, get_node_effective_raw_conf
 logger = logging.getLogger(__name__)
 
 
+class _RuntimeXrayProxy:
+    """Live compatibility target for legacy outbound metadata tests."""
+
+    def __getattr__(self, name):
+        from app import runtime as runtime_state
+
+        target = runtime_state.xray
+        if target is None:
+            raise AttributeError(name)
+        return getattr(target, name)
+
+
+xray = _RuntimeXrayProxy()
+
+
 def _target_identity(node_id: int | None) -> tuple[str, int | None]:
     if node_id is None:
         return MASTER_TARGET_ID, None

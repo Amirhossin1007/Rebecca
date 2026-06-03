@@ -36,6 +36,21 @@ from config import (
 _record_node_usages_lock = threading.Lock()
 
 
+class _RuntimeXrayProxy:
+    """Live compatibility target for legacy outbound usage tests."""
+
+    def __getattr__(self, name):
+        from app import runtime as runtime_state
+
+        target = runtime_state.xray
+        if target is None:
+            raise AttributeError(name)
+        return getattr(target, name)
+
+
+xray = _RuntimeXrayProxy()
+
+
 def _set_usage_lock_wait_timeout(db) -> None:
     timeout = int(JOB_USAGE_DB_LOCK_WAIT_TIMEOUT or 0)
     if timeout <= 0:
@@ -48,7 +63,7 @@ def _set_usage_lock_wait_timeout(db) -> None:
 
 
 def _nodes():
-    return {}
+    return getattr(xray, "nodes", {}) or {}
 
 
 def _update_node_limits(db, dbnode: Node, total_up: int, total_down: int, *, commit: bool = True):

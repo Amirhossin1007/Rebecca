@@ -80,8 +80,25 @@ def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict
 
             runtime_xray = runtime_state.xray
             runtime_inbounds = getattr(getattr(runtime_xray, "config", None), "inbounds_by_tag", None)
+            runtime_protocols = getattr(getattr(runtime_xray, "config", None), "inbounds_by_protocol", None)
             if isinstance(runtime_inbounds, dict):
-                inbounds.update(runtime_inbounds)
+                inbounds.update(
+                    {
+                        tag: dict(inbound) if isinstance(inbound, dict) else {"tag": tag}
+                        for tag, inbound in runtime_inbounds.items()
+                    }
+                )
+            if isinstance(runtime_protocols, dict):
+                for protocol, protocol_inbounds in runtime_protocols.items():
+                    for inbound in protocol_inbounds or []:
+                        if not isinstance(inbound, dict):
+                            continue
+                        tag = inbound.get("tag")
+                        if not tag:
+                            continue
+                        item = inbounds.setdefault(tag, {"tag": tag})
+                        item.setdefault("tag", tag)
+                        item.setdefault("protocol", protocol)
         except Exception:
             pass
     return inbounds
