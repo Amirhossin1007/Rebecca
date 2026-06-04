@@ -41,7 +41,12 @@ def run_migrations() -> None:
 
 def clear_migration_imports() -> None:
     for module_name in list(sys.modules):
-        if module_name == "app" or module_name.startswith("app."):
+        if (
+            module_name == "app"
+            or module_name.startswith("app.")
+            or module_name == "dashboard"
+            or module_name.startswith("dashboard.")
+        ):
             sys.modules.pop(module_name, None)
 
 
