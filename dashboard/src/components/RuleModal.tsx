@@ -21,6 +21,7 @@ import { PlusIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { type FC, useEffect, useMemo } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { SearchableTagSelect } from "./common/SearchableTagSelect";
 import {
 	XrayDialogSection,
 	XrayModalBody,
@@ -281,34 +282,48 @@ export const RuleModal: FC<RuleModalProps> = ({
 									<FormLabel>
 										{t("pages.xray.rules.outboundTag", "Outbound Tag")}
 									</FormLabel>
-									<Select
-										{...register("outboundTag")}
-										size="sm"
-										placeholder={t("core.none", "None")}
-									>
-										{availableOutboundTags.map((tag) => (
-											<option key={tag} value={tag}>
-												{tag}
-											</option>
-										))}
-									</Select>
+									<Controller
+										control={control}
+										name="outboundTag"
+										render={({ field }) => (
+											<SearchableTagSelect
+												mode="single"
+												options={availableOutboundTags}
+												value={field.value ?? ""}
+												onChange={(value) => field.onChange(value as string)}
+												placeholder={t("core.none", "None")}
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.xray.outbound.empty",
+													"No outbound found",
+												)}
+											/>
+										)}
+									/>
 								</FormControl>
 
 								<FormControl>
 									<FormLabel>
 										{t("pages.xray.rules.balancer", "Balancer Tag")}
 									</FormLabel>
-									<Select
-										{...register("balancerTag")}
-										size="sm"
-										placeholder={t("core.none", "None")}
-									>
-										{availableBalancerTags.map((tag) => (
-											<option key={tag} value={tag}>
-												{tag}
-											</option>
-										))}
-									</Select>
+									<Controller
+										control={control}
+										name="balancerTag"
+										render={({ field }) => (
+											<SearchableTagSelect
+												mode="single"
+												options={availableBalancerTags}
+												value={field.value ?? ""}
+												onChange={(value) => field.onChange(value as string)}
+												placeholder={t("core.none", "None")}
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.xray.balancer.empty",
+													"No balancer found",
+												)}
+											/>
+										)}
+									/>
 								</FormControl>
 
 								<FormControl>
@@ -319,15 +334,21 @@ export const RuleModal: FC<RuleModalProps> = ({
 										control={control}
 										name="inboundTags"
 										render={({ field }) => (
-											<CheckboxGroup {...field}>
-												<Wrap spacing={3}>
-													{availableInboundTags.map((tag) => (
-														<WrapItem key={tag}>
-															<Checkbox value={tag}>{tag}</Checkbox>
-														</WrapItem>
-													))}
-												</Wrap>
-											</CheckboxGroup>
+											<SearchableTagSelect
+												mode="multiple"
+												options={availableInboundTags}
+												value={field.value ?? []}
+												onChange={(value) => field.onChange(value as string[])}
+												placeholder={t(
+													"pages.xray.rules.inboundTag",
+													"Inbound Tags",
+												)}
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.inbounds.empty",
+													"No inbound found",
+												)}
+											/>
 										)}
 									/>
 								</FormControl>

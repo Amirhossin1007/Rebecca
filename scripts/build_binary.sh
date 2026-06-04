@@ -108,8 +108,20 @@ env REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false python -m PyInstaller \
     "${GO_BRIDGE_BINARY_ARGS[@]}" \
     "${XRAY_PROTO_HIDDEN_IMPORT_ARGS[@]}" \
     "${JOB_HIDDEN_IMPORT_ARGS[@]}" \
-    --name rebecca-server \
+    --name rebecca-python-server \
     --add-data "$(pyinstaller_add_data "dashboard/build" "dashboard/build")" \
     packaging/binary_launcher.py
+
+gateway_output="$ROOT_DIR/dist/rebecca-server"
+if [[ "${OS:-}" == "Windows_NT" ]]; then
+    gateway_output="$ROOT_DIR/dist/rebecca-server.exe"
+fi
+
+(
+    cd "$ROOT_DIR/go"
+    CGO_ENABLED=1 go build -trimpath -buildvcs=false -o "$gateway_output" ./cmd/rebecca_gateway
+)
+
+echo "Rebecca Go gateway built at $gateway_output"
 
 bash scripts/build_go_cli.sh

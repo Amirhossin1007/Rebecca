@@ -3,6 +3,8 @@ package gateway
 import (
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -35,13 +37,32 @@ func LoadConfig() Config {
 		MasterAPIURL:       env("GO_MASTER_API_URL", ""),
 		NativeNodeRoutes:   envBool("REBECCA_GATEWAY_NATIVE_NODE_ROUTES", true),
 		MasterAPIStartWait: time.Duration(envInt("REBECCA_MASTER_API_START_TIMEOUT_SECONDS", 30)) * time.Second,
-		PythonBin:          env("REBECCA_PYTHON_BIN", "python"),
+		PythonBin:          env("REBECCA_PYTHON_BIN", defaultPythonBin()),
 		PythonApp:          env("REBECCA_PYTHON_APP", "app:app"),
 		PythonHost:         env("REBECCA_PYTHON_HOST", "127.0.0.1"),
 		PythonPort:         envInt("REBECCA_PYTHON_PORT", 18000),
 		PythonEnvFile:      env("REBECCA_PYTHON_ENV_FILE", ""),
 		PythonStartTimeout: time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 300)) * time.Second,
 	}
+}
+
+func defaultPythonBin() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "python"
+	}
+	candidate := filepath.Join(filepath.Dir(exe), packagedPythonServerName())
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return "python"
+}
+
+func packagedPythonServerName() string {
+	if runtime.GOOS == "windows" {
+		return "rebecca-python-server.exe"
+	}
+	return "rebecca-python-server"
 }
 
 func (c Config) PythonAddr() string {

@@ -163,7 +163,7 @@ jobs:
               python -m pip install --disable-pip-version-check --upgrade pip wheel
               python -m pip install --disable-pip-version-check . pyinstaller==6.20.0
               REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false bash scripts/build_binary.sh
-              tar -C dist -czf "dist/${ASSET_NAME}" rebecca-server rebecca-cli
+              tar -C dist -czf "dist/${ASSET_NAME}" rebecca-server rebecca-python-server rebecca-cli
               sha256sum "dist/${ASSET_NAME}"
             ' 2>&1 | tee "build-${ASSET_ARCH}.log"
           status="${PIPESTATUS[0]}"
@@ -237,7 +237,7 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path dist/rebecca-server.exe, dist/rebecca-cli.exe `
+            -Path dist/rebecca-server.exe, dist/rebecca-python-server.exe, dist/rebecca-cli.exe `
             -DestinationPath dist/rebecca-windows-amd64.zip `
             -Force
 

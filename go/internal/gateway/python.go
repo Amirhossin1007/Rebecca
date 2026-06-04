@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -14,17 +16,18 @@ type PythonRuntime struct {
 }
 
 func StartPython(ctx context.Context, cfg Config) (*PythonRuntime, error) {
-	args := []string{
-		"-m", "uvicorn", cfg.PythonApp,
-		"--host", cfg.PythonHost,
-		"--port", fmt.Sprintf("%d", cfg.PythonPort),
-		"--workers", "1",
-		"--proxy-headers",
-	}
+	args := pythonArgs(cfg)
 	cmd := exec.CommandContext(ctx, cfg.PythonBin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = append(
+		os.Environ(),
+		"PYTHONUNBUFFERED=1",
+		"UVICORN_HOST="+cfg.PythonHost,
+		"UVICORN_PORT="+fmt.Sprintf("%d", cfg.PythonPort),
+		"UVICORN_SSL_CERTFILE=",
+		"UVICORN_SSL_KEYFILE=",
+	)
 	if cfg.PythonEnvFile != "" {
 		cmd.Env = append(cmd.Env, "REBECCA_ENV_FILE="+cfg.PythonEnvFile)
 	}
@@ -43,6 +46,24 @@ func StartPython(ctx context.Context, cfg Config) (*PythonRuntime, error) {
 		return nil, err
 	}
 	return runtime, nil
+}
+
+func pythonArgs(cfg Config) []string {
+	if isPackagedPythonRuntime(cfg.PythonBin) {
+		return nil
+	}
+	return []string{
+		"-m", "uvicorn", cfg.PythonApp,
+		"--host", cfg.PythonHost,
+		"--port", fmt.Sprintf("%d", cfg.PythonPort),
+		"--workers", "1",
+		"--proxy-headers",
+	}
+}
+
+func isPackagedPythonRuntime(path string) bool {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(path)))
+	return name == "rebecca-python-server" || name == "rebecca-python-server.exe"
 }
 
 func (r *PythonRuntime) Stop() {

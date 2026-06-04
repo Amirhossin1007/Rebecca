@@ -1,7 +1,5 @@
 import {
 	Button,
-	Checkbox,
-	CheckboxGroup,
 	FormControl,
 	FormErrorMessage,
 	FormHelperText,
@@ -12,12 +10,11 @@ import {
 	ModalOverlay,
 	Select,
 	VStack,
-	Wrap,
-	WrapItem,
 } from "@chakra-ui/react";
 import { type FC, useEffect, useMemo } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { SearchableTagSelect } from "./common/SearchableTagSelect";
 import {
 	XrayDialogSection,
 	XrayModalBody,
@@ -222,20 +219,27 @@ export const ReverseModal: FC<ReverseModalProps> = ({
 													"Interconnection",
 												)}
 											</FormLabel>
-											<Select
-												{...modalForm.register("interconnectionOutboundTag")}
-												size="sm"
+											<SearchableTagSelect
+												mode="single"
+												options={outboundTags}
+												value={interconnectionOutboundTag}
+												onChange={(value) =>
+													modalForm.setValue(
+														"interconnectionOutboundTag",
+														value as string,
+														{ shouldDirty: true },
+													)
+												}
 												placeholder={t(
 													"pages.xray.reverse.selectOutbound",
 													"Select outbound tag",
 												)}
-											>
-												{outboundTags.map((tag) => (
-													<option key={tag} value={tag}>
-														{tag}
-													</option>
-												))}
-											</Select>
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.xray.outbound.empty",
+													"No outbound found",
+												)}
+											/>
 											<FormErrorMessage>
 												{t(
 													"pages.xray.reverse.outboundRequired",
@@ -245,20 +249,25 @@ export const ReverseModal: FC<ReverseModalProps> = ({
 										</FormControl>
 										<FormControl isInvalid={!outboundTag}>
 											<FormLabel>{t("pages.xray.rules.outbound")}</FormLabel>
-											<Select
-												{...modalForm.register("outboundTag")}
-												size="sm"
+											<SearchableTagSelect
+												mode="single"
+												options={outboundTags}
+												value={outboundTag}
+												onChange={(value) =>
+													modalForm.setValue("outboundTag", value as string, {
+														shouldDirty: true,
+													})
+												}
 												placeholder={t(
 													"pages.xray.reverse.selectOutbound",
 													"Select outbound tag",
 												)}
-											>
-												{outboundTags.map((tag) => (
-													<option key={tag} value={tag}>
-														{tag}
-													</option>
-												))}
-											</Select>
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.xray.outbound.empty",
+													"No outbound found",
+												)}
+											/>
 											<FormErrorMessage>
 												{t(
 													"pages.xray.reverse.outboundRequired",
@@ -282,24 +291,25 @@ export const ReverseModal: FC<ReverseModalProps> = ({
 													"Interconnection",
 												)}
 											</FormLabel>
-											<Controller
-												name="interconnectionInboundTags"
-												control={modalForm.control}
-												render={({ field }) => (
-													<CheckboxGroup
-														value={field.value ?? []}
-														onChange={(values) => field.onChange(values)}
-													>
-														<Wrap spacing={3}>
-															{inboundTags.map((tag) => (
-																<WrapItem key={tag}>
-																	<Checkbox value={tag} size="sm">
-																		{tag}
-																	</Checkbox>
-																</WrapItem>
-															))}
-														</Wrap>
-													</CheckboxGroup>
+											<SearchableTagSelect
+												mode="multiple"
+												options={inboundTags}
+												value={interconnectionInboundTags}
+												onChange={(value) =>
+													modalForm.setValue(
+														"interconnectionInboundTags",
+														value as string[],
+														{ shouldDirty: true },
+													)
+												}
+												placeholder={t(
+													"pages.xray.rules.inboundTag",
+													"Inbound Tags",
+												)}
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.inbounds.empty",
+													"No inbound found",
 												)}
 											/>
 											<FormErrorMessage>
@@ -311,24 +321,23 @@ export const ReverseModal: FC<ReverseModalProps> = ({
 										</FormControl>
 										<FormControl isInvalid={inboundTagsValue.length === 0}>
 											<FormLabel>{t("pages.xray.rules.inbound")}</FormLabel>
-											<Controller
-												name="inboundTags"
-												control={modalForm.control}
-												render={({ field }) => (
-													<CheckboxGroup
-														value={field.value ?? []}
-														onChange={(values) => field.onChange(values)}
-													>
-														<Wrap spacing={3}>
-															{inboundTags.map((tag) => (
-																<WrapItem key={tag}>
-																	<Checkbox value={tag} size="sm">
-																		{tag}
-																	</Checkbox>
-																</WrapItem>
-															))}
-														</Wrap>
-													</CheckboxGroup>
+											<SearchableTagSelect
+												mode="multiple"
+												options={inboundTags}
+												value={inboundTagsValue}
+												onChange={(value) =>
+													modalForm.setValue("inboundTags", value as string[], {
+														shouldDirty: true,
+													})
+												}
+												placeholder={t(
+													"pages.xray.rules.inboundTag",
+													"Inbound Tags",
+												)}
+												searchPlaceholder={t("search", "Search")}
+												emptyText={t(
+													"pages.inbounds.empty",
+													"No inbound found",
 												)}
 											/>
 											<FormErrorMessage>

@@ -22,6 +22,7 @@ import {
 import { type FC, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { SearchableTagSelect } from "./common/SearchableTagSelect";
 import {
 	XrayDialogSection,
 	XrayModalBody,
@@ -73,7 +74,6 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 }) => {
 	const { t } = useTranslation();
 	const [selectorInput, setSelectorInput] = useState("");
-	const [selectorPick, setSelectorPick] = useState("");
 
 	const modalForm = useForm<BalancerFormValues>({
 		defaultValues: DEFAULT_BALANCER,
@@ -85,6 +85,7 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 
 	const tagValue = modalForm.watch("tag");
 	const selectorValue = modalForm.watch("selector") ?? [];
+	const fallbackTagValue = modalForm.watch("fallbackTag") ?? "";
 	const normalizedTag = tagValue.trim();
 	const duplicateTag = !normalizedTag || existingTags.includes(normalizedTag);
 	const emptySelector = selectorValue.length === 0;
@@ -103,7 +104,6 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 				: DEFAULT_BALANCER,
 		);
 		setSelectorInput("");
-		setSelectorPick("");
 	}, [initialBalancer, isOpen, modalForm]);
 
 	const addSelectorTags = (value: string) => {
@@ -119,12 +119,6 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 			(selectorValue ?? []).filter((item) => item !== tag),
 			{ shouldDirty: true },
 		);
-	};
-
-	const addSelectedOutboundTag = (value: string) => {
-		if (!value) return;
-		addSelectorTags(value);
-		setSelectorPick("");
 	};
 
 	const onSubmitInternal = modalForm.handleSubmit((data) => {
@@ -195,25 +189,25 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 										</FormLabel>
 										<VStack align="stretch" spacing={2}>
 											{outboundTags.length > 0 && (
-												<HStack>
-													<Select
-														size="sm"
-														placeholder={t(
-															"pages.xray.balancer.selectOutbound",
-															"Select outbound tag",
-														)}
-														value={selectorPick}
-														onChange={(event) =>
-															addSelectedOutboundTag(event.target.value)
-														}
-													>
-														{outboundTags.map((tag) => (
-															<option key={tag} value={tag}>
-																{tag}
-															</option>
-														))}
-													</Select>
-												</HStack>
+												<SearchableTagSelect
+													mode="multiple"
+													options={outboundTags}
+													value={selectorValue}
+													onChange={(value) =>
+														modalForm.setValue("selector", value as string[], {
+															shouldDirty: true,
+														})
+													}
+													placeholder={t(
+														"pages.xray.balancer.selectOutbound",
+														"Select outbound tag",
+													)}
+													searchPlaceholder={t("search", "Search")}
+													emptyText={t(
+														"pages.xray.outbound.empty",
+														"No outbound found",
+													)}
+												/>
 											)}
 											<HStack>
 												<Input
@@ -279,14 +273,22 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 										<FormLabel>
 											{t("pages.xray.balancer.fallbackTag")}
 										</FormLabel>
-										<Select {...modalForm.register("fallbackTag")} size="sm">
-											<option value="">{t("core.none", "None")}</option>
-											{outboundTags.map((tag) => (
-												<option key={tag} value={tag}>
-													{tag}
-												</option>
-											))}
-										</Select>
+										<SearchableTagSelect
+											mode="single"
+											options={outboundTags}
+											value={fallbackTagValue}
+											onChange={(value) =>
+												modalForm.setValue("fallbackTag", value as string, {
+													shouldDirty: true,
+												})
+											}
+											placeholder={t("core.none", "None")}
+											searchPlaceholder={t("search", "Search")}
+											emptyText={t(
+												"pages.xray.outbound.empty",
+												"No outbound found",
+											)}
+										/>
 									</FormControl>
 								</VStack>
 							</XrayDialogSection>
