@@ -4,11 +4,8 @@ from . import (
     ads,
     runtime,
     node,
-    subscription,
-    subscription_alias,
     system,
     user_template,
-    user,
     home,
     service,
     settings,
@@ -20,14 +17,11 @@ routers = [
     ads.router,
     runtime.router,
     node.router,
-    subscription.router,
     system.router,
     user_template.router,
-    user.router,
     home.router,
     service.router,
     settings.router,
-    subscription_alias.router,
 ]
 
 for router in routers:

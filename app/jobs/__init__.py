@@ -3,10 +3,7 @@ import importlib
 
 JOB_MODULES = (
     "add_db_users",
-    "record_usages",
     "remove_expired_users",
-    "reset_user_data_usage",
-    "review_users",
     "send_notifications",
 )
 
