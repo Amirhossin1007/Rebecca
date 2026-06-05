@@ -38,7 +38,7 @@ type AttributePair = {
 type RuleFormValues = {
 	type: string;
 	domainMatcher: string;
-	outboundTags: string[];
+	outboundTag: string;
 	balancerTag: string;
 	inboundTags: string[];
 	networks: string[];
@@ -55,7 +55,7 @@ type RuleFormValues = {
 export type RoutingRule = {
 	type?: string;
 	domainMatcher?: string;
-	outboundTag?: string | string[];
+	outboundTag?: string;
 	balancerTag?: string;
 	inboundTag?: string[];
 	network?: string[];
@@ -88,7 +88,7 @@ const DOMAIN_MATCHER_OPTIONS = ["", "hybrid", "linear"];
 const defaultFormValues: RuleFormValues = {
 	type: "field",
 	domainMatcher: "",
-	outboundTags: [],
+	outboundTag: "",
 	balancerTag: "",
 	inboundTags: [],
 	networks: [],
@@ -118,12 +118,12 @@ const splitStringList = (value: string) =>
 		.map((item) => item.trim())
 		.filter(Boolean);
 
-const toTagArray = (value?: string | string[]) => {
-	if (!value) return [];
-	const values = Array.isArray(value) ? value : [value];
-	return values
-		.map((item) => item.trim())
-		.filter((item, index, array) => item && array.indexOf(item) === index);
+const toSingleTag = (value: unknown) => {
+	if (Array.isArray(value)) {
+		const firstValue = value.find((item) => item != null && String(item).trim());
+		return firstValue == null ? "" : String(firstValue).trim();
+	}
+	return value == null ? "" : String(value).trim();
 };
 
 const ruleToFormValues = (rule?: RoutingRule | null): RuleFormValues => {
@@ -141,7 +141,7 @@ const ruleToFormValues = (rule?: RoutingRule | null): RuleFormValues => {
 	return {
 		type: rule.type ?? "field",
 		domainMatcher: rule.domainMatcher ?? "",
-		outboundTags: toTagArray(rule.outboundTag),
+		outboundTag: toSingleTag(rule.outboundTag),
 		balancerTag: rule.balancerTag ?? "",
 		inboundTags: Array.isArray(rule.inboundTag) ? rule.inboundTag : [],
 		networks: Array.isArray(rule.network) ? rule.network : [],
@@ -161,9 +161,7 @@ const formValuesToRule = (values: RuleFormValues): RoutingRule => {
 
 	if (values.type) rule.type = values.type;
 	if (values.domainMatcher) rule.domainMatcher = values.domainMatcher;
-	const outboundTags = toTagArray(values.outboundTags);
-	if (outboundTags.length === 1) rule.outboundTag = outboundTags[0];
-	if (outboundTags.length > 1) rule.outboundTag = outboundTags;
+	if (values.outboundTag) rule.outboundTag = values.outboundTag;
 	if (values.balancerTag) rule.balancerTag = values.balancerTag;
 	if (values.inboundTags.length) rule.inboundTag = values.inboundTags;
 	if (values.networks.length) rule.network = values.networks;
@@ -294,17 +292,14 @@ export const RuleModal: FC<RuleModalProps> = ({
 									</FormLabel>
 									<Controller
 										control={control}
-										name="outboundTags"
+										name="outboundTag"
 										render={({ field }) => (
 											<SearchableTagSelect
-												mode="multiple"
+												mode="single"
 												options={availableOutboundTags}
-												value={field.value ?? []}
-												onChange={(value) => field.onChange(value as string[])}
-												placeholder={t(
-													"pages.xray.rules.outboundTag",
-													"Outbound Tag",
-												)}
+												value={field.value ?? ""}
+												onChange={(value) => field.onChange(value as string)}
+												placeholder={t("core.none", "None")}
 												searchPlaceholder={t("search", "Search")}
 												emptyText={t(
 													"pages.xray.outbound.empty",

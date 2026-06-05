@@ -150,16 +150,6 @@ const compactActionButtonProps = {
 const serializeConfig = (value: any) => JSON.stringify(value ?? {});
 const formatList = (value: string | string[] | undefined) =>
 	Array.isArray(value) ? value.join(",") : (value ?? "");
-const toTagArray = (value?: string | string[]): string[] => {
-	if (!value) return [];
-	const values = Array.isArray(value) ? value : [value];
-	return values
-		.map((item) => item.trim())
-		.filter((item, index, array) => item && array.indexOf(item) === index);
-};
-const hasTag = (value: string | string[] | undefined, tag: string) =>
-	toTagArray(value).includes(tag);
-const firstTag = (value?: string | string[]): string => toTagArray(value)[0] ?? "";
 const normalizeSearchValue = (value: unknown): string => {
 	if (Array.isArray(value)) return value.map(normalizeSearchValue).join(" ");
 	if (value && typeof value === "object") return JSON.stringify(value);
@@ -740,7 +730,7 @@ export const CoreSettingsPage: FC = () => {
 	const buildRoutingRuleRows = useCallback(
 		(rules: RoutingRule[]) =>
 			rules.map((rule, index) => ({
-				key: `${index}-${formatList(rule.outboundTag) || rule.balancerTag || "rule"}`,
+				key: `${index}-${rule.outboundTag ?? rule.balancerTag ?? "rule"}`,
 				source: rule.source ?? [],
 				sourcePort: rule.sourcePort ?? [],
 				network: rule.network ?? [],
@@ -835,7 +825,7 @@ export const CoreSettingsPage: FC = () => {
 				) {
 					indices.push(index);
 				}
-				if (reverse.type === "portal" && hasTag(rule.outboundTag, reverse.tag)) {
+				if (reverse.type === "portal" && rule.outboundTag === reverse.tag) {
 					indices.push(index);
 				}
 				return indices;
@@ -887,7 +877,7 @@ export const CoreSettingsPage: FC = () => {
 						),
 				);
 			}
-			return rules.filter((rule) => !hasTag(rule.outboundTag, reverse.tag));
+			return rules.filter((rule) => rule.outboundTag !== reverse.tag);
 		},
 		[],
 	);
@@ -1895,8 +1885,8 @@ export const CoreSettingsPage: FC = () => {
 			type: editingReverseRow.type,
 			tag: editingReverseRow.tag,
 			domain: editingReverseRow.domain,
-			interconnectionOutboundTag: firstTag(domainRule?.outboundTag),
-			outboundTag: firstTag(routeRule?.outboundTag),
+			interconnectionOutboundTag: domainRule?.outboundTag ?? "",
+			outboundTag: routeRule?.outboundTag ?? "",
 			interconnectionInboundTags: domainRules.flatMap(
 				(rule) => rule.inboundTag ?? [],
 			),
@@ -1979,7 +1969,7 @@ export const CoreSettingsPage: FC = () => {
 
 	const warpDomains = useMemo<string[]>(() => {
 		const rule = canonicalRoutingRules.find(
-			(routingRule) => hasTag(routingRule.outboundTag, "warp"),
+			(routingRule) => routingRule.outboundTag === "warp",
 		);
 		return Array.isArray(rule?.domain) ? rule.domain : [];
 	}, [canonicalRoutingRules]);
@@ -1993,7 +1983,7 @@ export const CoreSettingsPage: FC = () => {
 
 		const currentRules = getRoutingRules();
 		const existingIndex = currentRules.findIndex(
-			(rule) => hasTag(rule.outboundTag, "warp"),
+			(rule) => rule.outboundTag === "warp",
 		);
 
 		if (normalized.length === 0) {
@@ -2245,11 +2235,11 @@ export const CoreSettingsPage: FC = () => {
 		return {
 			interconnection:
 				reverse.type === "bridge"
-					? firstTag(domainRules[0]?.outboundTag)
+					? domainRules[0]?.outboundTag
 					: domainRules.flatMap((rule) => rule.inboundTag ?? []),
 			target:
 				reverse.type === "bridge"
-					? firstTag(routeRules[0]?.outboundTag)
+					? routeRules[0]?.outboundTag
 					: routeRules.flatMap((rule) => rule.inboundTag ?? []),
 		};
 	};
@@ -3061,7 +3051,7 @@ export const CoreSettingsPage: FC = () => {
 													<Td>{renderTextValue(rule.port)}</Td>
 													<Td>{renderChipList(rule.inboundTag, "teal")}</Td>
 													<Td>{renderChipList(rule.user, "cyan")}</Td>
-													<Td>{renderChipList(rule.outboundTag, "orange")}</Td>
+													<Td>{renderTextValue(rule.outboundTag)}</Td>
 													<Td>{renderTextValue(rule.balancerTag)}</Td>
 												</Tr>
 											),
