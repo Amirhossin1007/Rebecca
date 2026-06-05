@@ -73,27 +73,6 @@ mock_xray.operations.remove_user = MagicMock()
 mock_xray.operations.restart_node = MagicMock()
 mock_xray.nodes = {}
 
-
-class _MockConnectionError(Exception):
-    """Fallback connection error for mocked reb_node module."""
-
-
-class _MockRebNode:
-    def __init__(self):
-        self.exc = MagicMock(ConnectionError=_MockConnectionError)
-        self.state = MagicMock()
-        self.state.get_service_host_map = MagicMock(return_value={})
-        self.state.config = MagicMock(api_port=None)
-        self.XRayConfig = MagicMock()
-        self.operations = MagicMock()
-
-
-mock_reb_node = _MockRebNode()
-
-sys.modules["app.reb_node"] = mock_reb_node
-sys.modules["app.reb_node.config"] = MagicMock(XRayConfig=mock_reb_node.XRayConfig)
-sys.modules["app.reb_node.state"] = mock_reb_node.state
-
 # Patch TelegramSettingsService to avoid external DB connections in tests
 patch("app.utils.report._event_enabled", return_value=False).start()
 
@@ -105,7 +84,6 @@ app.runtime.xray = mock_xray
 test_app = None
 with (
     patch("app.utils.system.get_public_ip", return_value="127.0.0.1"),
-    patch.dict("sys.modules", {"app.reb_node": mock_reb_node}),
 ):
     from app import app as _app
 
