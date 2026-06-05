@@ -54,6 +54,8 @@ func (a Authenticator) AuthenticateBearer(ctx context.Context, token string) (Ef
 	}
 	if result, err := a.authenticateJWT(ctx, token); err == nil {
 		return result, nil
+	} else if looksLikeJWT(token) || err != ErrInvalidToken {
+		return EffectiveAdminContext{}, err
 	}
 	return a.authenticateAPIKey(ctx, token)
 }
@@ -143,4 +145,8 @@ func (a Authenticator) authenticateAPIKey(ctx context.Context, token string) (Ef
 
 func normalizeUsername(username string) string {
 	return strings.ToLower(strings.TrimSpace(username))
+}
+
+func looksLikeJWT(token string) bool {
+	return strings.Count(token, ".") == 2
 }

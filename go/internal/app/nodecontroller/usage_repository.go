@@ -30,6 +30,36 @@ type usageUserMapping struct {
 	ServiceID sql.NullInt64
 }
 
+type usageQueuedOperation struct {
+	OperationType string
+	UserID        int64
+}
+
+type usageLifecycleRow struct {
+	ID                   int64
+	Status               string
+	UsedTraffic          int64
+	DataLimit            sql.NullInt64
+	Expire               sql.NullInt64
+	OnlineAt             any
+	OnHoldExpireDuration sql.NullInt64
+	OnHoldTimeout        any
+	EditAt               any
+	CreatedAt            any
+	LastStatusChange     any
+}
+
+type usageNextPlanRow struct {
+	ID                  int64
+	DataLimit           int64
+	Expire              sql.NullInt64
+	AddRemainingTraffic bool
+	FireOnEither        bool
+	IncreaseDataLimit   bool
+	StartOnFirstConnect bool
+	TriggerOn           string
+}
+
 func (r Repository) UsageNodes(ctx context.Context, nodeID int64, limit int) ([]NodeRow, error) {
 	query := `SELECT
 	id,
@@ -129,15 +159,15 @@ func (r Repository) PersistCollectedUsage(ctx context.Context, node NodeRow, use
 	now := time.Now().UTC()
 	bucket := now.Truncate(time.Hour)
 
-	filteredUsers, changedUserIDs, err := r.persistUserUsage(ctx, tx, node, userDeltas, bucket, now)
+	filteredUsers, operations, err := r.persistUserUsage(ctx, tx, node, userDeltas, bucket, now)
 	if err != nil {
 		return err
 	}
 	if err := r.persistOutboundUsage(ctx, tx, node, outboundDeltas, bucket, now); err != nil {
 		return err
 	}
-	if len(changedUserIDs) > 0 {
-		if err := r.enqueueDisableOperations(ctx, tx, changedUserIDs, now); err != nil {
+	if len(operations) > 0 {
+		if err := r.enqueueUsageOperations(ctx, tx, operations, now); err != nil {
 			return err
 		}
 	}
@@ -146,7 +176,7 @@ func (r Repository) PersistCollectedUsage(ctx context.Context, node NodeRow, use
 	return tx.Commit()
 }
 
-func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeRow, deltas []UserUsageDelta, bucket time.Time, now time.Time) (map[int64]int64, []int64, error) {
+func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeRow, deltas []UserUsageDelta, bucket time.Time, now time.Time) (map[int64]int64, []usageQueuedOperation, error) {
 	aggregated := map[int64]int64{}
 	for _, delta := range deltas {
 		if delta.UserID <= 0 || delta.Value <= 0 {
@@ -258,11 +288,11 @@ WHERE admin_id = ? AND service_id = ?`,
 		}
 	}
 
-	changed, err := r.markUsersLimitedOrExpired(ctx, tx, keysInt64(aggregated), now)
+	operations, err := r.enforceUsageLifecycle(ctx, tx, keysInt64(aggregated), now)
 	if err != nil {
 		return nil, nil, err
 	}
-	return aggregated, changed, nil
+	return aggregated, operations, nil
 }
 
 func (r Repository) loadUsageUserMapping(ctx context.Context, tx *sql.Tx, userIDs []int64) (map[int64]usageUserMapping, error) {
@@ -286,65 +316,114 @@ func (r Repository) loadUsageUserMapping(ctx context.Context, tx *sql.Tx, userID
 	return result, rows.Err()
 }
 
-func (r Repository) markUsersLimitedOrExpired(ctx context.Context, tx *sql.Tx, userIDs []int64, now time.Time) ([]int64, error) {
+func (r Repository) enforceUsageLifecycle(ctx context.Context, tx *sql.Tx, userIDs []int64, now time.Time) ([]usageQueuedOperation, error) {
 	if len(userIDs) == 0 {
 		return nil, nil
 	}
 	nowUnix := now.Unix()
 	query := `SELECT id,
-       CASE
-         WHEN data_limit IS NOT NULL AND data_limit > 0 AND COALESCE(used_traffic, 0) >= data_limit THEN 'limited'
-         ELSE 'expired'
-       END AS target_status
+       status,
+       COALESCE(used_traffic, 0),
+       data_limit,
+       expire,
+       online_at,
+       on_hold_expire_duration,
+       on_hold_timeout,
+       edit_at,
+       created_at,
+       last_status_change
 FROM users
 WHERE id IN (` + placeholders(len(userIDs)) + `)
-  AND status IN ('active', 'on_hold')
-  AND (
-    (data_limit IS NOT NULL AND data_limit > 0 AND COALESCE(used_traffic, 0) >= data_limit)
-    OR (expire IS NOT NULL AND expire > 0 AND expire <= ?)
-  )`
+  AND status IN ('active', 'on_hold')`
 	args := int64Args(userIDs)
-	args = append(args, nowUnix)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	var changed []int64
-	byStatus := map[string][]int64{"limited": {}, "expired": {}}
+	defer rows.Close()
+	var operations []usageQueuedOperation
 	for rows.Next() {
-		var id int64
-		var targetStatus string
-		if err := rows.Scan(&id, &targetStatus); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		changed = append(changed, id)
-		if targetStatus != "expired" {
-			targetStatus = "limited"
-		}
-		byStatus[targetStatus] = append(byStatus[targetStatus], id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if len(changed) == 0 {
-		return nil, nil
-	}
-	for status, ids := range byStatus {
-		if len(ids) == 0 {
-			continue
-		}
-		updateArgs := []any{status, r.timeArg(now)}
-		updateArgs = append(updateArgs, int64Args(ids)...)
-		if _, err := tx.ExecContext(
-			ctx,
-			`UPDATE users SET status = ?, last_status_change = ? WHERE id IN (`+placeholders(len(ids))+`)`,
-			updateArgs...,
+		var row usageLifecycleRow
+		if err := rows.Scan(
+			&row.ID,
+			&row.Status,
+			&row.UsedTraffic,
+			&row.DataLimit,
+			&row.Expire,
+			&row.OnlineAt,
+			&row.OnHoldExpireDuration,
+			&row.OnHoldTimeout,
+			&row.EditAt,
+			&row.CreatedAt,
+			&row.LastStatusChange,
 		); err != nil {
 			return nil, err
 		}
+
+		activatedFromHold := false
+		if row.Status == "on_hold" && usageShouldActivateOnHold(row, now) {
+			expire := any(nil)
+			if row.Expire.Valid {
+				expire = row.Expire.Int64
+			}
+			if row.OnHoldExpireDuration.Valid {
+				expiresAt := now.Unix() + row.OnHoldExpireDuration.Int64
+				expire = expiresAt
+				row.Expire = sql.NullInt64{Int64: expiresAt, Valid: true}
+			}
+			if _, err := tx.ExecContext(
+				ctx,
+				`UPDATE users
+SET status = 'active', expire = ?, on_hold_expire_duration = NULL, on_hold_timeout = NULL, last_status_change = ?
+WHERE id = ?`,
+				expire,
+				r.timeArg(now),
+				row.ID,
+			); err != nil {
+				return nil, err
+			}
+			activatedFromHold = true
+			row.Status = "active"
+		}
+
+		limited := row.DataLimit.Valid && row.DataLimit.Int64 > 0 && row.UsedTraffic >= row.DataLimit.Int64
+		expired := row.Expire.Valid && row.Expire.Int64 > 0 && row.Expire.Int64 <= nowUnix
+		if !limited && !expired {
+			if activatedFromHold {
+				operations = append(operations, usageQueuedOperation{OperationType: "enable_user", UserID: row.ID})
+			}
+			continue
+		}
+
+		plan, err := r.usageNextPlan(ctx, tx, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		if plan != nil && usageNextPlanMatches(plan, row, limited, expired) {
+			op, err := r.applyUsageNextPlan(ctx, tx, row, *plan, now)
+			if err != nil {
+				return nil, err
+			}
+			operations = append(operations, op)
+			continue
+		}
+
+		targetStatus := "expired"
+		if limited {
+			targetStatus = "limited"
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE users SET status = ?, last_status_change = ? WHERE id = ?`,
+			targetStatus,
+			r.timeArg(now),
+			row.ID,
+		); err != nil {
+			return nil, err
+		}
+		operations = append(operations, usageQueuedOperation{OperationType: "disable_user", UserID: row.ID})
 	}
-	return changed, nil
+	return operations, rows.Err()
 }
 
 func (r Repository) persistOutboundUsage(ctx context.Context, tx *sql.Tx, node NodeRow, deltas []OutboundUsageDelta, bucket time.Time, now time.Time) error {
@@ -543,8 +622,183 @@ ON DUPLICATE KEY UPDATE
 	return err
 }
 
-func (r Repository) enqueueDisableOperations(ctx context.Context, tx *sql.Tx, userIDs []int64, now time.Time) error {
-	if len(userIDs) == 0 {
+func usageShouldActivateOnHold(user usageLifecycleRow, now time.Time) bool {
+	base := usageDBTime(user.LastStatusChange)
+	if created := usageDBTime(user.CreatedAt); created != nil {
+		base = created
+	}
+	if edit := usageDBTime(user.EditAt); edit != nil {
+		base = edit
+	}
+	if online := usageDBTime(user.OnlineAt); online != nil && (base == nil || !online.Before(*base)) {
+		return true
+	}
+	timeout := usageDBTime(user.OnHoldTimeout)
+	return timeout != nil && !timeout.After(now)
+}
+
+func usageDBTime(value any) *time.Time {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case time.Time:
+		parsed := typed.UTC()
+		return &parsed
+	case []byte:
+		return parseUsageTime(string(typed))
+	case string:
+		return parseUsageTime(typed)
+	default:
+		return parseUsageTime(fmt.Sprint(typed))
+	}
+}
+
+func parseUsageTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999-07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			parsed = parsed.UTC()
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func (r Repository) usageNextPlan(ctx context.Context, tx *sql.Tx, userID int64) (*usageNextPlanRow, error) {
+	var plan usageNextPlanRow
+	err := tx.QueryRowContext(
+		ctx,
+		`SELECT id,
+		        COALESCE(data_limit, 0),
+		        expire,
+		        COALESCE(add_remaining_traffic, 0),
+		        COALESCE(fire_on_either, 1),
+		        COALESCE(increase_data_limit, 0),
+		        COALESCE(start_on_first_connect, 0),
+		        COALESCE(trigger_on, 'either')
+		   FROM next_plans
+		  WHERE user_id = ?
+		  ORDER BY position, id
+		  LIMIT 1`,
+		userID,
+	).Scan(
+		&plan.ID,
+		&plan.DataLimit,
+		&plan.Expire,
+		&plan.AddRemainingTraffic,
+		&plan.FireOnEither,
+		&plan.IncreaseDataLimit,
+		&plan.StartOnFirstConnect,
+		&plan.TriggerOn,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &plan, nil
+}
+
+func usageNextPlanMatches(plan *usageNextPlanRow, user usageLifecycleRow, limited bool, expired bool) bool {
+	if plan == nil || (!limited && !expired) {
+		return false
+	}
+	if plan.StartOnFirstConnect && usageDBTime(user.OnlineAt) == nil && user.UsedTraffic == 0 {
+		return false
+	}
+	trigger := strings.TrimSpace(plan.TriggerOn)
+	if trigger == "" {
+		trigger = "either"
+	}
+	return plan.FireOnEither ||
+		trigger == "either" ||
+		(trigger == "data" && limited) ||
+		(trigger == "expire" && expired) ||
+		(limited && expired)
+}
+
+func (r Repository) applyUsageNextPlan(ctx context.Context, tx *sql.Tx, user usageLifecycleRow, plan usageNextPlanRow, now time.Time) (usageQueuedOperation, error) {
+	currentLimit := int64(0)
+	if user.DataLimit.Valid {
+		currentLimit = user.DataLimit.Int64
+	}
+	newLimit := plan.DataLimit
+	if plan.IncreaseDataLimit {
+		newLimit = currentLimit + plan.DataLimit
+	} else if !plan.AddRemainingTraffic {
+		remaining := currentLimit - user.UsedTraffic
+		if remaining < 0 {
+			remaining = 0
+		}
+		newLimit = plan.DataLimit + remaining
+	}
+	expire := any(nil)
+	if user.Expire.Valid {
+		expire = user.Expire.Int64
+	}
+	if plan.Expire.Valid {
+		expire = plan.Expire.Int64
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_usage_logs (user_id, used_traffic_at_reset, reset_at) VALUES (?, ?, ?)`, user.ID, user.UsedTraffic, r.timeArg(now)); err != nil {
+		return usageQueuedOperation{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM node_user_usages WHERE user_id = ?`, user.ID); err != nil {
+		return usageQueuedOperation{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET used_traffic = 0, data_limit = ?, expire = ?, status = 'active', last_status_change = ? WHERE id = ?`, newLimit, expire, r.timeArg(now), user.ID); err != nil {
+		return usageQueuedOperation{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM next_plans WHERE id = ?`, plan.ID); err != nil {
+		return usageQueuedOperation{}, err
+	}
+	if err := r.compactUsageNextPlans(ctx, tx, user.ID); err != nil {
+		return usageQueuedOperation{}, err
+	}
+	opType := "update_user"
+	if user.Status != "active" && user.Status != "on_hold" {
+		opType = "enable_user"
+	}
+	return usageQueuedOperation{OperationType: opType, UserID: user.ID}, nil
+}
+
+func (r Repository) compactUsageNextPlans(ctx context.Context, tx *sql.Tx, userID int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM next_plans WHERE user_id = ? ORDER BY position, id`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	position := int64(0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE next_plans SET position = ? WHERE id = ?`, position, id); err != nil {
+			return err
+		}
+		position++
+	}
+	return rows.Err()
+}
+
+func (r Repository) enqueueUsageOperations(ctx context.Context, tx *sql.Tx, operations []usageQueuedOperation, now time.Time) error {
+	if len(operations) == 0 {
 		return nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE status NOT IN ('disabled', 'limited') ORDER BY id`)
@@ -571,15 +825,15 @@ func (r Repository) enqueueDisableOperations(ctx context.Context, tx *sql.Tx, us
 		return err
 	}
 	for _, nodeID := range nodeIDs {
-		for _, userID := range userIDs {
-			key := operationKey("disable_user", nodeID, userID, now)
+		for _, operation := range operations {
+			key := operationKey(operation.OperationType, nodeID, operation.UserID, now)
 			_, err := tx.ExecContext(
 				ctx,
 				`INSERT INTO node_operations (operation_type, node_id, user_id, payload, status, attempts, idempotency_key, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-				"disable_user",
+				operation.OperationType,
 				nodeID,
-				userID,
+				operation.UserID,
 				string(payload),
 				key,
 				r.timeArg(now),

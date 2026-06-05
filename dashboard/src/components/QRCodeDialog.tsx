@@ -65,7 +65,8 @@ const clickPulse = keyframes`
 `;
 
 export const QRCodeDialog: FC = () => {
-	const { QRcodeLinks, setQRCode, setSubLink, subscribeUrl } = useDashboard();
+	const { QRcodeLinks, qrCodeUsername, setQRCode, setSubLink, subscribeUrl } =
+		useDashboard();
 	const isOpen = QRcodeLinks !== null;
 	const [index, setIndex] = useState(0);
 	const [copiedSub, setCopiedSub] = useState(false);
@@ -138,9 +139,26 @@ export const QRCodeDialog: FC = () => {
 			<ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" />
 			<ModalContent mx="3" w="fit-content" maxW="3xl">
 				<ModalHeader pt={6}>
-					<Icon color="primary">
-						<QRIcon color="white" />
-					</Icon>
+					<HStack spacing={3} align="center">
+						<Icon color="primary">
+							<QRIcon color="white" />
+						</Icon>
+						{qrCodeUsername && (
+							<Box minW={0}>
+								<Text fontSize="xs" color="gray.500">
+									{t("username")}
+								</Text>
+								<Text
+									dir="ltr"
+									fontSize="md"
+									fontWeight="semibold"
+									noOfLines={1}
+								>
+									{qrCodeUsername}
+								</Text>
+							</Box>
+						)}
+					</HStack>
 				</ModalHeader>
 				<ModalCloseButton mt={3} />
 				{QRcodeLinks && (
@@ -208,6 +226,9 @@ export const QRCodeDialog: FC = () => {
 										/>
 									</Box>
 								</CopyToClipboard>
+								<Text fontSize="xs" color="gray.500" textAlign="center">
+									{t("qrcodeDialog.clickToCopy", "click to copy")}
+								</Text>
 							</VStack>
 						)}
 						{configItems.length > 0 && (

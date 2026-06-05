@@ -2,8 +2,11 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
 )
 
 type Service struct {
@@ -98,4 +101,88 @@ func (s Service) UserGet(ctx context.Context, req UserGetRequest) (UserDetail, e
 		return UserDetail{}, fmt.Errorf("username is required")
 	}
 	return s.repo.UserGet(ctx, req)
+}
+
+func (s Service) CreateUser(ctx context.Context, admin adminapp.Admin, raw []byte) (MutationResult, error) {
+	fields, err := decodeRawFields(raw)
+	if err != nil {
+		return MutationResult{}, clientError(400, "invalid request body")
+	}
+	var serviceID *int64
+	if rawFieldPresent(fields, "service_id") && !rawIsNull(fields["service_id"]) {
+		var parsed int64
+		if err := json.Unmarshal(fields["service_id"], &parsed); err != nil {
+			return MutationResult{}, clientError(400, "invalid service_id")
+		}
+		serviceID = &parsed
+	}
+	var payload UserCreate
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return MutationResult{}, clientError(400, "invalid request body")
+	}
+	if auto, err := DetectAutoServiceFromInbounds(payload.Inbounds); err != nil {
+		return MutationResult{}, clientError(400, err.Error())
+	} else if serviceID == nil && auto.Detected {
+		serviceID = &auto.ServiceID
+	}
+	return s.repo.createUserMutation(ctx, admin, payload, serviceID)
+}
+
+func (s Service) UpdateUser(ctx context.Context, admin adminapp.Admin, username string, raw []byte) (MutationResult, error) {
+	fields, err := decodeRawFields(raw)
+	if err != nil {
+		return MutationResult{}, clientError(400, "invalid request body")
+	}
+	var payload UserModify
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return MutationResult{}, clientError(400, "invalid request body")
+	}
+	if rawFieldPresent(fields, "service_id") && rawIsNull(fields["service_id"]) {
+		payload.ServiceID = nil
+	}
+	if auto, err := DetectAutoServiceFromInbounds(payload.Inbounds); err != nil {
+		return MutationResult{}, clientError(400, err.Error())
+	} else if auto.Detected && !rawFieldPresent(fields, "service_id") {
+		payload.ServiceID = &auto.ServiceID
+		fields["service_id"] = []byte(fmt.Sprintf("%d", auto.ServiceID))
+	}
+	return s.repo.updateUserMutation(ctx, admin, username, payload, fields)
+}
+
+func (s Service) DeleteUser(ctx context.Context, admin adminapp.Admin, username string) (MutationResult, error) {
+	return s.repo.deleteUserMutation(ctx, admin, username)
+}
+
+func (s Service) ResetUser(ctx context.Context, admin adminapp.Admin, username string) (MutationResult, error) {
+	return s.repo.resetUserMutation(ctx, admin, username)
+}
+
+func (s Service) RevokeUserSubscription(ctx context.Context, admin adminapp.Admin, username string) (MutationResult, error) {
+	return s.repo.revokeUserMutation(ctx, admin, username)
+}
+
+func (s Service) ActiveNextPlan(ctx context.Context, admin adminapp.Admin, username string) (MutationResult, error) {
+	return s.repo.activeNextMutation(ctx, admin, username)
+}
+
+func (s Service) BulkUsersAction(ctx context.Context, admin adminapp.Admin, payload BulkUsersActionRequest, opts BulkUsersActionOptions) (BulkUsersActionResult, error) {
+	if err := ValidateBulkUsersAction(&payload); err != nil {
+		return BulkUsersActionResult{}, clientError(400, err.Error())
+	}
+	return s.repo.bulkUsersActionMutation(ctx, admin, payload, opts)
+}
+
+func decodeRawFields(raw []byte) (map[string]json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return fields, nil
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func rawIsNull(raw json.RawMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(string(raw)), "null")
 }

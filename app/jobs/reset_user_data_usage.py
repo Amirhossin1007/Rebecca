@@ -2,7 +2,7 @@ from datetime import datetime, UTC
 import contextlib
 import os
 
-from app.runtime import logger, scheduler
+from app.runtime import logger
 from app.db import crud, GetDB, get_users
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 from app.services import node_operations
@@ -79,4 +79,4 @@ def reset_user_data_usage():
                 )
 
 
-scheduler.add_job(reset_user_data_usage, "interval", coalesce=True, hours=1)
+logger.info("Python reset_user_data_usage job disabled; Go Master API handles periodic user usage resets")

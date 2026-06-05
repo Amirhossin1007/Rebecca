@@ -8,7 +8,6 @@ import (
 
 	dashboardread "github.com/rebeccapanel/rebecca/go/internal/app/dashboard"
 	"github.com/rebeccapanel/rebecca/go/internal/app/usage"
-	userread "github.com/rebeccapanel/rebecca/go/internal/app/user"
 	"github.com/rebeccapanel/rebecca/go/internal/platform/db"
 )
 
@@ -61,16 +60,6 @@ func Call(input []byte) []byte {
 		return handleUsageServiceAdmins(ctx, pool, req.Payload)
 	case "usage.service.admin_timeseries":
 		return handleUsageServiceAdminTimeseries(ctx, pool, req.Payload)
-	case userread.ActionLinkPrerequisites:
-		return handleUserLinkPrerequisites(ctx, pool, req.Payload)
-	case userread.ActionSubscriptionLinks:
-		return handleUserSubscriptionLinks(ctx, pool, req.Payload)
-	case userread.ActionConfigLinks:
-		return handleUserConfigLinks(ctx, pool, req.Payload)
-	case userread.ActionUsersList:
-		return handleUsersList(ctx, pool, req.Payload)
-	case userread.ActionUserGet:
-		return handleUserGet(ctx, pool, req.Payload)
 	case dashboardread.ActionSystemSummary:
 		return handleDashboardSystemSummary(ctx, pool, req.Payload)
 	default:
@@ -219,71 +208,6 @@ func handleUsageServiceAdminTimeseries(ctx context.Context, pool db.Pool, payloa
 		return encodeError(err)
 	}
 	return encodeData(rows)
-}
-
-func handleUserLinkPrerequisites(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
-	var req userread.LinkPrerequisitesRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return encodeError(err)
-	}
-	service := userread.NewService(userread.NewRepository(pool.DB, pool.Dialect))
-	result, err := service.LinkPrerequisites(ctx, req)
-	if err != nil {
-		return encodeError(err)
-	}
-	return encodeData(result)
-}
-
-func handleUserSubscriptionLinks(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
-	var req userread.SubscriptionLinkRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return encodeError(err)
-	}
-	service := userread.NewService(userread.NewRepository(pool.DB, pool.Dialect))
-	result, err := service.SubscriptionLinks(ctx, req)
-	if err != nil {
-		return encodeError(err)
-	}
-	return encodeData(result)
-}
-
-func handleUserConfigLinks(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
-	var req userread.ConfigLinksRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return encodeError(err)
-	}
-	service := userread.NewService(userread.NewRepository(pool.DB, pool.Dialect))
-	result, err := service.ConfigLinks(ctx, req)
-	if err != nil {
-		return encodeError(err)
-	}
-	return encodeData(result)
-}
-
-func handleUsersList(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
-	var req userread.UsersListRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return encodeError(err)
-	}
-	service := userread.NewService(userread.NewRepository(pool.DB, pool.Dialect))
-	result, err := service.UsersList(ctx, req)
-	if err != nil {
-		return encodeError(err)
-	}
-	return encodeData(result)
-}
-
-func handleUserGet(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {
-	var req userread.UserGetRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return encodeError(err)
-	}
-	service := userread.NewService(userread.NewRepository(pool.DB, pool.Dialect))
-	result, err := service.UserGet(ctx, req)
-	if err != nil {
-		return encodeError(err)
-	}
-	return encodeData(result)
 }
 
 func handleDashboardSystemSummary(ctx context.Context, pool db.Pool, payload json.RawMessage) []byte {

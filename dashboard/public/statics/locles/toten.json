@@ -1,6 +1,6 @@
 {
 	"meta": {
-		"updated": "2026-02-18 22:10"
+		"updated": "2026-06-05 18:00"
 	},
 	"intro": "This page is a quick walk-through so you can ship accounts fast without touching the backend.",
 	"quickTips": [
@@ -121,6 +121,79 @@
 				"Prefer short-lived keys; delete and recreate if you suspect sharing.",
 				"If you lack self_api_keys or self_change_password, those cards stay hidden.",
 				"Narrow the date range for charts if you want faster loading."
+			]
+		},
+		{
+			"id": "telegram-backup",
+			"title": "Telegram backup activation",
+			"description": "Set up automatic panel backups by creating a Telegram bot, adding it to a private group, and enabling Backup from the panel.",
+			"requiresRole": ["full_access", "sudo"],
+			"steps": [
+				"Create a Telegram bot with BotFather and keep the token private.",
+				"Create a private Telegram group for backup messages and add the bot to it.",
+				"Activate the bot in the panel first, then enable the Backup option.",
+				"Run a manual backup test once so you know the group receives files correctly."
+			],
+			"hints": [
+				"Use a private group with only trusted admins.",
+				"Never send the bot token to users or public chats.",
+				"If the panel has a Telegram test button, use it before turning on scheduled backups."
+			],
+			"subsections": [
+				{
+					"id": "botfather",
+					"title": "Create the bot with BotFather",
+					"description": "BotFather is Telegram's official tool for creating and managing bots.",
+					"steps": [
+						"Open Telegram and search for @BotFather.",
+						"Start the chat and send /newbot.",
+						"Enter a display name for the bot, such as Rebecca Backup.",
+						"Enter a unique username that ends with bot, for example rebecca_backup_bot.",
+						"Copy the token BotFather gives you and store it somewhere private."
+					],
+					"hints": [
+						"The token is the bot password. Anyone who has it can control the bot."
+					]
+				},
+				{
+					"id": "group",
+					"title": "Create the backup group",
+					"steps": [
+						"In Telegram, create a new group and give it a clear name like Panel Backups.",
+						"Open the group settings and enable Forum; the backup group must be forum-enabled.",
+						"Add your new bot to the group.",
+						"Promote the bot to admin if the panel needs permission to send files or messages.",
+						"Send one normal message in the group before testing the panel connection."
+					],
+					"hints": [
+						"Keep the group private so backup files stay protected.",
+						"If the panel asks for a chat or group ID, use the panel's Telegram test/detect flow if available."
+					]
+				},
+				{
+					"id": "panel",
+					"title": "Enable Backup in the panel",
+					"steps": [
+						"Open the panel's Telegram/Bot settings and activate the bot with the BotFather token.",
+						"Confirm the bot can send a test message to the backup group.",
+						{
+							"text": "Go to Master settings -> Telegram -> Periodic Backup and enable Telegram backup.",
+							"links": [
+								{
+									"label": "Periodic Backup",
+									"action": "navigate",
+									"target": "/integrations?focus=periodic-backup#telegram"
+								}
+							]
+						},
+						"Save the settings, then run one manual backup to verify the QR/files arrive in the group.",
+						"After the test succeeds, leave scheduled backup enabled."
+					],
+					"hints": [
+						"Activate the bot first; the Backup option should be enabled only after the bot connection is working.",
+						"If nothing arrives, check bot admin permissions, the group ID, and whether the token was copied correctly."
+					]
+				}
 			]
 		},
 		{

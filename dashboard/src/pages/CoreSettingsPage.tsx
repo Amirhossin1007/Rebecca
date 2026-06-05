@@ -150,6 +150,16 @@ const compactActionButtonProps = {
 const serializeConfig = (value: any) => JSON.stringify(value ?? {});
 const formatList = (value: string | string[] | undefined) =>
 	Array.isArray(value) ? value.join(",") : (value ?? "");
+const toTagArray = (value?: string | string[]) => {
+	if (!value) return [];
+	const values = Array.isArray(value) ? value : [value];
+	return values
+		.map((item) => item.trim())
+		.filter((item, index, array) => item && array.indexOf(item) === index);
+};
+const hasTag = (value: string | string[] | undefined, tag: string) =>
+	toTagArray(value).includes(tag);
+const firstTag = (value?: string | string[]) => toTagArray(value)[0] ?? "";
 const normalizeSearchValue = (value: unknown): string => {
 	if (Array.isArray(value)) return value.map(normalizeSearchValue).join(" ");
 	if (value && typeof value === "object") return JSON.stringify(value);
@@ -1827,6 +1837,25 @@ export const CoreSettingsPage: FC = () => {
 			Array.from(
 				new Set(
 					canonicalOutbounds
+						.map((outbound: any) => outbound?.tag)
+						.filter((tag: string | undefined): tag is string => Boolean(tag)),
+				),
+			),
+		[canonicalOutbounds],
+	);
+
+	const excludedBalancerOutboundTags = useMemo<string[]>(
+		() =>
+			Array.from(
+				new Set(
+					canonicalOutbounds
+						.filter((outbound: any) => {
+							const protocol = String(outbound?.protocol ?? "")
+								.toLowerCase()
+								.trim();
+							const tag = String(outbound?.tag ?? "").toLowerCase().trim();
+							return protocol === "blackhole" || tag === "blocked";
+						})
 						.map((outbound: any) => outbound?.tag)
 						.filter((tag: string | undefined): tag is string => Boolean(tag)),
 				),
@@ -4078,6 +4107,7 @@ export const CoreSettingsPage: FC = () => {
 						: null
 				}
 				outboundTags={availableOutboundTags}
+				excludedOutboundTags={excludedBalancerOutboundTags}
 				existingTags={availableBalancerTags
 					.map((tag) => tag.trim())
 					.filter(

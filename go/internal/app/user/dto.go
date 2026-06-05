@@ -2,14 +2,6 @@ package user
 
 import "encoding/json"
 
-const (
-	ActionLinkPrerequisites = "user.link_prerequisites"
-	ActionSubscriptionLinks = "user.subscription_links"
-	ActionConfigLinks       = "user.config_links"
-	ActionUsersList         = "users.list"
-	ActionUserGet           = "user.get"
-)
-
 type AdminContext struct {
 	ID             *int64 `json:"id,omitempty"`
 	Username       string `json:"username"`
@@ -278,12 +270,21 @@ type Host struct {
 }
 
 type SubscriptionSettings struct {
-	DefaultSubscriptionType string          `json:"default_subscription_type"`
-	SubscriptionURLPrefix   string          `json:"subscription_url_prefix"`
-	SubscriptionPath        string          `json:"subscription_path"`
-	SubscriptionPorts       []int           `json:"subscription_ports"`
-	RawPanelSettings        json.RawMessage `json:"raw_panel_settings,omitempty"`
-	RawSubscriptionSettings json.RawMessage `json:"raw_subscription_settings,omitempty"`
+	DefaultSubscriptionType    string          `json:"default_subscription_type"`
+	SubscriptionURLPrefix      string          `json:"subscription_url_prefix"`
+	SubscriptionProfileTitle   string          `json:"subscription_profile_title"`
+	SubscriptionSupportURL     string          `json:"subscription_support_url"`
+	SubscriptionUpdateInterval string          `json:"subscription_update_interval"`
+	SubscriptionPath           string          `json:"subscription_path"`
+	SubscriptionPorts          []int           `json:"subscription_ports"`
+	SubscriptionAliases        []string        `json:"subscription_aliases"`
+	UseCustomJSONDefault       bool            `json:"use_custom_json_default"`
+	UseCustomJSONForV2rayN     bool            `json:"use_custom_json_for_v2rayn"`
+	UseCustomJSONForV2rayNG    bool            `json:"use_custom_json_for_v2rayng"`
+	UseCustomJSONForStreisand  bool            `json:"use_custom_json_for_streisand"`
+	UseCustomJSONForHapp       bool            `json:"use_custom_json_for_happ"`
+	RawPanelSettings           json.RawMessage `json:"raw_panel_settings,omitempty"`
+	RawSubscriptionSettings    json.RawMessage `json:"raw_subscription_settings,omitempty"`
 }
 
 type AdminLinkSettings struct {

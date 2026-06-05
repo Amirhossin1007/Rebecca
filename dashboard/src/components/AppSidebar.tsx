@@ -10,6 +10,7 @@ import {
 	VStack,
 } from "@chakra-ui/react";
 import {
+	BellAlertIcon,
 	BookOpenIcon,
 	ChartPieIcon,
 	ChevronDownIcon,
@@ -40,11 +41,9 @@ import { AdminRole, AdminSection } from "types/Admin";
 import { pickLocalizedAd } from "utils/ads";
 import {
 	getTutorialAssetUrl,
-	isTutorialUpdated,
 	normalizeTutorialLang,
-	readTutorialStorage,
+	syncTutorialUpdateStorage,
 	TUTORIALS_UPDATED_EVENT,
-	writeTutorialStorage,
 } from "utils/tutorialUpdates";
 import { AdvertisementCard } from "./AdvertisementCard";
 
@@ -67,6 +66,12 @@ const UsageIconStyled = chakra(ChartPieIcon, iconProps);
 const MyAccountIconStyled = chakra(UserCircleIcon, iconProps);
 const InsightsIconStyled = chakra(GlobeAltIcon, iconProps);
 const TutorialIconStyled = chakra(BookOpenIcon, iconProps);
+const TutorialUpdateIconStyled = chakra(BellAlertIcon, {
+	baseStyle: {
+		w: 3,
+		h: 3,
+	},
+});
 interface AppSidebarProps {
 	collapsed: boolean;
 	/** when rendered inside a Drawer on mobile */
@@ -252,54 +257,20 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			}
 			const data = (await response.json()) as TutorialMenuContent;
 			const updated = data?.meta?.updated?.toString().trim();
+			const hasRoleScopedTutorials = (data.sections || []).some(
+				(section) => (section.requiresRole || []).length > 0,
+			);
+			if (hasRoleScopedTutorials && !getUserIsSuccess) {
+				setHasNewTutorials(false);
+				return;
+			}
 			const menuIds = getTutorialMenuIds(
 				data,
 				normalizedUserRole,
 				getUserIsSuccess,
 			);
-			const stored = readTutorialStorage(langKey);
-			const activeUnseen = stored.unseen.filter((id) => menuIds.includes(id));
-
-			if (!stored.updated) {
-				if (updated) {
-					writeTutorialStorage(langKey, updated, menuIds, activeUnseen);
-				}
-				setHasNewTutorials(activeUnseen.length > 0);
-				return;
-			}
-
-			const newIds = menuIds.filter((id) => !stored.ids.includes(id));
-			const hasVersionBump = updated
-				? isTutorialUpdated(updated, stored.updated)
-				: false;
-
-			if (hasVersionBump) {
-				if (!updated) {
-					setHasNewTutorials(activeUnseen.length > 0);
-					return;
-				}
-				const mergedUnseen = Array.from(new Set([...activeUnseen, ...newIds]));
-				writeTutorialStorage(langKey, updated, menuIds, mergedUnseen);
-				setHasNewTutorials(mergedUnseen.length > 0);
-				return;
-			}
-
-			if (newIds.length > 0) {
-				const mergedUnseen = Array.from(new Set([...activeUnseen, ...newIds]));
-				writeTutorialStorage(langKey, stored.updated, menuIds, mergedUnseen);
-				setHasNewTutorials(true);
-				return;
-			}
-
-			if (
-				menuIds.length > 0 &&
-				(stored.ids.length !== menuIds.length ||
-					activeUnseen.length !== stored.unseen.length)
-			) {
-				writeTutorialStorage(langKey, stored.updated, menuIds, activeUnseen);
-			}
-
-			setHasNewTutorials(activeUnseen.length > 0);
+			const unseenIds = syncTutorialUpdateStorage(langKey, updated, menuIds);
+			setHasNewTutorials(unseenIds.length > 0);
 		} catch (err) {
 			console.error("Failed to check tutorial updates", err);
 			setHasNewTutorials(false);
@@ -673,14 +644,27 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 														/>
 														<Box
 															position="absolute"
-															top="-2px"
-															right="-2px"
-															w="2"
-															h="2"
+															top="-6px"
+															right="-7px"
+															w="4"
+															h="4"
 															borderRadius="full"
-															bg="yellow.400"
-															_dark={{ bg: "yellow.300" }}
-														/>
+															bg="teal.500"
+															color="white"
+															border="2px solid"
+															borderColor={sidebarBg}
+															display="inline-flex"
+															alignItems="center"
+															justifyContent="center"
+															boxShadow="0 0 0 1px rgba(20, 184, 166, 0.28)"
+															_dark={{
+																bg: "cyan.300",
+																color: "gray.900",
+																boxShadow: "0 0 0 1px rgba(103, 232, 249, 0.35)",
+															}}
+														>
+															<TutorialUpdateIconStyled />
+														</Box>
 													</Box>
 												) : (
 													<Icon
@@ -698,12 +682,25 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 														</Text>
 														{showTutorialBadge ? (
 															<Box
-																w="2"
-																h="2"
+																ml="auto"
+																w="5"
+																h="5"
 																borderRadius="full"
-																bg="yellow.400"
-																_dark={{ bg: "yellow.300" }}
-															/>
+																bg="teal.500"
+																color="white"
+																display="inline-flex"
+																alignItems="center"
+																justifyContent="center"
+																boxShadow="0 0 0 1px rgba(20, 184, 166, 0.24)"
+																_dark={{
+																	bg: "cyan.300",
+																	color: "gray.900",
+																	boxShadow:
+																		"0 0 0 1px rgba(103, 232, 249, 0.35)",
+																}}
+															>
+																<TutorialUpdateIconStyled />
+															</Box>
 														) : null}
 													</>
 												)}

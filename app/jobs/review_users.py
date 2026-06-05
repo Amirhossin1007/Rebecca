@@ -5,7 +5,7 @@ import threading
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 
-from app.runtime import logger, scheduler
+from app.runtime import logger
 from app.db import (
     GetDB,
     get_user_queryset,
@@ -198,12 +198,4 @@ def review():
         _review_lock.release()
 
 
-scheduler.add_job(
-    review,
-    "interval",
-    seconds=JOB_REVIEW_USERS_INTERVAL,
-    coalesce=True,
-    max_instances=1,
-    misfire_grace_time=JOB_REVIEW_USERS_INTERVAL,
-    replace_existing=True,
-)
+logger.info("Python review_users job disabled; Go Master API handles user lifecycle review")

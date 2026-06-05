@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -16,7 +17,13 @@ type Config struct {
 	TLSCert                     string
 	TLSKey                      string
 	NodeOperationsPollInterval  string
+	UserLifecycleInterval       string
+	UserLifecycleBatchSize      int
+	UserUsageResetInterval      string
+	UserUsageResetBatchSize     int
 	JWTAccessTokenExpireMinutes int
+	UsersListTimeoutSeconds     float64
+	SubscriptionReadOnly        bool
 	SudoUsername                string
 	SudoPassword                string
 }
@@ -55,7 +62,13 @@ func LoadConfig() (Config, error) {
 		TLSCert:                     lookup("REBECCA_MASTER_API_TLS_CERTFILE", "UVICORN_SSL_CERTFILE", "SSL_CERTFILE"),
 		TLSKey:                      lookup("REBECCA_MASTER_API_TLS_KEYFILE", "UVICORN_SSL_KEYFILE", "SSL_KEYFILE"),
 		NodeOperationsPollInterval:  lookup("REBECCA_NODE_OPERATIONS_POLL_INTERVAL"),
+		UserLifecycleInterval:       firstNonEmpty(lookup("REBECCA_USER_LIFECYCLE_INTERVAL"), secondsEnv(lookup("JOB_REVIEW_USERS_INTERVAL"))),
+		UserLifecycleBatchSize:      parseIntDefault(lookup("REBECCA_USER_LIFECYCLE_BATCH_SIZE", "JOB_REVIEW_USERS_BATCH_SIZE"), 500),
+		UserUsageResetInterval:      lookup("REBECCA_USER_USAGE_RESET_INTERVAL"),
+		UserUsageResetBatchSize:     parseIntDefault(lookup("REBECCA_USER_USAGE_RESET_BATCH_SIZE"), 500),
 		JWTAccessTokenExpireMinutes: parseIntDefault(lookup("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"), 1440),
+		UsersListTimeoutSeconds:     parseFloatDefault(lookup("USERS_LIST_TIMEOUT_SECONDS"), 0),
+		SubscriptionReadOnly:        parseBoolDefault(lookup("SUBSCRIPTION_READ_ONLY"), false),
 		SudoUsername:                lookup("SUDO_USERNAME"),
 		SudoPassword:                lookup("SUDO_PASSWORD"),
 	}
@@ -65,6 +78,41 @@ func LoadConfig() (Config, error) {
 	return cfg, nil
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func secondsEnv(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if _, err := strconv.ParseFloat(value, 64); err == nil {
+		return value + "s"
+	}
+	return value
+}
+
+func parseBoolDefault(value string, fallback bool) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func parseIntDefault(value string, fallback int) int {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -72,6 +120,18 @@ func parseIntDefault(value string, fallback int) int {
 	}
 	var result int
 	if _, err := fmt.Sscanf(value, "%d", &result); err != nil {
+		return fallback
+	}
+	return result
+}
+
+func parseFloatDefault(value string, fallback float64) float64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	result, err := strconv.ParseFloat(value, 64)
+	if err != nil {
 		return fallback
 	}
 	return result

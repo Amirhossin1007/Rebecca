@@ -76,6 +76,45 @@ export const isTutorialUpdated = (
 ) =>
 	Boolean(currentUpdated && storedUpdated && currentUpdated !== storedUpdated);
 
+export const syncTutorialUpdateStorage = (
+	lang: string,
+	currentUpdated: string | undefined | null,
+	currentIds: string[],
+) => {
+	const stored = readTutorialStorage(lang);
+	const activeUnseen = stored.unseen.filter((id) => currentIds.includes(id));
+	const nextUpdated = currentUpdated || stored.updated || "";
+	const hasCurrentSnapshot = stored.updated !== null && stored.ids.length > 0;
+	const unique = (values: string[]) => Array.from(new Set(values));
+
+	if (!hasCurrentSnapshot) {
+		if (nextUpdated || currentIds.length > 0) {
+			writeTutorialStorage(lang, nextUpdated, currentIds, []);
+		}
+		return [] as string[];
+	}
+
+	const newIds = currentIds.filter((id) => !stored.ids.includes(id));
+	const hasVersionChange = Boolean(
+		nextUpdated && stored.updated && nextUpdated !== stored.updated,
+	);
+	const nextIds = unique([...stored.ids, ...currentIds]);
+	const nextUnseen = hasVersionChange
+		? unique([...activeUnseen, ...newIds])
+		: activeUnseen;
+	const shouldWrite =
+		nextUpdated !== (stored.updated || "") ||
+		nextIds.length !== stored.ids.length ||
+		activeUnseen.length !== stored.unseen.length ||
+		hasVersionChange;
+
+	if (shouldWrite) {
+		writeTutorialStorage(lang, nextUpdated, nextIds, nextUnseen);
+	}
+
+	return nextUnseen;
+};
+
 export const acknowledgeTutorialIds = (
 	lang: string,
 	idsToAcknowledge: string | string[],

@@ -47,7 +47,16 @@ from config import USERS_LIST_LINKS_ENABLED, USERS_LIST_TIMEOUT_KILL_QUERY, USER
 
 # region Helpers
 
-router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
+def _go_native_user_route():
+    raise HTTPException(status_code=503, detail="User routes are served by the Go Master API")
+
+
+router = APIRouter(
+    tags=["User"],
+    prefix="/api",
+    responses={401: responses._401},
+    dependencies=[Depends(_go_native_user_route)],
+)
 
 
 class _RuntimeXrayProxy:
@@ -474,6 +483,7 @@ def add_user(
 
     Compatible with Marzban API: accepts UserCreate directly when no service_id is provided.
     """
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
 
     admin.ensure_user_permission(UserPermission.create)
     _ensure_user_management_available(admin, "create users")
@@ -724,26 +734,9 @@ def add_user(
 
 
 @router.get("/user/{username}", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
-def get_user(
-    username: str,
-    request: Request,
-    admin: Admin = Depends(Admin.get_current),
-):
+def get_user(username: str):
     """Get user information"""
-    from app.services.go_usage import GoUsageError
-    from app.services.go_user import get_user_detail
-
-    try:
-        user = get_user_detail(username, admin=admin, request_origin=get_request_origin(request))
-    except GoUsageError as exc:
-        detail = str(exc)
-        lowered = detail.lower()
-        if "not found" in lowered:
-            raise HTTPException(status_code=404, detail="User not found")
-        if "not allowed" in lowered:
-            raise HTTPException(status_code=403, detail="You're not allowed")
-        raise
-    return _sanitize_user_response(admin, user)
+    raise HTTPException(status_code=503, detail="User read routes are served by Go Master API")
 
 
 @router.put(
@@ -761,7 +754,7 @@ def modify_user(
     request: Request,
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    dbuser: UsersResponse = Depends(get_validated_user),
+    dbuser: UserResponse = Depends(get_validated_user),
     admin: Admin = Depends(Admin.require_active),
 ):
     """
@@ -781,6 +774,7 @@ def modify_user(
 
     Note: Fields set to `null` or omitted will not be modified.
     """
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
 
     if (
         admin.user_management_locked
@@ -995,6 +989,8 @@ def remove_user(
     admin: Admin = Depends(Admin.require_active),
 ):
     """Remove a user"""
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
+
     admin.ensure_user_permission(UserPermission.delete)
     try:
         ensure_user_delete_allowed_and_apply_credit(db, dbuser)
@@ -1028,6 +1024,8 @@ def reset_user_data_usage(
     admin: Admin = Depends(Admin.require_active),
 ):
     """Reset user data usage"""
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
+
     admin.ensure_user_permission(UserPermission.reset_usage)
     _ensure_user_management_available(admin, "reset user usage")
     owner_admin = getattr(dbuser, "admin", None)
@@ -1066,6 +1064,8 @@ def revoke_user_subscription(
     admin: Admin = Depends(Admin.require_active),
 ):
     """Revoke users subscription (Subscription link and proxies)"""
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
+
     admin.ensure_user_permission(UserPermission.revoke)
     _ensure_user_management_available(admin, "revoke user subscriptions")
     owner_admin = getattr(dbuser, "admin", None)
@@ -1108,117 +1108,13 @@ def get_users(
     service_id: int = Query(None, alias="service_id"),
     sort: str = None,
     links: bool = Query(False, description="Include full config links for each user"),
-    db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
 ):
     """Get all users
 
     - **filter**: repeatable advanced filter keys (online, offline, finished, limit, unlimited, sub_not_updated, sub_never_updated, expired, limited, disabled, on_hold).
     - **service_id**: Filter users who belong to a specific service.
     """
-    start_ts = time.perf_counter()
-    include_config_links = _should_include_user_config_links(links)
-    logger.info(
-        "GET /users called with params: offset=%s limit=%s username=%s search=%s owner=%s status=%s filters=%s service_id=%s sort=%s links=%s effective_links=%s",
-        offset,
-        limit,
-        username,
-        search,
-        owner,
-        status,
-        advanced_filters,
-        service_id,
-        sort,
-        links,
-        include_config_links,
-    )
-    if sort is not None:
-        opts = sort.strip(",").split(",")
-        sort = []
-        for opt in opts:
-            if opt in {"used_traffic", "-used_traffic"} and not _can_sort_user_traffic(admin, service_id):
-                raise HTTPException(status_code=403, detail="Viewing user traffic is disabled.")
-            try:
-                sort.append(crud.UsersSortingOptions[opt])
-            except KeyError:
-                raise HTTPException(status_code=400, detail=f'"{opt}" is not a valid sort option')
-
-    if admin.role in (AdminRole.sudo, AdminRole.full_access):
-        owners = owner if owner and len(owner) > 0 else None
-    else:
-        owners = [admin.username]
-
-    dbadmin = None
-    users_limit = None
-    active_total = None
-
-    if admin.role not in (AdminRole.sudo, AdminRole.full_access):
-        dbadmin = crud.get_admin(db, admin.username)
-        if not dbadmin:
-            raise HTTPException(status_code=404, detail="Admin not found")
-        users_limit = dbadmin.users_limit
-
-    from app.services import user_service
-
-    request_origin = get_request_origin(request)
-    timeout_guard = _UsersListTimeoutGuard(
-        db,
-        timeout_seconds=_get_users_list_timeout_seconds(),
-        kill_query=USERS_LIST_TIMEOUT_KILL_QUERY,
-    )
-    try:
-        with timeout_guard, use_subscription_request_origin(request):
-            if include_config_links:
-                # Generating share links requires DB-loaded proxies/inbounds.
-                response = user_service.get_users_list_db_only(
-                    db,
-                    offset=offset,
-                    limit=limit,
-                    username=username,
-                    search=search,
-                    status=status,
-                    sort=sort,
-                    advanced_filters=advanced_filters,
-                    service_id=service_id,
-                    dbadmin=dbadmin,
-                    owners=owners,
-                    users_limit=users_limit,
-                    active_total=active_total,
-                    include_links=True,
-                    request_origin=request_origin,
-                )
-            else:
-                response = user_service.get_users_list(
-                    db,
-                    offset=offset,
-                    limit=limit,
-                    username=username,
-                    search=search,
-                    status=status,
-                    sort=sort,
-                    advanced_filters=advanced_filters,
-                    service_id=service_id,
-                    dbadmin=dbadmin,
-                    owners=owners,
-                    users_limit=users_limit,
-                    active_total=active_total,
-                    include_links=False,
-                    request_origin=request_origin,
-                )
-    except OperationalError as exc:
-        if timeout_guard.interrupted_error(exc):
-            db.rollback()
-            logger.warning("USERS: handler timed out after %.3f s", time.perf_counter() - start_ts)
-            raise HTTPException(status_code=504, detail="Users list query timed out") from exc
-        raise
-
-    if timeout_guard.timed_out:
-        db.rollback()
-        logger.warning("USERS: handler exceeded timeout and finished after %.3f s", time.perf_counter() - start_ts)
-        raise HTTPException(status_code=504, detail="Users list query timed out")
-
-    logger.info("USERS: handler finished in %.3f s", time.perf_counter() - start_ts)
-    return _sanitize_users_response(admin, response)
+    raise HTTPException(status_code=503, detail="User read routes are served by Go Master API")
 
 
 @router.post("/users/actions", responses={403: responses._403})
@@ -1228,206 +1124,7 @@ def perform_users_bulk_action(
     admin: Admin = Depends(Admin.require_active),
 ):
     """Perform advanced bulk operations across all users."""
-    admin.ensure_user_permission(UserPermission.advanced_actions)
-    if admin.user_management_locked and payload.action not in (
-        AdvancedUserAction.activate_users,
-        AdvancedUserAction.disable_users,
-    ):
-        _ensure_user_management_available(admin, "run this bulk action")
-
-    affected = 0
-    detail = "Advanced action applied"
-    target_admin: Optional[Admin] = None
-    target_service = None
-    destination_service = None
-    target_service_id = payload.target_service_id
-    service_filter_by_null = bool(payload.service_id_is_null)
-
-    if admin.role in (AdminRole.sudo, AdminRole.full_access):
-        if payload.admin_username:
-            target_admin = crud.get_admin(db, payload.admin_username)
-            if not target_admin:
-                raise HTTPException(status_code=404, detail="Admin not found")
-        if payload.service_id is not None:
-            target_service = crud.get_service(db, payload.service_id)
-            if not target_service:
-                raise HTTPException(status_code=404, detail="Service not found")
-        if payload.action == AdvancedUserAction.change_service and target_service_id is not None:
-            destination_service = crud.get_service(db, target_service_id)
-            if not destination_service:
-                raise HTTPException(status_code=404, detail="Target service not found")
-    else:
-        if "admin_username" in payload.model_fields_set:
-            if payload.admin_username is None or payload.admin_username != admin.username:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Standard admins can only target their own users",
-                )
-        target_admin = crud.get_admin(db, admin.username)
-        if not target_admin:
-            raise HTTPException(status_code=404, detail="Admin not found")
-        if payload.service_id is not None:
-            target_service = crud.get_service(db, payload.service_id)
-            if not target_service:
-                raise HTTPException(status_code=404, detail="Service not found")
-            if target_admin.id not in target_service.admin_ids:
-                raise HTTPException(status_code=403, detail="Service not assigned to admin")
-        if payload.action == AdvancedUserAction.change_service:
-            if target_service_id is None:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Standard admins must select a target service",
-                )
-            destination_service = crud.get_service(db, target_service_id)
-            if not destination_service:
-                raise HTTPException(status_code=404, detail="Target service not found")
-            if target_admin.id not in destination_service.admin_ids:
-                raise HTTPException(status_code=403, detail="Target service not assigned to admin")
-
-    if payload.action == AdvancedUserAction.change_service:
-        if target_admin is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Select one admin before changing service assignments.",
-            )
-        target_mode = getattr(target_admin, "traffic_limit_mode", None)
-        target_mode_value = getattr(target_mode, "value", target_mode)
-        if admin_uses_service_traffic_limits(target_admin) or target_mode_value == "created_traffic":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Service transfer is disabled for created-traffic and per-service traffic admins.",
-            )
-
-    if payload.action == AdvancedUserAction.activate_users and admin_uses_service_traffic_limits(target_admin):
-        if payload.service_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Select one service before activating users for a per-service traffic admin.",
-            )
-        link = get_admin_service_link(db, target_admin.id, payload.service_id)
-        if link and traffic_scope_used_limit_reached(link):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This service traffic limit has been reached. You can't activate users in this service.",
-            )
-
-    try:
-        if payload.action == AdvancedUserAction.extend_expire:
-            affected = crud.adjust_all_users_expire(
-                db,
-                payload.days * 86400,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-                status_scope=payload.scope,
-            )
-            detail = "Expiration dates extended"
-        elif payload.action == AdvancedUserAction.reduce_expire:
-            affected = crud.adjust_all_users_expire(
-                db,
-                -payload.days * 86400,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-                status_scope=payload.scope,
-            )
-            detail = "Expiration dates shortened"
-        elif payload.action == AdvancedUserAction.increase_traffic:
-            delta = max(1, int(round(payload.gigabytes * 1073741824)))
-            affected = crud.adjust_all_users_limit(
-                db,
-                delta,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-                status_scope=payload.scope,
-            )
-            detail = "Data limits increased for users"
-        elif payload.action == AdvancedUserAction.decrease_traffic:
-            delta = max(1, int(round(payload.gigabytes * 1073741824)))
-            affected = crud.adjust_all_users_limit(
-                db,
-                -delta,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-                status_scope=payload.scope,
-            )
-            detail = "Data limits decreased for users"
-        elif payload.action == AdvancedUserAction.cleanup_status:
-            affected = crud.delete_users_by_status_age(
-                db,
-                payload.statuses,
-                payload.days,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-            )
-            detail = "Users removed by status age"
-        elif payload.action == AdvancedUserAction.activate_users:
-            affected = crud.bulk_update_user_status(
-                db,
-                UserStatus.active,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-            )
-            detail = "Users activated"
-        elif payload.action == AdvancedUserAction.disable_users:
-            affected = crud.bulk_update_user_status(
-                db,
-                UserStatus.disabled,
-                admin=target_admin,
-                service_id=payload.service_id,
-                service_without_assignment=service_filter_by_null,
-            )
-            detail = "Users disabled"
-        elif payload.action == AdvancedUserAction.change_service:
-            if target_service_id is None:
-                affected = crud.clear_users_service(
-                    db,
-                    admin=target_admin,
-                    service_id=payload.service_id,
-                    service_without_assignment=service_filter_by_null,
-                )
-                detail = "Users removed from service"
-            else:
-                if not destination_service:
-                    raise HTTPException(status_code=400, detail="Target service not provided")
-                user_count = crud.count_users(
-                    db,
-                    admin=target_admin,
-                    service_id=payload.service_id,
-                    service_without_assignment=service_filter_by_null,
-                )
-                use_fast_path = payload.service_id is None or user_count > 1000
-                if use_fast_path:
-                    affected = crud.move_users_to_service_fast(
-                        db,
-                        destination_service,
-                        admin=target_admin,
-                        service_id=payload.service_id,
-                        service_without_assignment=service_filter_by_null,
-                    )
-                else:
-                    affected = crud.move_users_to_service(
-                        db,
-                        destination_service,
-                        admin=target_admin,
-                        service_id=payload.service_id,
-                        service_without_assignment=service_filter_by_null,
-                    )
-                if destination_service.id is not None:
-                    crud.refresh_service_users_by_id(db, destination_service.id)
-                detail = "Users moved to target service"
-    except UsersLimitReachedError as exc:
-        report.admin_users_limit_reached(admin, exc.limit, exc.current_active)
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    node_operations.queue_sync_config()
-
-    return {"detail": detail, "count": affected}
+    raise HTTPException(status_code=503, detail="User bulk action routes are served by Go Master API")
 
 
 @router.get(
@@ -1461,6 +1158,8 @@ def active_next_plan(
     admin: Admin = Depends(Admin.require_active),
 ):
     """Reset user by next plan"""
+    raise HTTPException(status_code=503, detail="User mutation routes are served by Go Master API")
+
     admin.ensure_user_permission(UserPermission.allow_next_plan)
     _ensure_user_management_available(admin, "activate the next plan")
     owner_admin = getattr(dbuser, "admin", None)

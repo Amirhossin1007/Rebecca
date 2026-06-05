@@ -1,5 +1,4 @@
 import {
-	Badge,
 	Box,
 	Button,
 	Collapse,
@@ -55,6 +54,7 @@ import dayjs from "dayjs";
 import useGetUser from "hooks/useGetUser";
 import {
 	type FC,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -67,24 +67,31 @@ import type { Status } from "types/User";
 import {
 	acknowledgeTutorialIds,
 	getTutorialAssetUrl,
-	isTutorialUpdated,
 	normalizeTutorialLang,
 	readTutorialStorage,
-	writeTutorialStorage,
+	syncTutorialUpdateStorage,
 } from "utils/tutorialUpdates";
+
+type TutorialLink = {
+	label: string;
+	action: "navigate" | "url";
+	target: string;
+};
+
+type TutorialText = string | { text: string; links?: TutorialLink[] };
 
 type TutorialSection = {
 	id: string;
 	title: string;
 	description: string;
-	steps?: string[];
-	hints?: string[];
+	steps?: TutorialText[];
+	hints?: TutorialText[];
 	subsections?: {
 		id: string;
 		title: string;
 		description?: string;
-		steps?: string[];
-		hints?: string[];
+		steps?: TutorialText[];
+		hints?: TutorialText[];
 		icon?: string;
 		color?: string;
 	}[];
@@ -172,6 +179,31 @@ const ShieldCheck = chakra(ShieldCheckIcon, iconProps);
 const TagShape = chakra(TagIcon, iconProps);
 const UserShape = chakra(UserIcon, iconProps);
 
+const NewTutorialMarker: FC<{ compact?: boolean }> = ({ compact }) => (
+	<Box
+		w={compact ? "4" : "5"}
+		h={compact ? "4" : "5"}
+		borderRadius="full"
+		bg="teal.500"
+		color="white"
+		display="inline-flex"
+		alignItems="center"
+		justifyContent="center"
+		flexShrink={0}
+		boxShadow="0 0 0 1px rgba(20, 184, 166, 0.24)"
+		_dark={{
+			bg: "cyan.300",
+			color: "gray.900",
+			boxShadow: "0 0 0 1px rgba(103, 232, 249, 0.35)",
+		}}
+	>
+		<SparkleIcon w={compact ? 2.5 : 3} h={compact ? 2.5 : 3} />
+	</Box>
+);
+
+const getTutorialText = (value?: TutorialText | null) =>
+	typeof value === "string" ? value : value?.text || "";
+
 const normalizeRole = (role?: string | null) =>
 	role
 		?.toString()
@@ -221,9 +253,10 @@ const TutorialsPage: FC = () => {
 		() => ({
 			borderWidth: "1px",
 			borderColor: "light-border",
-			borderRadius: "xl",
+			borderRadius: "lg",
 			bg: "surface.light",
 			_dark: { bg: "surface.dark", borderColor: "whiteAlpha.200" },
+			boxShadow: "sm",
 			p: { base: 3, md: 4 },
 		}),
 		[],
@@ -237,6 +270,12 @@ const TutorialsPage: FC = () => {
 	const menuBorder = useColorModeValue("light-border", "whiteAlpha.200");
 	const menuActiveBg = useColorModeValue("primary.50", "whiteAlpha.100");
 	const menuHoverBg = useColorModeValue("blackAlpha.50", "whiteAlpha.200");
+	const pagePanelBg = useColorModeValue("white", "gray.900");
+	const selectorBg = useColorModeValue("blackAlpha.50", "whiteAlpha.100");
+	const selectorActiveBg = useColorModeValue(
+		"var(--chakra-colors-white)",
+		"var(--chakra-colors-gray-800)",
+	);
 	const rowHoverBg = useColorModeValue("gray.50", "whiteAlpha.50");
 	const tableColorScheme = useColorModeValue("gray", "whiteAlpha");
 	const pulseGlow = useMemo(
@@ -372,12 +411,69 @@ const TutorialsPage: FC = () => {
 
 	const normalizedSearch = searchTerm.trim().toLowerCase();
 	const containsTerm = useCallback(
-		(value?: string | null) => {
+		(value?: TutorialText | null) => {
 			if (!normalizedSearch) return true;
-			if (!value) return false;
-			return value.toLowerCase().includes(normalizedSearch);
+			const text = getTutorialText(value);
+			if (!text) return false;
+			return text.toLowerCase().includes(normalizedSearch);
 		},
 		[normalizedSearch],
+	);
+
+	const handleTutorialLink = useCallback(
+		(link: TutorialLink) => {
+			if (link.action === "navigate") {
+				navigate(link.target);
+				return;
+			}
+			window.open(link.target, "_blank", "noopener,noreferrer");
+		},
+		[navigate],
+	);
+
+	const renderTutorialText = useCallback(
+		(value: TutorialText): ReactNode => {
+			if (typeof value === "string") return value;
+			const text = value.text || "";
+			const links = value.links || [];
+			if (!links.length) return text;
+
+			const nodes: ReactNode[] = [];
+			let cursor = 0;
+
+			links.forEach((link) => {
+				const matchIndex = text.indexOf(link.label, cursor);
+				if (matchIndex < 0) return;
+				if (matchIndex > cursor) {
+					nodes.push(text.slice(cursor, matchIndex));
+				}
+				nodes.push(
+					<Link
+						key={`${link.label}-${matchIndex}`}
+						color="blue.600"
+						_dark={{ color: "blue.300" }}
+						fontWeight="semibold"
+						textDecoration="underline"
+						textUnderlineOffset="3px"
+						cursor="pointer"
+						onClick={(event) => {
+							event.preventDefault();
+							handleTutorialLink(link);
+						}}
+					>
+						{link.label}
+					</Link>,
+				);
+				cursor = matchIndex + link.label.length;
+			});
+
+			if (cursor < text.length) {
+				nodes.push(text.slice(cursor));
+			}
+
+			return nodes.length ? nodes : text;
+		},
+		[handleTutorialLink],
 	);
 
 	const filtered = useMemo(() => {
@@ -639,43 +735,38 @@ const TutorialsPage: FC = () => {
 		t,
 	]);
 
+	const hasAdminContent = adminSections.length > 0 || adminRoleCards.length > 0;
+	const menuEntryCount = useMemo(
+		() =>
+			menuItems.reduce(
+				(total, item) => total + 1 + (item.children?.length ?? 0),
+				0,
+			),
+		[menuItems],
+	);
+	const activeMenuLabel = useMemo(() => {
+		for (const item of menuItems) {
+			if (item.id === activeId) return item.label;
+			const child = item.children?.find((entry) => entry.id === activeId);
+			if (child) return child.label;
+		}
+		return menuItems[0]?.label ?? "";
+	}, [activeId, menuItems]);
+
 	useEffect(() => {
 		if (!content) return;
+		const hasRoleScopedTutorials = (content.sections || []).some(
+			(section) => section.requiresRole?.length,
+		);
+		if (hasRoleScopedTutorials && !getUserIsSuccess) return;
 		const updated = content.meta?.updated?.toString().trim();
-		if (!updated) {
-			setNewMenuIds(new Set());
-			return;
-		}
 		const langKey = normalizeTutorialLang(i18n.language);
-		const stored = readTutorialStorage(langKey);
-
-		if (!stored.updated) {
-			writeTutorialStorage(langKey, updated, allMenuIds, []);
-			setNewMenuIds(new Set());
-			return;
-		}
-
-		if (isTutorialUpdated(updated, stored.updated)) {
+		const unseenIds = syncTutorialUpdateStorage(langKey, updated, allMenuIds);
+		if (unseenIds.length > 0) {
 			autoScrollDone.current = false;
-			const newIds = allMenuIds.filter((id) => !stored.ids.includes(id));
-			const mergedUnseen = Array.from(
-				new Set([...stored.unseen, ...newIds]),
-			).filter((id) => allMenuIds.includes(id));
-			writeTutorialStorage(langKey, updated, allMenuIds, mergedUnseen);
-			setNewMenuIds(new Set(mergedUnseen));
-			return;
 		}
-
-		const activeUnseen = stored.unseen.filter((id) => allMenuIds.includes(id));
-		if (
-			allMenuIds.length &&
-			(stored.ids.length !== allMenuIds.length ||
-				activeUnseen.length !== stored.unseen.length)
-		) {
-			writeTutorialStorage(langKey, stored.updated, allMenuIds, activeUnseen);
-		}
-		setNewMenuIds(new Set(activeUnseen));
-	}, [allMenuIds, content, i18n.language]);
+		setNewMenuIds(new Set(unseenIds));
+	}, [allMenuIds, content, getUserIsSuccess, i18n.language]);
 
 	const formatExpiryLabel = (days?: number | null) => {
 		if (days === null || typeof days === "undefined") {
@@ -866,16 +957,7 @@ const TutorialsPage: FC = () => {
 			return;
 		}
 		acknowledgedVisitKey.current = visitKey;
-		const timer = window.setTimeout(() => {
-			acknowledgeTutorialIds(langKey, activeUnseen);
-			setNewMenuIds((prev) => {
-				if (!activeUnseen.some((id) => prev.has(id))) return prev;
-				const next = new Set(prev);
-				activeUnseen.forEach((id) => next.delete(id));
-				return next;
-			});
-		}, 700);
-		return () => window.clearTimeout(timer);
+		acknowledgeTutorialIds(langKey, activeUnseen);
 	}, [allMenuIds, content, i18n.language]);
 
 	useEffect(() => {
@@ -1050,53 +1132,90 @@ const TutorialsPage: FC = () => {
 	}, [firstNewId, loading]);
 
 	return (
-		<VStack spacing={6} align="stretch" dir={isRTL ? "rtl" : "ltr"}>
-			<VStack align="flex-start" spacing={1}>
-				<HStack spacing={3} align="center">
-					<BookIcon />
-					<Text as="h1" fontWeight="semibold" fontSize="2xl">
-						{t("tutorials.title")}
-					</Text>
-				</HStack>
-				<Text fontSize="sm" color={textMuted}>
-					{t("tutorials.subtitle")}
-				</Text>
-				{content?.intro ? (
-					<Text fontSize="sm" color={textMuted}>
-						{content.intro}
-					</Text>
-				) : null}
-				{content?.meta?.updated ? (
-					<Badge colorScheme="primary">
-						{t("tutorials.lastUpdated", { date: content.meta.updated })}
-					</Badge>
-				) : null}
-			</VStack>
-
-			<InputGroup size="md">
-				<InputLeftElement pointerEvents="none">
-					<SearchIcon />
-				</InputLeftElement>
-				<Input
-					placeholder={t("tutorials.searchPlaceholder")}
-					value={searchTerm}
-					onChange={(event) => setSearchTerm(event.target.value)}
-					bg="surface.light"
-					_dark={{ bg: "surface.dark" }}
-					borderColor="light-border"
-				/>
-				{searchTerm ? (
-					<InputRightElement width="3rem">
-						<IconButton
-							aria-label={t("tutorials.clearSearch")}
-							size="sm"
-							variant="ghost"
-							onClick={() => setSearchTerm("")}
-							icon={<ClearIcon />}
+		<VStack spacing={5} align="stretch" dir={isRTL ? "rtl" : "ltr"}>
+			<Box
+				borderWidth="1px"
+				borderColor={menuBorder}
+				borderRadius="lg"
+				bg={pagePanelBg}
+				boxShadow="sm"
+				overflow="hidden"
+				p={{ base: 4, md: 5 }}
+			>
+				<Stack
+					direction={{ base: "column", lg: isRTL ? "row-reverse" : "row" }}
+					spacing={4}
+					align={{ base: "stretch", lg: "center" }}
+					justify="space-between"
+				>
+					<VStack align="flex-start" spacing={2} maxW="760px">
+						<HStack spacing={3} align="center">
+							<Box
+								bg="primary.500"
+								color="white"
+								borderRadius="md"
+								p={2}
+								display="inline-flex"
+								alignItems="center"
+								justifyContent="center"
+							>
+								<BookIcon color="white" />
+							</Box>
+							<Box>
+								<Text as="h1" fontWeight="semibold" fontSize="2xl">
+									{t("tutorials.title")}
+								</Text>
+								<Text fontSize="sm" color={textMuted}>
+									{t("tutorials.subtitle")}
+								</Text>
+							</Box>
+						</HStack>
+						{content?.intro ? (
+							<Text fontSize="sm" color={textMuted}>
+								{content.intro}
+							</Text>
+						) : null}
+						<HStack spacing={2} flexWrap="wrap">
+							{content?.meta?.updated ? (
+								<Tag colorScheme="primary" variant="subtle">
+									{t("tutorials.lastUpdated", { date: content.meta.updated })}
+								</Tag>
+							) : null}
+							<Tag colorScheme="gray" variant="subtle">
+								{activeTab === "admin"
+									? t("tutorials.adminTab")
+									: t("tutorials.menuTitle")}
+								{" · "}
+								{menuEntryCount}
+							</Tag>
+						</HStack>
+					</VStack>
+					<InputGroup size="md" maxW={{ base: "full", lg: "420px" }}>
+						<InputLeftElement pointerEvents="none">
+							<SearchIcon />
+						</InputLeftElement>
+						<Input
+							placeholder={t("tutorials.searchPlaceholder")}
+							value={searchTerm}
+							onChange={(event) => setSearchTerm(event.target.value)}
+							bg={innerCardBg}
+							borderColor={menuBorder}
+							h="46px"
 						/>
-					</InputRightElement>
-				) : null}
-			</InputGroup>
+						{searchTerm ? (
+							<InputRightElement width="3rem" h="46px">
+								<IconButton
+									aria-label={t("tutorials.clearSearch")}
+									size="sm"
+									variant="ghost"
+									onClick={() => setSearchTerm("")}
+									icon={<ClearIcon />}
+								/>
+							</InputRightElement>
+						) : null}
+					</InputGroup>
+				</Stack>
+			</Box>
 
 			{error ? (
 				<Box
@@ -1157,55 +1276,83 @@ const TutorialsPage: FC = () => {
 						zIndex={2}
 					>
 						<VStack align="stretch" spacing={3}>
-							{adminSections.length > 0 && (
-								<HStack spacing={2}>
-									<Button
-										size="sm"
-										variant={activeTab === "general" ? "solid" : "outline"}
-										colorScheme="primary"
-										onClick={() => setActiveTab("general")}
-										flex="1"
-									>
-										<HStack spacing={2}>
-											<Text>{t("tutorials.menuTitle")}</Text>
-											{hasNewGeneral ? (
-												<Box
-													w="2"
-													h="2"
-													borderRadius="full"
-													bg="yellow.400"
-													_dark={{ bg: "yellow.300" }}
-												/>
-											) : null}
-										</HStack>
-									</Button>
-									<Button
-										size="sm"
-										variant={activeTab === "admin" ? "solid" : "outline"}
-										colorScheme="primary"
-										onClick={() => setActiveTab("admin")}
-										flex="1"
-									>
-										<HStack spacing={2}>
-											<Text>{t("tutorials.adminTab")}</Text>
-											{hasNewAdmin ? (
-												<Box
-													w="2"
-													h="2"
-													borderRadius="full"
-													bg="yellow.400"
-													_dark={{ bg: "yellow.300" }}
-												/>
-											) : null}
-										</HStack>
-									</Button>
-								</HStack>
+							{hasAdminContent && (
+								<Box
+									position="relative"
+									borderWidth="1px"
+									borderColor={menuBorder}
+									borderRadius="lg"
+									bg={selectorBg}
+									p={1}
+									overflow="hidden"
+								>
+									<HStack spacing={1}>
+										<Button
+											size="sm"
+											variant="ghost"
+											color={
+												activeTab === "general" ? "primary.600" : textMuted
+											}
+											bg={
+												activeTab === "general"
+													? selectorActiveBg
+													: "transparent"
+											}
+											boxShadow={activeTab === "general" ? "sm" : "none"}
+											onClick={() => setActiveTab("general")}
+											flex="1"
+											leftIcon={<BookIcon />}
+											transition="background 120ms ease, color 120ms ease"
+											_hover={{
+												bg:
+													activeTab === "general"
+														? selectorActiveBg
+														: menuHoverBg,
+											}}
+											_active={{ bg: selectorActiveBg }}
+										>
+											<HStack spacing={2}>
+												<Text>{t("tutorials.menuTitle")}</Text>
+												{hasNewGeneral ? <NewTutorialMarker compact /> : null}
+											</HStack>
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											color={activeTab === "admin" ? "primary.600" : textMuted}
+											bg={
+												activeTab === "admin" ? selectorActiveBg : "transparent"
+											}
+											boxShadow={activeTab === "admin" ? "sm" : "none"}
+											onClick={() => setActiveTab("admin")}
+											flex="1"
+											leftIcon={<ShieldCheck />}
+											transition="background 120ms ease, color 120ms ease"
+											_hover={{
+												bg:
+													activeTab === "admin"
+														? selectorActiveBg
+														: menuHoverBg,
+											}}
+											_active={{ bg: selectorActiveBg }}
+										>
+											<HStack spacing={2}>
+												<Text>{t("tutorials.adminTab")}</Text>
+												{hasNewAdmin ? <NewTutorialMarker compact /> : null}
+											</HStack>
+										</Button>
+									</HStack>
+								</Box>
 							)}
 							{isMobile ? (
 								<Button
-									size="sm"
+									size="md"
 									variant="outline"
 									colorScheme="primary"
+									bg={menuCardBg}
+									borderColor={menuBorder}
+									boxShadow="sm"
+									h="46px"
 									rightIcon={
 										<ChevronDownIcon
 											style={{
@@ -1219,21 +1366,16 @@ const TutorialsPage: FC = () => {
 									onClick={toggleMenu}
 									justifyContent="space-between"
 								>
-									<HStack spacing={2}>
-										<Text>
+									<HStack spacing={2} minW={0}>
+										<Tag size="sm" colorScheme="primary" variant="subtle">
 											{activeTab === "admin"
 												? t("tutorials.adminTab")
 												: t("tutorials.menuTitle")}
+										</Tag>
+										<Text noOfLines={1} textAlign="start">
+											{activeMenuLabel || t("tutorials.menuTitle")}
 										</Text>
-										{hasNewForActiveTab ? (
-											<Box
-												w="2"
-												h="2"
-												borderRadius="full"
-												bg="yellow.400"
-												_dark={{ bg: "yellow.300" }}
-											/>
-										) : null}
+										{hasNewForActiveTab ? <NewTutorialMarker compact /> : null}
 									</HStack>
 								</Button>
 							) : null}
@@ -1247,35 +1389,16 @@ const TutorialsPage: FC = () => {
 									p={3}
 								>
 									<VStack align="stretch" spacing={3}>
-										<Heading size="sm">
-											{activeTab === "admin"
-												? t("tutorials.adminTab")
-												: t("tutorials.menuTitle")}
-										</Heading>
-										<InputGroup size="sm">
-											<InputLeftElement pointerEvents="none">
-												<SearchIcon w={4} h={4} />
-											</InputLeftElement>
-											<Input
-												placeholder={t("tutorials.menuSearchPlaceholder")}
-												value={searchTerm}
-												onChange={(event) => setSearchTerm(event.target.value)}
-												bg="surface.light"
-												_dark={{ bg: "surface.dark" }}
-												borderColor="light-border"
-											/>
-											{searchTerm ? (
-												<InputRightElement width="2.5rem">
-													<IconButton
-														aria-label={t("tutorials.clearSearch")}
-														size="xs"
-														variant="ghost"
-														onClick={() => setSearchTerm("")}
-														icon={<ClearIcon w={4} h={4} />}
-													/>
-												</InputRightElement>
-											) : null}
-										</InputGroup>
+										<HStack justify="space-between" align="center" spacing={3}>
+											<Heading size="sm">
+												{activeTab === "admin"
+													? t("tutorials.adminTab")
+													: t("tutorials.menuTitle")}
+											</Heading>
+											<Tag size="sm" colorScheme="gray" variant="subtle">
+												{menuEntryCount}
+											</Tag>
+										</HStack>
 										<VStack
 											align="stretch"
 											spacing={1}
@@ -1299,14 +1422,19 @@ const TutorialsPage: FC = () => {
 														borderColor={
 															isActive ? "primary.200" : "transparent"
 														}
+														position="relative"
+														transition="border-color 160ms ease"
 													>
 														<Button
 															size="sm"
 															variant="ghost"
 															justifyContent="space-between"
 															w="full"
+															position="relative"
+															zIndex={1}
 															bg={isActive ? menuActiveBg : "transparent"}
-															_hover={{ bg: menuHoverBg }}
+															transition="background 120ms ease, color 120ms ease"
+															_hover={{ bg: isActive ? menuActiveBg : menuHoverBg }}
 															_active={{ bg: menuActiveBg }}
 															onClick={() => {
 																if (hasChildren) {
@@ -1335,16 +1463,7 @@ const TutorialsPage: FC = () => {
 														>
 															<HStack spacing={2} align="center">
 																<Text textAlign="start">{item.label}</Text>
-																{isItemNew ? (
-																	<Box
-																		w="2"
-																		h="2"
-																		borderRadius="full"
-																		bg="yellow.400"
-																		_dark={{ bg: "yellow.300" }}
-																		flexShrink={0}
-																	/>
-																) : null}
+																{isItemNew ? <NewTutorialMarker compact /> : null}
 															</HStack>
 														</Button>
 														{hasChildren && isExpanded ? (
@@ -1361,44 +1480,50 @@ const TutorialsPage: FC = () => {
 																	const childActive = activeId === child.id;
 																	const isChildNew = newMenuIds.has(child.id);
 																	return (
-																		<Button
+																		<Box
 																			key={child.id}
-																			size="xs"
-																			variant="ghost"
-																			justifyContent="flex-start"
-																			bg={
-																				childActive
-																					? menuActiveBg
-																					: "transparent"
-																			}
-																			_hover={{ bg: menuHoverBg }}
-																			_active={{ bg: menuActiveBg }}
-																			onClick={() => {
-																				acknowledgeMenuId(
-																					getRelatedMenuIds(child.id),
-																				);
-																				scrollToId(child.id);
-																				if (isMobile) {
-																					toggleMenu();
-																				}
-																			}}
+																			position="relative"
+																			borderRadius="md"
+																			overflow="hidden"
 																		>
-																			<HStack spacing={2} align="center">
-																				<Text textAlign="start">
-																					{child.label}
-																				</Text>
-																				{isChildNew ? (
-																					<Box
-																						w="2"
-																						h="2"
-																						borderRadius="full"
-																						bg="yellow.400"
-																						_dark={{ bg: "yellow.300" }}
-																						flexShrink={0}
-																					/>
-																				) : null}
-																			</HStack>
-																		</Button>
+																			<Button
+																				size="xs"
+																				variant="ghost"
+																				justifyContent="flex-start"
+																				position="relative"
+																				zIndex={1}
+																				bg={
+																					childActive
+																						? menuActiveBg
+																						: "transparent"
+																				}
+																				transition="background 120ms ease, color 120ms ease"
+																				_hover={{
+																					bg: childActive
+																						? menuActiveBg
+																						: menuHoverBg,
+																				}}
+																				_active={{ bg: menuActiveBg }}
+																				onClick={() => {
+																					acknowledgeMenuId(
+																						getRelatedMenuIds(child.id),
+																					);
+																					scrollToId(child.id);
+																					if (isMobile) {
+																						toggleMenu();
+																					}
+																				}}
+																			>
+																				<HStack spacing={2} align="center">
+																					<Text textAlign="start">
+																						{child.label}
+																					</Text>
+																					{isChildNew ? (
+																						<NewTutorialMarker compact />
+																					) : null}
+																				</HStack>
+																			</Button>
+																		</Box>
 																	);
 																})}
 															</VStack>
@@ -1412,7 +1537,7 @@ const TutorialsPage: FC = () => {
 							</Collapse>
 						</VStack>
 					</Box>
-					<Box flex="1" minW={0}>
+					<Box flex="1" minW={0} w="full">
 						{activeTab === "general" && content?.panelIntro ? (
 							<Box {...cardStyles} id="panel-intro">
 								<HStack spacing={2} mb={2}>
@@ -1602,7 +1727,7 @@ const TutorialsPage: FC = () => {
 													<OrderedList spacing={1} ps={4}>
 														{section.steps.map((step, idx) => (
 															<ListItem key={`${section.id}-step-${idx}`}>
-																{step}
+																{renderTutorialText(step)}
 															</ListItem>
 														))}
 													</OrderedList>
@@ -1618,7 +1743,7 @@ const TutorialsPage: FC = () => {
 														<List spacing={1.5} stylePosition="inside">
 															{section.hints.map((hint, idx) => (
 																<ListItem key={`${section.id}-hint-${idx}`}>
-																	{hint}
+																	{renderTutorialText(hint)}
 																</ListItem>
 															))}
 														</List>
@@ -1706,7 +1831,7 @@ const TutorialsPage: FC = () => {
 																				<ListItem
 																					key={`${section.id}-${sub.id}-step-${idx}`}
 																				>
-																					{step}
+																					{renderTutorialText(step)}
 																				</ListItem>
 																			))}
 																		</OrderedList>
@@ -1731,7 +1856,7 @@ const TutorialsPage: FC = () => {
 																					<ListItem
 																						key={`${section.id}-${sub.id}-hint-${idx}`}
 																					>
-																						{hint}
+																						{renderTutorialText(hint)}
 																					</ListItem>
 																				))}
 																			</List>

@@ -182,6 +182,7 @@ type DashboardStateType = {
 	filters: FilterType;
 	subscribeUrl: string | null;
 	QRcodeLinks: string[] | null;
+	qrCodeUsername: string | null;
 	isEditingNodes: boolean;
 	isResetingAllUsage: boolean;
 	lastUsersFetchAt: number | null;
@@ -202,7 +203,7 @@ type DashboardStateType = {
 	createUserWithService: (user: UserCreateWithService) => Promise<void>;
 	editUser: (username: string, body: UserCreate) => Promise<void>;
 	fetchUserUsage: (user: UserListItem, query: FilterUsageType) => Promise<void>;
-	setQRCode: (links: string[] | null) => void;
+	setQRCode: (links: string[] | null, username?: string | null) => void;
 	setSubLink: (subscribeURL: string | null) => void;
 	onEditingNodes: (isEditingNodes: boolean) => void;
 	resetDataUsage: (user: UserListItem) => Promise<void>;
@@ -382,6 +383,7 @@ export const clearDashboardCache = () => {
 		revokeSubscriptionUser: null,
 		subscribeUrl: null,
 		QRcodeLinks: null,
+		qrCodeUsername: null,
 		filters: createDefaultFilters(),
 	});
 };
@@ -393,6 +395,7 @@ export const useDashboard = create(
 		deletingUser: null,
 		isCreatingNewUser: false,
 		QRcodeLinks: null,
+		qrCodeUsername: null,
 		subscribeUrl: null,
 		users: createEmptyUsersResponse(),
 		loading: true,
@@ -442,8 +445,11 @@ export const useDashboard = create(
 			});
 			get().refetchUsers(true);
 		},
-		setQRCode: (QRcodeLinks) => {
-			set({ QRcodeLinks });
+		setQRCode: (QRcodeLinks, qrCodeUsername = null) => {
+			set({
+				QRcodeLinks,
+				qrCodeUsername: QRcodeLinks === null ? null : qrCodeUsername,
+			});
 		},
 		deleteUser: (user: UserListItem) => {
 			set({ editingUser: null });

@@ -34,6 +34,7 @@ import {
 	SimpleGrid,
 	Skeleton,
 	Stack,
+	Tag,
 	Table,
 	type TableProps,
 	Tbody,
@@ -326,56 +327,22 @@ const AdminUsageSlider: FC<AdminUsageSliderProps> = ({
 const formatCount = (value: number | null | undefined, locale: string) =>
 	new Intl.NumberFormat(locale || "en").format(value ?? 0);
 
-const RoleChip: FC<{
-	label: string;
-	value: number;
-	color: string;
-	isMobile?: boolean;
-}> = ({ label, value, color, isMobile = false }) => {
-	const chipBg = useColorModeValue(
-		"rgba(255, 255, 255, 0.7)",
-		"rgba(18, 22, 30, 0.6)",
-	);
-	const chipBorder = useColorModeValue(
-		"rgba(255, 255, 255, 0.5)",
-		"rgba(255, 255, 255, 0.18)",
-	);
-	const chipShadow = useColorModeValue(
-		"0 8px 18px -14px rgba(15, 23, 42, 0.45)",
-		"0 8px 18px -14px rgba(0, 0, 0, 0.55)",
-	);
-	return (
-		<HStack
-			spacing={2}
-			borderWidth="1px"
-			borderColor={isMobile ? chipBorder : "light-border"}
-			borderRadius="full"
-			px={3}
-			py={2}
-			bg={isMobile ? chipBg : "surface.light"}
-			backdropFilter={isMobile ? "saturate(160%) blur(12px)" : undefined}
-			sx={
-				isMobile
-					? { WebkitBackdropFilter: "saturate(160%) blur(12px)" }
-					: undefined
-			}
-			boxShadow={isMobile ? chipShadow : undefined}
-			_dark={
-				isMobile
-					? { bg: chipBg, borderColor: chipBorder }
-					: { bg: "surface.dark", borderColor: "whiteAlpha.200" }
-			}
-			opacity={value === 0 ? 0.65 : 1}
-		>
-			<Text fontSize="sm" color={color} fontWeight="semibold">
-				{label}
-			</Text>
-			<Text fontSize="sm" fontWeight="bold" color={color} dir="ltr">
-				{value}
-			</Text>
-		</HStack>
-	);
-};
+const getAdminEffectiveUsage = (admin: Admin) =>
+	admin.traffic_limit_mode === AdminTrafficLimitMode.CreatedTraffic
+		? (admin.created_traffic ?? 0)
+		: (admin.users_usage ?? 0);
+
+const getAdminIsExpired = (admin: Admin, nowUnix: number) =>
+	admin.disabled_reason === ADMIN_TIME_LIMIT_EXHAUSTED_REASON_KEY ||
+	(typeof admin.expire === "number" && admin.expire > 0 && admin.expire <= nowUnix);
+
+const getAdminIsLimited = (admin: Admin) =>
+	admin.disabled_reason === ADMIN_DATA_LIMIT_EXHAUSTED_REASON_KEY ||
+	(admin.data_limit !== null &&
+		admin.data_limit !== undefined &&
+		admin.data_limit > 0 &&
+		getAdminEffectiveUsage(admin) >= admin.data_limit);
+
 export const AdminsTable: FC<TableProps> = (props) => {
 	const { t, i18n } = useTranslation();
 	const isRTL = i18n.dir(i18n.language) === "rtl";
@@ -386,23 +353,8 @@ export const AdminsTable: FC<TableProps> = (props) => {
 	const rowSelectedBg = useColorModeValue("primary.50", "primary.900");
 	const dialogBg = useColorModeValue("surface.light", "surface.dark");
 	const dialogBorderColor = useColorModeValue("light-border", "gray.700");
-	const summaryGlassBg = useColorModeValue(
-		"rgba(255, 255, 255, 0.78)",
-		"rgba(16, 20, 28, 0.72)",
-	);
-	const summaryGlassBorder = useColorModeValue(
-		"rgba(255, 255, 255, 0.45)",
-		"rgba(255, 255, 255, 0.16)",
-	);
-	const summaryGlassShadow = useColorModeValue(
-		"0 18px 36px -24px rgba(15, 23, 42, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.6)",
-		"0 16px 32px -22px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12)",
-	);
-	const summaryDividerColor = useColorModeValue(
-		"rgba(255, 255, 255, 0.35)",
-		"rgba(255, 255, 255, 0.12)",
-	);
 	const {
+		adminOptions,
 		admins,
 		loading,
 		total,
@@ -414,6 +366,7 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		resetDeletedUsersUsage,
 		disableAdmin,
 		enableAdmin,
+		fetchAdminOptions,
 		updateAdmin,
 		bulkUpdateStandardPermissions,
 		openAdminDialog,
@@ -721,6 +674,10 @@ export const AdminsTable: FC<TableProps> = (props) => {
 	};
 
 	useEffect(() => {
+		fetchAdminOptions(undefined, { force: false });
+	}, [fetchAdminOptions]);
+
+	useEffect(() => {
 		if (!contextMenu.visible) return;
 		const handleClick = (event: Event) => {
 			if (contextMenuRef.current?.contains(event.target as Node)) {
@@ -1013,21 +970,26 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		<Box position="relative" role="group">
 			<Button
 				variant="ghost"
-				justifyContent="space-between"
+				justifyContent="flex-start"
 				w="full"
-				leftIcon={<AddDataIcon />}
-				rightIcon={
-					<ChevronRightIcon
-						width={14}
-						style={{
-							transform: isRTL ? "rotate(180deg)" : undefined,
-						}}
-					/>
-				}
 				isLoading={contextAction?.startsWith("addData-")}
 				isDisabled={contextAction?.startsWith("addData-")}
 			>
-				{t("admins.addTraffic", "Add traffic")}
+				<HStack w="full" justify="space-between" spacing={3}>
+					<HStack spacing={2} minW={0}>
+						<AddDataIcon />
+						<Text as="span" noOfLines={1}>
+							{t("admins.addTraffic", "Add traffic")}
+						</Text>
+					</HStack>
+					<ChevronRightIcon
+						width={14}
+						style={{
+							flexShrink: 0,
+							transform: isRTL ? "rotate(180deg)" : undefined,
+						}}
+					/>
+				</HStack>
 			</Button>
 			<Stack
 				display="none"
@@ -1223,7 +1185,6 @@ export const AdminsTable: FC<TableProps> = (props) => {
 	];
 	const columnsToRender = isRTL ? baseColumns.slice().reverse() : baseColumns;
 	const cellAlign = isRTL ? "right" : "left";
-	const isFiltered = admins.length !== total;
 	const renderRelativeText = useCallback(
 		(key: "expires" | "expired", time: string) => {
 			const raw = t(key);
@@ -1325,55 +1286,63 @@ export const AdminsTable: FC<TableProps> = (props) => {
 		sx: { ...baseTableSx, ...(normalizedSx || {}) },
 	};
 	const isDesktop = useBreakpointValue({ base: false, lg: true }) ?? false;
-	const isMobileSummary = !isDesktop;
-	const isSearching =
-		typeof filters.search === "string" && filters.search.trim().length > 0;
-	const hideSummaryCard = !isDesktop && isSearching;
+	const isMobile = useBreakpointValue({ base: true, md: false }) ?? false;
+	const hasSearchQuery = Boolean(filters.search?.trim());
+	const compactMobileSearch = isMobile && hasSearchQuery;
 
 	const summaryData = useMemo(() => {
-		const usageTotal = admins.reduce(
-			(sum, a) => sum + (a.users_usage ?? 0) + (a.reset_bytes ?? 0),
-			0,
-		);
-		const rolesActive = {
-			fullAccessCount: admins.filter(
-				(a) =>
-					a.role === AdminRole.FullAccess && a.status === AdminStatus.Active,
-			).length,
-			sudoCount: admins.filter(
-				(a) => a.role === AdminRole.Sudo && a.status === AdminStatus.Active,
-			).length,
-			resellerCount: admins.filter(
-				(a) => a.role === AdminRole.Reseller && a.status === AdminStatus.Active,
-			).length,
-			standardCount: admins.filter(
-				(a) => a.role === AdminRole.Standard && a.status === AdminStatus.Active,
-			).length,
-		};
-		const rolesDisabled = {
-			fullAccessCount: admins.filter(
-				(a) =>
-					a.role === AdminRole.FullAccess && a.status === AdminStatus.Disabled,
-			).length,
-			sudoCount: admins.filter(
-				(a) => a.role === AdminRole.Sudo && a.status === AdminStatus.Disabled,
-			).length,
-			resellerCount: admins.filter(
-				(a) =>
-					a.role === AdminRole.Reseller && a.status === AdminStatus.Disabled,
-			).length,
-			standardCount: admins.filter(
-				(a) =>
-					a.role === AdminRole.Standard && a.status === AdminStatus.Disabled,
-			).length,
-		};
+		const hasCompleteSummary = adminOptions.length > 0 || total <= admins.length;
+		const summaryAdmins = hasCompleteSummary
+			? adminOptions.length
+				? adminOptions
+				: admins
+			: [];
+		const nowUnix = Math.floor(Date.now() / 1000);
+		const expiredCount = summaryAdmins.filter((admin) =>
+			getAdminIsExpired(admin, nowUnix),
+		).length;
+		const limitedCount = summaryAdmins.filter(
+			(admin) => !getAdminIsExpired(admin, nowUnix) && getAdminIsLimited(admin),
+		).length;
 		return {
-			totalCount: total,
-			rolesActive,
-			rolesDisabled,
-			usageTotal,
+			totalCount: adminOptions.length || total,
+			fullAccessCount: hasCompleteSummary
+				? summaryAdmins.filter((admin) => admin.role === AdminRole.FullAccess)
+						.length
+				: null,
+			sudoCount: hasCompleteSummary
+				? summaryAdmins.filter((admin) => admin.role === AdminRole.Sudo).length
+				: null,
+			resellerCount: hasCompleteSummary
+				? summaryAdmins.filter((admin) => admin.role === AdminRole.Reseller)
+						.length
+				: null,
+			standardCount: hasCompleteSummary
+				? summaryAdmins.filter((admin) => admin.role === AdminRole.Standard)
+						.length
+				: null,
+			activeCount: hasCompleteSummary
+				? summaryAdmins.filter(
+						(admin) =>
+							admin.status === AdminStatus.Active &&
+							!getAdminIsExpired(admin, nowUnix) &&
+							!getAdminIsLimited(admin),
+					).length
+				: null,
+			expiredCount: hasCompleteSummary ? expiredCount : null,
+			limitedCount: hasCompleteSummary ? limitedCount : null,
+			disabledCount: hasCompleteSummary
+				? summaryAdmins.filter(
+						(admin) =>
+							admin.status === AdminStatus.Disabled &&
+							!getAdminIsExpired(admin, nowUnix) &&
+							!getAdminIsLimited(admin),
+					).length
+				: null,
 		};
-	}, [admins, total]);
+	}, [adminOptions, admins, total]);
+	const formatSummaryCount = (value: number | null) =>
+		value === null ? "-" : formatCount(value, locale);
 
 	const skeletonCount = filters.limit || 5;
 	const skeletonKeys = useMemo(
@@ -1547,155 +1516,6 @@ export const AdminsTable: FC<TableProps> = (props) => {
 	return (
 		<>
 			<Stack spacing={3}>
-				<Collapse in={!hideSummaryCard} animateOpacity>
-					<Card
-						borderWidth="1px"
-						borderColor={isMobileSummary ? summaryGlassBorder : "light-border"}
-						bg={isMobileSummary ? summaryGlassBg : "surface.light"}
-						position="relative"
-						overflow="hidden"
-						boxShadow={isMobileSummary ? summaryGlassShadow : undefined}
-						backdropFilter={
-							isMobileSummary ? "saturate(170%) blur(16px)" : undefined
-						}
-						sx={
-							isMobileSummary
-								? {
-										WebkitBackdropFilter: "saturate(170%) blur(16px)",
-										"&::before": {
-											content: '""',
-											position: "absolute",
-											inset: "0",
-											background:
-												"linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.08) 55%, rgba(255,255,255,0))",
-											opacity: 0.6,
-											pointerEvents: "none",
-										},
-									}
-								: undefined
-						}
-						_dark={
-							isMobileSummary
-								? { bg: summaryGlassBg, borderColor: summaryGlassBorder }
-								: { bg: "surface.dark", borderColor: "whiteAlpha.200" }
-						}
-					>
-						<CardHeader
-							borderBottomWidth="1px"
-							borderColor={
-								isMobileSummary ? summaryDividerColor : "light-border"
-							}
-							_dark={
-								isMobileSummary
-									? { borderColor: summaryDividerColor }
-									: { borderColor: "whiteAlpha.200" }
-							}
-							pb={3}
-						>
-							<HStack
-								justify="space-between"
-								align="center"
-								flexWrap="wrap"
-								gap={2}
-							>
-								<HStack spacing={2} align="baseline" flexWrap="wrap">
-									<Text fontWeight="semibold">
-										{t("admins.manageTab", "Admins")}
-									</Text>
-									<Text color="gray.500" _dark={{ color: "gray.400" }}>
-										·
-									</Text>
-									<Text
-										fontSize="sm"
-										color="gray.600"
-										_dark={{ color: "gray.400" }}
-									>
-										{t("admins.totalLabel", "Total")}:{" "}
-										<chakra.span dir="ltr" sx={{ unicodeBidi: "isolate" }}>
-											{formatCount(summaryData.totalCount, locale)}
-										</chakra.span>
-									</Text>
-									<Text color="gray.500" _dark={{ color: "gray.400" }}>
-										·
-									</Text>
-									<Text
-										fontSize="sm"
-										color="gray.600"
-										_dark={{ color: "gray.400" }}
-									>
-										{t("UsersUsage")}:{" "}
-										<chakra.span dir="ltr" sx={{ unicodeBidi: "isolate" }}>
-											{formatBytes(summaryData.usageTotal)}
-										</chakra.span>
-									</Text>
-								</HStack>
-							</HStack>
-						</CardHeader>
-						<CardBody>
-							<Stack
-								spacing={5}
-								direction={{ base: "column", lg: "row" }}
-								flexWrap="wrap"
-								align="flex-start"
-							>
-								<HStack spacing={3} flexWrap="wrap" align="center">
-									<Text fontWeight="semibold">{t("status.active")}</Text>
-									<RoleChip
-										label={t("admins.roles.fullAccess", "Full access")}
-										value={summaryData.rolesActive.fullAccessCount}
-										color="yellow.500"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.sudo", "Sudo")}
-										value={summaryData.rolesActive.sudoCount}
-										color="purple.400"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.reseller", "Reseller")}
-										value={summaryData.rolesActive.resellerCount}
-										color="blue.400"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.standard", "Standard")}
-										value={summaryData.rolesActive.standardCount}
-										color="gray.500"
-										isMobile={isMobileSummary}
-									/>
-								</HStack>
-								<HStack spacing={3} flexWrap="wrap" align="center">
-									<Text fontWeight="semibold">{t("status.disabled")}</Text>
-									<RoleChip
-										label={t("admins.roles.fullAccess", "Full access")}
-										value={summaryData.rolesDisabled.fullAccessCount}
-										color="yellow.500"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.sudo", "Sudo")}
-										value={summaryData.rolesDisabled.sudoCount}
-										color="purple.400"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.reseller", "Reseller")}
-										value={summaryData.rolesDisabled.resellerCount}
-										color="blue.400"
-										isMobile={isMobileSummary}
-									/>
-									<RoleChip
-										label={t("admins.roles.standard", "Standard")}
-										value={summaryData.rolesDisabled.standardCount}
-										color="gray.500"
-										isMobile={isMobileSummary}
-									/>
-								</HStack>
-							</Stack>
-						</CardBody>
-					</Card>
-				</Collapse>
 				<Box position="relative">
 					<Card
 						borderWidth="1px"
@@ -1703,44 +1523,66 @@ export const AdminsTable: FC<TableProps> = (props) => {
 						bg="surface.light"
 						_dark={{ bg: "surface.dark", borderColor: "whiteAlpha.200" }}
 					>
-						<CardHeader
-							borderBottomWidth="1px"
-							borderColor="light-border"
-							_dark={{ borderColor: "whiteAlpha.200" }}
-							pb={3}
+						{!compactMobileSearch && (
+							<CardHeader
+								borderBottomWidth="1px"
+								borderColor="light-border"
+								_dark={{ borderColor: "whiteAlpha.200" }}
+								pb={3}
+							>
+								<HStack justify="space-between" align="center" flexWrap="wrap">
+									<Stack spacing={1.5}>
+										<Text fontWeight="semibold">
+											{t("admins.manageTab", "Admins")}
+										</Text>
+										<HStack spacing={2} flexWrap="wrap">
+											<Tag size="sm" colorScheme="gray" variant="subtle">
+												{t("admins.totalLabel", "Total")}:{" "}
+												{formatCount(summaryData.totalCount, locale)}
+											</Tag>
+											<Tag size="sm" colorScheme="yellow" variant="subtle">
+												{t("admins.roles.fullAccess", "Full access")}:{" "}
+												{formatSummaryCount(summaryData.fullAccessCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="purple" variant="subtle">
+												{t("admins.roles.sudo", "Sudo")}:{" "}
+												{formatSummaryCount(summaryData.sudoCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="blue" variant="subtle">
+												{t("admins.roles.reseller", "Reseller")}:{" "}
+												{formatSummaryCount(summaryData.resellerCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="gray" variant="subtle">
+												{t("admins.roles.standard", "Standard")}:{" "}
+												{formatSummaryCount(summaryData.standardCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="green" variant="subtle">
+												{t("status.active")}:{" "}
+												{formatSummaryCount(summaryData.activeCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="orange" variant="subtle">
+												{t("status.expired", "Expired")}:{" "}
+												{formatSummaryCount(summaryData.expiredCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="red" variant="subtle">
+												{t("status.limited", "Limited")}:{" "}
+												{formatSummaryCount(summaryData.limitedCount)}
+											</Tag>
+											<Tag size="sm" colorScheme="gray" variant="subtle">
+												{t("status.disabled")}:{" "}
+												{formatSummaryCount(summaryData.disabledCount)}
+											</Tag>
+										</HStack>
+									</Stack>
+								</HStack>
+							</CardHeader>
+						)}
+						<CardBody
+							px={{ base: compactMobileSearch ? 0 : 3, md: 4 }}
+							py={{ base: compactMobileSearch ? 0 : 3, md: 4 }}
 						>
-							<HStack justify="space-between" align="center" flexWrap="wrap">
-								<Stack spacing={0}>
-									<Text fontWeight="semibold">
-										{t("admins.manageTab", "Admins")}
-									</Text>
-									<Text
-										fontSize="sm"
-										color="gray.600"
-										_dark={{ color: "gray.400" }}
-									>
-										{t("admins.totalLabel", "Total")}:{" "}
-										<chakra.span dir="ltr" sx={{ unicodeBidi: "isolate" }}>
-											{formatCount(total, locale)}
-										</chakra.span>
-										{isFiltered ? ` · ${t("usersPage.filtered")}` : ""}
-									</Text>
-								</Stack>
-								<Text
-									fontSize="sm"
-									color="gray.500"
-									_dark={{ color: "gray.400" }}
-								>
-									{t(
-										"admins.pageDescription",
-										"View and manage admin accounts. Use this page to create, edit and review admin permissions and recent usage.",
-									)}
-								</Text>
-							</HStack>
-						</CardHeader>
-						<CardBody px={{ base: 3, md: 4 }} py={{ base: 3, md: 4 }}>
 							<Box w="full">
-								{canEditAdmins && (
+								{canEditAdmins && !compactMobileSearch && (
 									<Box
 										borderWidth="1px"
 										borderRadius="xl"

@@ -81,6 +81,22 @@ func NewServer(cfg Config) (*Server, error) {
 			masterProxy.ServeHTTP(w, r)
 			return
 		}
+		if isNativeUserRoute(r) {
+			if masterProxy == nil {
+				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			masterProxy.ServeHTTP(w, r)
+			return
+		}
+		if cfg.NativeSubscriptionRoutes && isNativeSubscriptionRoute(r, cfg.SubscriptionPrefixes) {
+			if masterProxy == nil {
+				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			masterProxy.ServeHTTP(w, r)
+			return
+		}
 		if cfg.NativeNodeRoutes && isNativeNodeRoute(r) {
 			if masterProxy == nil {
 				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
@@ -100,6 +116,29 @@ func NewServer(cfg Config) (*Server, error) {
 			ReadHeaderTimeout: 15 * time.Second,
 		},
 	}, nil
+}
+
+func isNativeSubscriptionRoute(r *http.Request, prefixes []string) bool {
+	if r.Method != http.MethodGet || strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	path := strings.TrimRight(r.URL.Path, "/")
+	if path == "/api/v1/client/subscribe" || strings.HasPrefix(path, "/api/v1/client/subscribe/") {
+		return true
+	}
+	if path == "/sub" || strings.HasPrefix(path, "/sub/") {
+		return true
+	}
+	for _, prefix := range prefixes {
+		prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+		if prefix == "" {
+			continue
+		}
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isNativeAdminRoute(r *http.Request) bool {
@@ -122,6 +161,64 @@ func isNativeAdminRoute(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+func isNativeUserRoute(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	path := strings.TrimRight(r.URL.Path, "/")
+	if path == "/api/users/actions" {
+		return r.Method == http.MethodPost
+	}
+	if path == "/api/users/usage" {
+		return r.Method == http.MethodGet
+	}
+	if isNativeServiceUsersActionRoute(path, r.Method) {
+		return true
+	}
+	if path == "/api/users" {
+		return r.Method == http.MethodGet
+	}
+	if path == "/api/user" || path == "/api/v2/users" {
+		return r.Method == http.MethodPost
+	}
+	if strings.HasPrefix(path, "/api/v2/users/") {
+		rest := strings.TrimPrefix(path, "/api/v2/users/")
+		return rest != "" && !strings.Contains(rest, "/") && r.Method == http.MethodPut
+	}
+	if !strings.HasPrefix(path, "/api/user/") {
+		return false
+	}
+	rest := strings.TrimPrefix(path, "/api/user/")
+	if rest == "" || strings.Contains(rest, "/") {
+		parts := strings.Split(rest, "/")
+		if len(parts) != 2 || parts[0] == "" {
+			return false
+		}
+		switch parts[1] {
+		case "reset", "revoke_sub", "active-next":
+			return r.Method == http.MethodPost
+		case "usage":
+			return r.Method == http.MethodGet
+		default:
+			return false
+		}
+	}
+	return r.Method == http.MethodGet || r.Method == http.MethodPut || r.Method == http.MethodDelete
+}
+
+func isNativeServiceUsersActionRoute(path string, method string) bool {
+	if method != http.MethodPost || !strings.HasPrefix(path, "/api/v2/services/") {
+		return false
+	}
+	rest := strings.TrimPrefix(path, "/api/v2/services/")
+	parts := strings.Split(rest, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] != "users" || parts[2] != "actions" {
+		return false
+	}
+	_, err := strconv.ParseInt(parts[0], 10, 64)
+	return err == nil
 }
 
 func isNativeNodeRoute(r *http.Request) bool {

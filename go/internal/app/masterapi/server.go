@@ -15,6 +15,7 @@ import (
 	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
 	"github.com/rebeccapanel/rebecca/go/internal/app/nodecontroller"
 	"github.com/rebeccapanel/rebecca/go/internal/app/usage"
+	userapp "github.com/rebeccapanel/rebecca/go/internal/app/user"
 	"github.com/rebeccapanel/rebecca/go/internal/platform/db"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	adminAuth      adminapp.Authenticator
 	nodeController nodecontroller.Controller
 	usageService   usage.Service
+	userService    userapp.Service
 }
 
 func New(cfg Config) (*Server, error) {
@@ -36,6 +38,7 @@ func New(cfg Config) (*Server, error) {
 	adminRepo := adminapp.NewRepository(pool.DB, pool.Dialect)
 	nodeRepo := nodecontroller.NewRepository(pool.DB, pool.Dialect)
 	usageRepo := usage.NewRepository(pool.DB, pool.Dialect)
+	userRepo := userapp.NewRepository(pool.DB, pool.Dialect)
 	sudoers := []string{}
 	if strings.TrimSpace(cfg.SudoUsername) != "" && strings.TrimSpace(cfg.SudoPassword) != "" {
 		sudoers = append(sudoers, cfg.SudoUsername)
@@ -48,6 +51,7 @@ func New(cfg Config) (*Server, error) {
 		adminAuth:      adminapp.NewAuthenticator(adminRepo, adminapp.WithSudoers(sudoers)),
 		nodeController: nodecontroller.NewController(nodeRepo),
 		usageService:   usage.NewService(usageRepo),
+		userService:    userapp.NewService(userRepo),
 	}, nil
 }
 
@@ -68,9 +72,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/myaccount/api-keys", s.requireAdmin(s.handleMyAccountAPIKeys))
 	mux.HandleFunc("/api/myaccount/nodes", s.requireAdmin(s.handleMyAccountNodes))
 	mux.HandleFunc("/api/myaccount", s.requireAdmin(s.handleMyAccount))
+	mux.HandleFunc("/api/v2/services/", s.requireAdmin(s.handleServiceUsersActionPath))
+	mux.HandleFunc("/api/v2/users/", s.requireAdmin(s.handleUserV2Path))
+	mux.HandleFunc("/api/v2/users", s.requireAdmin(s.handleUserV2Root))
+	mux.HandleFunc("/api/users/actions", s.requireAdmin(s.handleUsersBulkAction))
+	mux.HandleFunc("/api/users/usage", s.requireAdmin(s.handleUsersUsage))
+	mux.HandleFunc("/api/users", s.requireAdmin(s.handleUsers))
+	mux.HandleFunc("/api/user", s.requireAdmin(s.handleUserRoot))
+	mux.HandleFunc("/api/user/", s.requireAdmin(s.handleUserPath))
+	mux.HandleFunc("/sub/", s.handleSubscriptionPath)
+	mux.HandleFunc("/api/v1/client/subscribe", s.handleSubscriptionPath)
+	mux.HandleFunc("/api/v1/client/subscribe/", s.handleSubscriptionPath)
 	mux.HandleFunc("/api/nodes", s.requireSudo(s.handleNodes))
 	mux.HandleFunc("/api/nodes/usage", s.requireSudo(s.handleNodesUsage))
 	mux.HandleFunc("/api/node/", s.requireSudo(s.handleNodePath))
+	mux.HandleFunc("/", s.handleSubscriptionPath)
 	return mux
 }
 
@@ -96,6 +112,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 
 	go s.runNodeOperationsWorker(ctx)
+	s.runUserLifecycleWorkers(ctx)
 
 	errc := make(chan error, 1)
 	go func() {

@@ -69,6 +69,7 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import ReactApexChart from "react-apexcharts";
@@ -78,6 +79,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "react-query";
 
 import { getPanelSettings } from "service/settings";
+import { fetch as apiFetch } from "service/http";
 import {
 	AdminRole,
 	AdminTrafficLimitMode,
@@ -102,6 +104,7 @@ import { generateUserLinks } from "utils/userLinks";
 
 import { z } from "zod";
 import { NumericInput } from "./common/NumericInput";
+import { AnimatedSubmitButton } from "./common/AnimatedSubmitButton";
 import { DateTimePicker } from "./DateTimePicker";
 import { DeleteConfirmPopover } from "./DeleteConfirmPopover";
 import { DeleteIcon } from "./DeleteUserModal";
@@ -175,6 +178,7 @@ const _ConfirmIcon = chakra(CheckIcon, {
 });
 
 export type UserDialogProps = {};
+type SubmitStatus = "idle" | "loading" | "success" | "error";
 
 const SERVICE_NOTICE_DURATION_MS = 10000;
 const serviceNoticeProgress = keyframes`
@@ -646,7 +650,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
 	const limitReached = isUserLimitReached && !isEditing;
 
 	const [loading, setLoading] = useState(false);
+	const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle");
 	const [deleteLoading, setDeleteLoading] = useState(false);
+	const submitResetTimerRef = useRef<number | null>(null);
+	const successCloseTimerRef = useRef<number | null>(null);
 
 	const [error, setError] = useState<string | null>("");
 
@@ -1235,6 +1242,62 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		return link.startsWith("/") ? window.location.origin + link : link;
 	}, []);
 
+	const clearSubmitTimers = useCallback(() => {
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+			submitResetTimerRef.current = null;
+		}
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => clearSubmitTimers, [clearSubmitTimers]);
+
+	const showSubmitError = useCallback(() => {
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+		}
+		setSubmitStatus("error");
+		submitResetTimerRef.current = window.setTimeout(() => {
+			setSubmitStatus("idle");
+			submitResetTimerRef.current = null;
+		}, 900);
+	}, []);
+
+	const openUserQrDialog = useCallback(
+		(user: User | UserListItem | null | undefined) => {
+			if (!user) return;
+			const currentLinkTemplates =
+				useDashboard.getState().linkTemplates ?? linkTemplates;
+			const configLinks = generateUserLinks(user, currentLinkTemplates, {
+				includeInactive: true,
+			});
+			const subscriptionLink =
+				formatLink((user as User).subscription_url) ||
+				formatLink((user as User).key_subscription_url) ||
+				formatLink(Object.values((user as User).subscription_urls ?? {})[0]);
+
+			if (!configLinks.length && !subscriptionLink) return;
+			setQRCode(configLinks, user.username);
+			setSubLink(subscriptionLink || null);
+		},
+		[formatLink, linkTemplates, setQRCode, setSubLink],
+	);
+
+	const fetchUserForQr = useCallback(async (username: string) => {
+		try {
+			return await apiFetch<User>(`/user/${encodeURIComponent(username)}`);
+		} catch (_error) {
+			return null;
+		}
+	}, []);
+
 	const subscriptionLinks = useMemo(() => {
 		if (!editingUser) {
 			return [];
@@ -1460,6 +1523,12 @@ export const UserDialog: FC<UserDialogProps> = () => {
 	}, [canSetCustomKey, canSetFlow, form]);
 
 	const submit = (values: FormType) => {
+		if (submitStatus !== "idle") return;
+		clearSubmitTimers();
+		setLoading(true);
+		setSubmitStatus("loading");
+		setError(null);
+
 		// Check user limit before submitting (even if status is not active)
 		// This prevents creating users that would exceed the limit
 		if (
@@ -1479,20 +1548,21 @@ export const UserDialog: FC<UserDialogProps> = () => {
 				);
 				setError(errorMessage);
 				setLoading(false);
+				showSubmitError();
 				return;
 			}
 		}
 
 		if (limitReached) {
+			setLoading(false);
+			showSubmitError();
 			return;
 		}
 		if (userManagementLocked) {
+			setLoading(false);
+			showSubmitError();
 			return;
 		}
-
-		setLoading(true);
-
-		setError(null);
 
 		const {
 			service_id: _serviceId,
@@ -1544,6 +1614,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		const setDataLimitError = (message: string) => {
 			setError(message);
 			setLoading(false);
+			showSubmitError();
 			form.setError("data_limit", {
 				type: "manual",
 				message,
@@ -1619,6 +1690,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 				});
 				setError(errorMessage);
 				setLoading(false);
+				showSubmitError();
 				form.setError("next_plan_data_limit", {
 					type: "manual",
 					message: errorMessage,
@@ -1640,6 +1712,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 			});
 			setError(errorMessage);
 			setLoading(false);
+			showSubmitError();
 			form.setError("next_plan_data_limit", {
 				type: "manual",
 				message: errorMessage,
@@ -1673,6 +1746,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 			if (!hasPrivilegedRole && !effectiveServiceId) {
 				setError(t("userDialog.selectService", "Please choose a service"));
 				setLoading(false);
+				showSubmitError();
 				return;
 			}
 
@@ -1754,6 +1828,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
 			createUserWithService(serviceBody)
 
 				.then(() => {
+					setSubmitStatus("success");
+					const qrUserPromise = fetchUserForQr(values.username);
 					toast({
 						title: t("userDialog.userCreated", { username: values.username }),
 
@@ -1766,7 +1842,13 @@ export const UserDialog: FC<UserDialogProps> = () => {
 						duration: 3000,
 					});
 
-					onClose();
+					successCloseTimerRef.current = window.setTimeout(() => {
+						onClose();
+						successCloseTimerRef.current = null;
+						qrUserPromise.then((qrUser) => {
+							window.setTimeout(() => openUserQrDialog(qrUser), 0);
+						});
+					}, 1000);
 				})
 
 				.catch((err) => {
@@ -1789,10 +1871,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
 							);
 						});
 					}
-				})
-
-				.finally(() => {
 					setLoading(false);
+					showSubmitError();
 				});
 
 			return;
@@ -1876,6 +1956,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		editUser(editingUser?.username, body as UserCreate)
 
 			.then(() => {
+				setSubmitStatus("success");
 				toast({
 					title: t("userDialog.userEdited", { username: values.username }),
 
@@ -1888,7 +1969,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
 					duration: 3000,
 				});
 
-				onClose();
+				successCloseTimerRef.current = window.setTimeout(() => {
+					onClose();
+					successCloseTimerRef.current = null;
+				}, 1000);
 			})
 
 			.catch((err) => {
@@ -1911,14 +1995,13 @@ export const UserDialog: FC<UserDialogProps> = () => {
 						);
 					});
 				}
-			})
-
-			.finally(() => {
 				setLoading(false);
+				showSubmitError();
 			});
 	};
 
-	const onClose = () => {
+	function onClose() {
+		clearSubmitTimers();
 		form.reset(getDefaultValues());
 		setExpireDays(null);
 
@@ -1942,7 +2025,9 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		setAutoRenewFormMode(null);
 		setEditingRuleIndex(null);
 		setAutoRenewOpen(false);
-	};
+		setLoading(false);
+		setSubmitStatus("idle");
+	}
 
 	const handleResetUsage = () => {
 		if (!canResetUsageVisible) {
@@ -3981,7 +4066,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
 																						size="sm"
 																						type="button"
 																						onClick={() => {
-																							setQRCode([]);
+																							setQRCode(
+																								[],
+																								editingUser.username,
+																							);
 																							setSubLink(item.url);
 																						}}
 																					>
@@ -4126,7 +4214,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
 																						size="sm"
 																						type="button"
 																						onClick={() => {
-																							setQRCode([item.link]);
+																							setQRCode(
+																								[item.link],
+																								editingUser.username,
+																							);
 																							setSubLink(null);
 																						}}
 																					>
@@ -4230,31 +4321,21 @@ export const UserDialog: FC<UserDialogProps> = () => {
 										)}
 									</HStack>
 
-									<HStack
+									<Box
 										w="full"
-										maxW={{ md: "50%", base: "full" }}
-										justify="end"
+										maxW={{ md: "260px", base: "full" }}
 										flexShrink={0}
 									>
-										<Button
+										<AnimatedSubmitButton
+											status={submitStatus}
+											idleContent={
+												isEditing ? t("userDialog.editUser") : t("createUser")
+											}
+											successLabel={t("userDialog.submitSuccess", "Done")}
+											isDisabled={submitDisabled}
 											type="submit"
-											size={{ base: "md", sm: "sm" }}
-											px="8"
-											colorScheme="primary"
-											leftIcon={loading ? <Spinner size="xs" /> : undefined}
-											disabled={submitDisabled}
-											w={{ base: "full", sm: "auto" }}
-											minH={{ base: "44px", sm: "36px" }}
-											boxShadow={{ base: "sm", sm: "none" }}
-											_disabled={{
-												opacity: 0.65,
-												cursor: "not-allowed",
-												boxShadow: "none",
-											}}
-										>
-											{isEditing ? t("userDialog.editUser") : t("createUser")}
-										</Button>
-									</HStack>
+										/>
+									</Box>
 								</HStack>
 							</XrayModalFooter>
 						</form>

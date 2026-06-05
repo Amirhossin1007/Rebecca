@@ -410,8 +410,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
 	const isDesktop = useBreakpointValue({ base: false, lg: true }) ?? false;
 	const isMobile = useBreakpointValue({ base: true, md: false }) ?? false;
 	const hasSearchQuery = Boolean(filters.search?.trim());
-	// On mobile, only hide cards while a search is loading; show results once data arrives.
-	const hideMobileCardsDuringSearch = !isDesktop && hasSearchQuery && loading;
+	const compactMobileSearch = isMobile && hasSearchQuery;
 	const [contextMenu, setContextMenu] = useState<{
 		visible: boolean;
 		x: number;
@@ -1163,48 +1162,45 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
 			spacing={3}
 			align="stretch"
 		>
-			{hideMobileCardsDuringSearch
-				? null
-				: loading
-					? skeletonKeys.map((key) => (
-							<Box
-								key={key}
-								borderWidth="1px"
-								borderColor="light-border"
-								bg="surface.light"
-								_dark={{ bg: "surface.dark", borderColor: "whiteAlpha.200" }}
-								borderRadius="xl"
-								p={4}
-							>
-								<Stack spacing={3}>
-									<SkeletonText noOfLines={1} width="50%" />
-									<Skeleton height="16px" width="80px" />
-									<Skeleton height="8px" width="100%" />
-									<HStack justify="flex-end" spacing={2}>
-										<Skeleton height="16px" width="32px" />
-										<Skeleton height="16px" width="32px" />
-									</HStack>
-								</Stack>
-							</Box>
-						))
-					: usersResponse.users.map((user) => (
-							<MobileUserCard
-								key={user.username}
-								user={user}
-								canEdit={canOpenUserDialog}
-								onEdit={() => onEditingUser(user)}
-								onDelete={
-									canDeleteUserActions &&
-									canDeleteUserByTrafficCap(userData, user)
-										? () => handleDeleteUser(user)
-										: undefined
-								}
-								isRTL={isRTL}
-								showCreator={hasPrivilegedRole}
-								showUsage={canViewTraffic}
-								t={t}
-							/>
-						))}
+			{loading
+				? skeletonKeys.map((key) => (
+						<Box
+							key={key}
+							borderWidth="1px"
+							borderColor="light-border"
+							bg="surface.light"
+							_dark={{ bg: "surface.dark", borderColor: "whiteAlpha.200" }}
+							borderRadius="xl"
+							p={4}
+						>
+							<Stack spacing={3}>
+								<SkeletonText noOfLines={1} width="50%" />
+								<Skeleton height="16px" width="80px" />
+								<Skeleton height="8px" width="100%" />
+								<HStack justify="flex-end" spacing={2}>
+									<Skeleton height="16px" width="32px" />
+									<Skeleton height="16px" width="32px" />
+								</HStack>
+							</Stack>
+						</Box>
+					))
+				: usersResponse.users.map((user) => (
+						<MobileUserCard
+							key={user.username}
+							user={user}
+							canEdit={canOpenUserDialog}
+							onEdit={() => onEditingUser(user)}
+							onDelete={
+								canDeleteUserActions && canDeleteUserByTrafficCap(userData, user)
+									? () => handleDeleteUser(user)
+									: undefined
+							}
+							isRTL={isRTL}
+							showCreator={hasPrivilegedRole}
+							showUsage={canViewTraffic}
+							t={t}
+						/>
+					))}
 			{!loading && usersResponse.users.length === 0 && (
 				<EmptySection
 					isFiltered={isFiltered}
@@ -1242,46 +1238,50 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
 					filter={isAdminDisabled ? "blur(4px)" : undefined}
 					pointerEvents={isAdminDisabled ? "none" : undefined}
 					aria-hidden={isAdminDisabled ? true : undefined}
-					title={t("users")}
+					title={compactMobileSearch ? undefined : t("users")}
 					headerActions={
-						<HStack spacing={2} align="center" flexWrap="wrap">
-							<Text fontSize="sm" color={mutedColor}>
-								{t("usersTable.status")}
-							</Text>
-							<Select
-								value={filters.status ?? ""}
-								fontSize="sm"
-								size="sm"
-								onChange={handleStatusFilter}
-								minW={{ base: "160px", md: "200px" }}
-							>
-								<option value="">
-									{t("usersPage.statusAll", "All statuses")}
-								</option>
-								<option value="active">{t("status.active")}</option>
-								<option value="on_hold">{t("status.on_hold")}</option>
-								<option value="disabled">{t("status.disabled")}</option>
-								<option value="limited">{t("status.limited")}</option>
-								<option value="expired">{t("status.expired")}</option>
-							</Select>
-						</HStack>
+						compactMobileSearch ? undefined : (
+							<HStack spacing={2} align="center" flexWrap="wrap">
+								<Text fontSize="sm" color={mutedColor}>
+									{t("usersTable.status")}
+								</Text>
+								<Select
+									value={filters.status ?? ""}
+									fontSize="sm"
+									size="sm"
+									onChange={handleStatusFilter}
+									minW={{ base: "160px", md: "200px" }}
+								>
+									<option value="">
+										{t("usersPage.statusAll", "All statuses")}
+									</option>
+									<option value="active">{t("status.active")}</option>
+									<option value="on_hold">{t("status.on_hold")}</option>
+									<option value="disabled">{t("status.disabled")}</option>
+									<option value="limited">{t("status.limited")}</option>
+									<option value="expired">{t("status.expired")}</option>
+								</Select>
+							</HStack>
+						)
 					}
 				>
-					<Stack spacing={3}>
-						<Flex
-							align={{ base: "flex-start", md: "center" }}
-							justify="space-between"
-							gap={3}
-							flexWrap="wrap"
-						>
-							<Text fontSize="sm" color={mutedColor}>
-								{t("usersTable.total")}:{" "}
-								<chakra.span dir="ltr" sx={{ unicodeBidi: "isolate" }}>
-									{formatCount(usersResponse.total, locale)}
-								</chakra.span>
-								{isFiltered ? ` • ${t("usersPage.filtered")}` : ""}
-							</Text>
-						</Flex>
+					<Stack spacing={compactMobileSearch ? 0 : 3}>
+						{!compactMobileSearch && (
+							<Flex
+								align={{ base: "flex-start", md: "center" }}
+								justify="space-between"
+								gap={3}
+								flexWrap="wrap"
+							>
+								<Text fontSize="sm" color={mutedColor}>
+									{t("usersTable.total")}:{" "}
+									<chakra.span dir="ltr" sx={{ unicodeBidi: "isolate" }}>
+										{formatCount(usersResponse.total, locale)}
+									</chakra.span>
+									{isFiltered ? ` • ${t("usersPage.filtered")}` : ""}
+								</Text>
+							</Flex>
+						)}
 						{!isDesktop && !(isMobile && hasSearchQuery) && (
 							<SimpleGrid columns={{ base: 2 }} gap={3}>
 								{summaryItems.map((item, idx) => (
@@ -1423,20 +1423,25 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
 								<Box position="relative" role="group">
 									<Button
 										variant="ghost"
-										justifyContent="space-between"
+										justifyContent="flex-start"
 										w="full"
-										leftIcon={<TrafficIcon />}
-										rightIcon={
+										isLoading={contextAction?.startsWith("traffic-")}
+									>
+										<HStack w="full" justify="space-between" spacing={3}>
+											<HStack spacing={2} minW={0}>
+												<TrafficIcon />
+												<Text as="span" noOfLines={1}>
+													{t("usersTable.addTraffic", "Add traffic")}
+												</Text>
+											</HStack>
 											<ChevronRightIcon
 												width={14}
 												style={{
+													flexShrink: 0,
 													transform: isRTL ? "rotate(180deg)" : undefined,
 												}}
 											/>
-										}
-										isLoading={contextAction?.startsWith("traffic-")}
-									>
-										{t("usersTable.addTraffic", "Add traffic")}
+										</HStack>
 									</Button>
 									<Stack
 										display="none"
@@ -1948,7 +1953,7 @@ const ActionButtons: FC<ActionButtonsProps> = ({
 					h={{ base: "40px", md: "auto" }}
 					onClick={() => {
 						const links = generateUserLinks(user, linkTemplates);
-						setQRCode(links);
+						setQRCode(links, user.username);
 						setSubLink(subscriptionLink);
 					}}
 				>

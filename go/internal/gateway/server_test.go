@@ -83,6 +83,81 @@ func TestIsNativeAdminRoute(t *testing.T) {
 	}
 }
 
+func TestIsNativeUserRoute(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		header string
+		want   bool
+	}{
+		{name: "users list", method: http.MethodGet, path: "/api/users", want: true},
+		{name: "users list trailing slash", method: http.MethodGet, path: "/api/users/", want: true},
+		{name: "users usage", method: http.MethodGet, path: "/api/users/usage", want: true},
+		{name: "user detail", method: http.MethodGet, path: "/api/user/alice", want: true},
+		{name: "user detail url encoded", method: http.MethodGet, path: "/api/user/alice%20vpn", want: true},
+		{name: "user create", method: http.MethodPost, path: "/api/user", want: true},
+		{name: "user create v2", method: http.MethodPost, path: "/api/v2/users", want: true},
+		{name: "user update", method: http.MethodPut, path: "/api/user/alice", want: true},
+		{name: "user update v2", method: http.MethodPut, path: "/api/v2/users/alice", want: true},
+		{name: "user delete", method: http.MethodDelete, path: "/api/user/alice", want: true},
+		{name: "user reset", method: http.MethodPost, path: "/api/user/alice/reset", want: true},
+		{name: "user revoke sub", method: http.MethodPost, path: "/api/user/alice/revoke_sub", want: true},
+		{name: "user active next", method: http.MethodPost, path: "/api/user/alice/active-next", want: true},
+		{name: "user usage", method: http.MethodGet, path: "/api/user/alice/usage", want: true},
+		{name: "users bulk action", method: http.MethodPost, path: "/api/users/actions", want: true},
+		{name: "service scoped users bulk action", method: http.MethodPost, path: "/api/v2/services/7/users/actions", want: true},
+		{name: "service scoped users bulk action bad id stays python", method: http.MethodPost, path: "/api/v2/services/nope/users/actions", want: false},
+		{name: "service scoped users bulk action wrong method stays python", method: http.MethodGet, path: "/api/v2/services/7/users/actions", want: false},
+		{name: "user websocket stays python", method: http.MethodGet, path: "/api/user/alice", header: "websocket", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.header != "" {
+				req.Header.Set("Upgrade", tt.header)
+			}
+			if got := isNativeUserRoute(req); got != tt.want {
+				t.Fatalf("isNativeUserRoute() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsNativeSubscriptionRoute(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		header   string
+		prefixes []string
+		want     bool
+	}{
+		{name: "sub token", method: http.MethodGet, path: "/sub/token", want: true},
+		{name: "sub token info", method: http.MethodGet, path: "/sub/token/info", want: true},
+		{name: "sub username key", method: http.MethodGet, path: "/sub/alice/key", want: true},
+		{name: "subscribe query alias", method: http.MethodGet, path: "/api/v1/client/subscribe", want: true},
+		{name: "subscribe path alias", method: http.MethodGet, path: "/api/v1/client/subscribe/token", want: true},
+		{name: "custom prefix", method: http.MethodGet, path: "/my-sub/token", prefixes: []string{"/my-sub"}, want: true},
+		{name: "post stays python", method: http.MethodPost, path: "/sub/token", want: false},
+		{name: "websocket stays python", method: http.MethodGet, path: "/sub/token", header: "websocket", want: false},
+		{name: "dashboard stays python", method: http.MethodGet, path: "/dashboard/login", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.header != "" {
+				req.Header.Set("Upgrade", tt.header)
+			}
+			if got := isNativeSubscriptionRoute(req, tt.prefixes); got != tt.want {
+				t.Fatalf("isNativeSubscriptionRoute() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNativeNodeRouteDoesNotFallbackToPython(t *testing.T) {
 	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
@@ -119,6 +194,106 @@ func TestNativeNodeRouteDoesNotFallbackToPython(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "python fallback") {
 		t.Fatalf("native node route fell back to python: %s", rec.Body.String())
+	}
+}
+
+func TestNativeSubscriptionRouteDoesNotFallbackToPython(t *testing.T) {
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("python fallback"))
+	}))
+	defer python.Close()
+
+	pythonURL := strings.TrimPrefix(python.URL, "http://")
+	host, portValue, err := net.SplitHostPort(pythonURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := NewServer(Config{
+		MasterAPIURL:             "http://127.0.0.1:1",
+		NativeSubscriptionRoutes: true,
+		PythonHost:               host,
+		PythonPort:               port,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sub/token", nil)
+	server.server.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "python fallback") {
+		t.Fatalf("native subscription route fell back to python: %s", rec.Body.String())
+	}
+}
+
+func TestNativeUserRouteDoesNotFallbackToPython(t *testing.T) {
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("python fallback"))
+	}))
+	defer python.Close()
+
+	pythonURL := strings.TrimPrefix(python.URL, "http://")
+	host, portValue, err := net.SplitHostPort(pythonURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := NewServer(Config{
+		MasterAPIURL: "http://127.0.0.1:1",
+		PythonHost:   host,
+		PythonPort:   port,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/users"},
+		{method: http.MethodGet, path: "/api/users/usage"},
+		{method: http.MethodGet, path: "/api/user/alice"},
+		{method: http.MethodGet, path: "/api/user/alice/usage"},
+		{method: http.MethodPost, path: "/api/user"},
+		{method: http.MethodPost, path: "/api/v2/users"},
+		{method: http.MethodPut, path: "/api/user/alice"},
+		{method: http.MethodPut, path: "/api/v2/users/alice"},
+		{method: http.MethodDelete, path: "/api/user/alice"},
+		{method: http.MethodPost, path: "/api/user/alice/reset"},
+		{method: http.MethodPost, path: "/api/user/alice/revoke_sub"},
+		{method: http.MethodPost, path: "/api/user/alice/active-next"},
+		{method: http.MethodPost, path: "/api/users/actions"},
+		{method: http.MethodPost, path: "/api/v2/services/7/users/actions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			server.server.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "python fallback") {
+				t.Fatalf("native user route fell back to python: %s", rec.Body.String())
+			}
+		})
 	}
 }
 

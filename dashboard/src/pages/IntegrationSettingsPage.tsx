@@ -651,6 +651,10 @@ export const IntegrationSettingsPage = () => {
 	const borderColor = useColorModeValue("blackAlpha.200", "whiteAlpha.200");
 	const activeTabBg = useColorModeValue("primary.500", "whiteAlpha.200");
 	const fieldBg = useColorModeValue("white", "blackAlpha.200");
+	const comingSoonOverlayBg = useColorModeValue(
+		"rgba(255, 255, 255, 0.78)",
+		"rgba(8, 11, 18, 0.76)",
+	);
 	const { userData, getUserIsSuccess } = useGetUser();
 	const isSudoOrFull =
 		userData?.role === "sudo" || userData?.role === "full_access";
@@ -971,6 +975,16 @@ export const IntegrationSettingsPage = () => {
 			tab: idx >= 0 ? hash.slice(idx + 1) : "",
 		};
 	}, []);
+	const getFocusFromHash = useCallback(() => {
+		const { base, tab } = splitHash();
+		const queryStart = base.indexOf("?");
+		const params =
+			queryStart >= 0 ? new URLSearchParams(base.slice(queryStart + 1)) : null;
+		return {
+			tab,
+			focus: params?.get("focus") || "",
+		};
+	}, [splitHash]);
 	useEffect(() => {
 		const syncTabFromHash = () => {
 			const { tab } = splitHash();
@@ -991,6 +1005,24 @@ export const IntegrationSettingsPage = () => {
 		window.addEventListener("hashchange", syncTabFromHash);
 		return () => window.removeEventListener("hashchange", syncTabFromHash);
 	}, [integrationTabKeys, splitHash]);
+
+	useEffect(() => {
+		const { focus, tab } = getFocusFromHash();
+		if (
+			activeIntegrationTab !== 1 ||
+			tab.toLowerCase() !== "telegram" ||
+			focus !== "periodic-backup" ||
+			(isLoading && !data)
+		) {
+			return;
+		}
+		const timer = window.setTimeout(() => {
+			document
+				.getElementById("telegram-periodic-backup")
+				?.scrollIntoView({ behavior: "smooth", block: "center" });
+		}, 250);
+		return () => window.clearTimeout(timer);
+	}, [activeIntegrationTab, data, getFocusFromHash, isLoading]);
 
 	const mutation = useMutation(updateTelegramSettings, {
 		onSuccess: (updated) => {
@@ -2042,7 +2074,11 @@ export const IntegrationSettingsPage = () => {
 												: telegramDisabledMessage
 										}
 									>
-										<Box className="master-settings-card">
+										<Box
+											id="telegram-periodic-backup"
+											className="master-settings-card"
+											scrollMarginTop="120px"
+										>
 											<Flex
 												justify="space-between"
 												align={{ base: "flex-start", md: "center" }}
@@ -2875,7 +2911,7 @@ export const IntegrationSettingsPage = () => {
 											</Text>
 										) : (
 											<Stack spacing={4}>
-												<FormControl maxW={{ base: "full", md: "320px" }}>
+												<FormControl maxW={{ base: "full", md: "280px" }}>
 													<FormLabel>
 														{t("settings.subscriptions.selectAdmin")}
 													</FormLabel>
@@ -2883,32 +2919,65 @@ export const IntegrationSettingsPage = () => {
 														<MenuButton
 															as={Button}
 															variant="outline"
+															size="sm"
 															rightIcon={<ChevronDownIcon />}
 															w="full"
+															h="36px"
+															px={3}
+															fontSize="13px"
+															fontWeight="semibold"
 															justifyContent="space-between"
+															textAlign="start"
+															borderRadius="md"
 														>
-															{selectedAdminId &&
-															adminOverrides[selectedAdminId]
-																? adminOverrides[selectedAdminId].username
-																: t(
-																		"settings.subscriptions.selectAdminPlaceholder",
-																	)}
+															<Text
+																as="span"
+																noOfLines={1}
+																flex="1"
+																minW={0}
+																textAlign="start"
+															>
+																{selectedAdminId &&
+																adminOverrides[selectedAdminId]
+																	? adminOverrides[selectedAdminId].username
+																	: t(
+																			"settings.subscriptions.selectAdminPlaceholder",
+																		)}
+															</Text>
 														</MenuButton>
 														<MenuList
-															minW="320px"
-															maxH="320px"
+															minW={{ base: "calc(100vw - 48px)", md: "280px" }}
+															maxW={{ base: "calc(100vw - 48px)", md: "280px" }}
+															maxH="280px"
 															overflowY="auto"
+															borderColor={borderColor}
+															boxShadow="xl"
+															sx={{
+																scrollbarWidth: "none",
+																"&::-webkit-scrollbar": {
+																	display: "none",
+																},
+															}}
 														>
 															<Box
-																p={3}
+																p={2}
 																borderBottom="1px solid"
 																borderColor="gray.200"
 															>
 																<InputGroup size="sm">
-																	<InputLeftElement pointerEvents="none">
-																		<SearchIcon color="gray.400" />
+																	<InputLeftElement
+																		pointerEvents="none"
+																		w="2.4rem"
+																		h="full"
+																		display="flex"
+																		alignItems="center"
+																		justifyContent="center"
+																	>
+																		<SearchIcon color="gray.400" w={4} h={4} />
 																	</InputLeftElement>
 																	<Input
+																		ps="2.4rem"
+																		textAlign="start"
 																		placeholder={t(
 																			"settings.subscriptions.searchAdmin",
 																		)}
@@ -2930,6 +2999,20 @@ export const IntegrationSettingsPage = () => {
 																	<MenuItem
 																		key={admin.id}
 																		onClick={() => setSelectedAdminId(admin.id)}
+																		minH="36px"
+																		py={1.5}
+																		px={3}
+																		bg={
+																			selectedAdminId === admin.id
+																				? "primary.50"
+																				: undefined
+																		}
+																		_dark={{
+																			bg:
+																				selectedAdminId === admin.id
+																					? "whiteAlpha.100"
+																					: undefined,
+																		}}
 																	>
 																		<Flex
 																			justify="space-between"
@@ -3710,134 +3793,169 @@ export const IntegrationSettingsPage = () => {
 											</Stack>
 										)}
 									</Box>
-									<Box className="master-settings-card">
-										<Heading size="sm" mb={1}>
-											{t("settings.subscriptions.certificateTitle")}
-										</Heading>
-										<Text fontSize="sm" color="gray.500" mb={4}>
-											{t("settings.subscriptions.certificateDescription")}
-										</Text>
-										<SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-											<FormControl>
-												<FormLabel>
-													{t("settings.subscriptions.email")}
-												</FormLabel>
-												<Input
-													type="email"
-													placeholder="admin@example.com"
-													value={certificateForm.email}
-													onChange={(event) =>
-														setCertificateForm((prev) => ({
-															...prev,
-															email: event.target.value,
-														}))
-													}
-												/>
-											</FormControl>
-											<FormControl>
-												<FormLabel>
-													{t("settings.subscriptions.domains")}
-												</FormLabel>
-												<Input
-													placeholder="example.com,sub.example.com"
-													value={certificateForm.domains}
-													onChange={(event) =>
-														setCertificateForm((prev) => ({
-															...prev,
-															domains: event.target.value,
-														}))
-													}
-												/>
-												<FormHelperText>
-													{t(
-														"settings.subscriptions.domainsHint",
-														"Comma-separated list of domains for certificate issuance.",
-													)}
-												</FormHelperText>
-											</FormControl>
-										</SimpleGrid>
-										<Flex justify="flex-end" mt={3}>
-											<Button
-												colorScheme="primary"
-												leftIcon={<SaveIcon />}
-												onClick={handleIssueCertificate}
-												isLoading={issueCertificateMutation.isLoading}
-											>
-												{t("settings.subscriptions.issueAction")}
-											</Button>
-										</Flex>
-										<Divider my={4} />
-										<Heading size="sm" mb={2}>
-											{t("settings.subscriptions.certificateList")}
-										</Heading>
-										{!subscriptionBundle?.certificates?.length ? (
-											<Text color="gray.500">
-												{t("settings.subscriptions.noCertificates")}
+									<Box
+										className="master-settings-card"
+										position="relative"
+										overflow="hidden"
+										borderStyle="dashed"
+									>
+										<Box
+											opacity={0.42}
+											filter="grayscale(0.55)"
+											pointerEvents="none"
+											userSelect="none"
+											aria-hidden
+										>
+											<Heading size="sm" mb={1}>
+												{t("settings.subscriptions.certificateTitle")}
+											</Heading>
+											<Text fontSize="sm" color="gray.500" mb={4}>
+												{t("settings.subscriptions.certificateDescription")}
 											</Text>
-										) : (
-											<Stack spacing={3}>
-												{subscriptionBundle.certificates.map((cert) => (
-													<Box
-														className="master-settings-subcard"
-														key={cert.domain}
-													>
-														<Flex
-															justify="space-between"
-															align={{ base: "flex-start", md: "center" }}
-															gap={3}
-															flexDirection={{ base: "column", md: "row" }}
+											<SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+												<FormControl>
+													<FormLabel>
+														{t("settings.subscriptions.email")}
+													</FormLabel>
+													<Input
+														type="email"
+														placeholder="admin@example.com"
+														value={certificateForm.email}
+														onChange={(event) =>
+															setCertificateForm((prev) => ({
+																...prev,
+																email: event.target.value,
+															}))
+														}
+													/>
+												</FormControl>
+												<FormControl>
+													<FormLabel>
+														{t("settings.subscriptions.domains")}
+													</FormLabel>
+													<Input
+														placeholder="example.com,sub.example.com"
+														value={certificateForm.domains}
+														onChange={(event) =>
+															setCertificateForm((prev) => ({
+																...prev,
+																domains: event.target.value,
+															}))
+														}
+													/>
+													<FormHelperText>
+														{t(
+															"settings.subscriptions.domainsHint",
+															"Comma-separated list of domains for certificate issuance.",
+														)}
+													</FormHelperText>
+												</FormControl>
+											</SimpleGrid>
+											<Flex justify="flex-end" mt={3}>
+												<Button
+													colorScheme="primary"
+													leftIcon={<SaveIcon />}
+													onClick={handleIssueCertificate}
+													isLoading={issueCertificateMutation.isLoading}
+												>
+													{t("settings.subscriptions.issueAction")}
+												</Button>
+											</Flex>
+											<Divider my={4} />
+											<Heading size="sm" mb={2}>
+												{t("settings.subscriptions.certificateList")}
+											</Heading>
+											{!subscriptionBundle?.certificates?.length ? (
+												<Text color="gray.500">
+													{t("settings.subscriptions.noCertificates")}
+												</Text>
+											) : (
+												<Stack spacing={3}>
+													{subscriptionBundle.certificates.map((cert) => (
+														<Box
+															className="master-settings-subcard"
+															key={cert.domain}
 														>
-															<Box>
-																<Text fontWeight="semibold">{cert.domain}</Text>
-																<Text fontSize="sm" color="gray.500">
-																	{t("settings.subscriptions.pathLabel")}:{" "}
-																	{cert.path}
-																</Text>
-																<Text fontSize="sm" color="gray.500">
-																	{t("settings.subscriptions.lastIssued")}:{" "}
-																	{cert.last_issued_at
-																		? new Date(
-																				cert.last_issued_at,
-																			).toLocaleString()
-																		: t("settings.subscriptions.never")}
-																</Text>
-																<Text fontSize="sm" color="gray.500">
-																	{t("settings.subscriptions.lastRenewed")}:{" "}
-																	{cert.last_renewed_at
-																		? new Date(
-																				cert.last_renewed_at,
-																			).toLocaleString()
-																		: t("settings.subscriptions.never")}
-																</Text>
-															</Box>
-															<HStack>
-																{cert.email ? (
-																	<Badge colorScheme="purple">
-																		{cert.email}
-																	</Badge>
-																) : null}
-																<Button
-																	size="sm"
-																	variant="outline"
-																	leftIcon={
-																		<ArrowPathIcon width={16} height={16} />
-																	}
-																	onClick={() =>
-																		handleRenewCertificate(cert.domain)
-																	}
-																	isLoading={
-																		renewCertificateMutation.isLoading &&
-																		renewingDomain === cert.domain
-																	}
-																>
-																	{t("settings.subscriptions.renewAction")}
-																</Button>
-															</HStack>
-														</Flex>
-													</Box>
-												))}
-											</Stack>
-										)}
+															<Flex
+																justify="space-between"
+																align={{ base: "flex-start", md: "center" }}
+																gap={3}
+																flexDirection={{ base: "column", md: "row" }}
+															>
+																<Box>
+																	<Text fontWeight="semibold">
+																		{cert.domain}
+																	</Text>
+																	<Text fontSize="sm" color="gray.500">
+																		{t("settings.subscriptions.pathLabel")}:{" "}
+																		{cert.path}
+																	</Text>
+																	<Text fontSize="sm" color="gray.500">
+																		{t("settings.subscriptions.lastIssued")}:{" "}
+																		{cert.last_issued_at
+																			? new Date(
+																					cert.last_issued_at,
+																				).toLocaleString()
+																			: t("settings.subscriptions.never")}
+																	</Text>
+																	<Text fontSize="sm" color="gray.500">
+																		{t("settings.subscriptions.lastRenewed")}:{" "}
+																		{cert.last_renewed_at
+																			? new Date(
+																					cert.last_renewed_at,
+																				).toLocaleString()
+																			: t("settings.subscriptions.never")}
+																	</Text>
+																</Box>
+																<HStack>
+																	{cert.email ? (
+																		<Badge colorScheme="purple">
+																			{cert.email}
+																		</Badge>
+																	) : null}
+																	<Button
+																		size="sm"
+																		variant="outline"
+																		leftIcon={
+																			<ArrowPathIcon width={16} height={16} />
+																		}
+																		onClick={() =>
+																			handleRenewCertificate(cert.domain)
+																		}
+																		isLoading={
+																			renewCertificateMutation.isLoading &&
+																			renewingDomain === cert.domain
+																		}
+																	>
+																		{t("settings.subscriptions.renewAction")}
+																	</Button>
+																</HStack>
+															</Flex>
+														</Box>
+													))}
+												</Stack>
+											)}
+										</Box>
+										<Flex
+											position="absolute"
+											inset={0}
+											align="center"
+											justify="center"
+											bg={comingSoonOverlayBg}
+											backdropFilter="blur(2px)"
+											zIndex={1}
+										>
+											<Badge
+												colorScheme="orange"
+												borderRadius="full"
+												px={4}
+												py={2}
+												fontSize="sm"
+												textTransform="lowercase"
+											>
+												coming soon
+											</Badge>
+										</Flex>
 									</Box>
 								</VStack>
 							</form>

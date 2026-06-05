@@ -66,8 +66,11 @@ func (r Repository) LinkPrerequisites(ctx context.Context, req LinkPrerequisites
 
 func (r Repository) subscriptionSettings(ctx context.Context) (SubscriptionSettings, error) {
 	result := SubscriptionSettings{
-		DefaultSubscriptionType: "key",
-		SubscriptionPath:        "sub",
+		DefaultSubscriptionType:    "key",
+		SubscriptionPath:           "sub",
+		SubscriptionProfileTitle:   "Subscription",
+		SubscriptionSupportURL:     "https://t.me/",
+		SubscriptionUpdateInterval: "12",
 	}
 
 	var defaultType sql.NullString
@@ -83,27 +86,75 @@ func (r Repository) subscriptionSettings(ctx context.Context) (SubscriptionSetti
 		result.RawPanelSettings = json.RawMessage(panelRaw.String)
 	}
 
-	var prefix, path, ports, raw sql.NullString
-	err = r.db.QueryRowContext(
-		ctx,
-		`SELECT subscription_url_prefix, subscription_path, subscription_ports, '{}' FROM subscription_settings ORDER BY id LIMIT 1`,
-	).Scan(&prefix, &path, &ports, &raw)
-	if err != nil && err != sql.ErrNoRows {
+	row, err := r.singleMapRow(ctx, `SELECT * FROM subscription_settings ORDER BY id LIMIT 1`)
+	if err != nil {
 		return result, err
 	}
-	if prefix.Valid {
-		result.SubscriptionURLPrefix = normalizePrefix(prefix.String)
+	if len(row) == 0 {
+		return result, nil
 	}
-	if path.Valid && path.String != "" {
-		result.SubscriptionPath = normalizePath(path.String)
+
+	if value := stringValue(row["subscription_url_prefix"]); value != "" {
+		result.SubscriptionURLPrefix = normalizePrefix(value)
 	}
-	if ports.Valid {
-		result.SubscriptionPorts = normalizePorts(ports.String)
+	if value := stringValue(row["subscription_path"]); value != "" {
+		result.SubscriptionPath = normalizePath(value)
 	}
-	if raw.Valid {
-		result.RawSubscriptionSettings = json.RawMessage(raw.String)
+	if value := stringValue(row["subscription_profile_title"]); value != "" {
+		result.SubscriptionProfileTitle = value
 	}
+	if value := stringValue(row["subscription_support_url"]); value != "" {
+		result.SubscriptionSupportURL = ensureScheme(value)
+	}
+	if value := stringValue(row["subscription_update_interval"]); value != "" {
+		result.SubscriptionUpdateInterval = value
+	}
+	result.SubscriptionPorts = normalizePorts(row["subscription_ports"])
+	result.SubscriptionAliases = normalizeAliases(row["subscription_aliases"])
+	result.UseCustomJSONDefault = truthy(row["use_custom_json_default"])
+	result.UseCustomJSONForV2rayN = truthy(row["use_custom_json_for_v2rayn"])
+	result.UseCustomJSONForV2rayNG = truthy(row["use_custom_json_for_v2rayng"])
+	result.UseCustomJSONForStreisand = truthy(row["use_custom_json_for_streisand"])
+	result.UseCustomJSONForHapp = truthy(row["use_custom_json_for_happ"])
+	result.RawSubscriptionSettings = json.RawMessage(mustJSON(row))
 	return result, nil
+}
+
+func (r Repository) singleMapRow(ctx context.Context, query string, args ...any) (map[string]any, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") ||
+			strings.Contains(strings.ToLower(err.Error()), "doesn't exist") {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return map[string]any{}, rows.Err()
+	}
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	values := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range values {
+		ptrs[i] = &values[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return nil, err
+	}
+	result := make(map[string]any, len(cols))
+	for i, col := range cols {
+		switch value := values[i].(type) {
+		case []byte:
+			result[col] = string(value)
+		default:
+			result[col] = value
+		}
+	}
+	return result, rows.Err()
 }
 
 func (r Repository) subscriptionSecretKey(ctx context.Context) (string, error) {
@@ -718,6 +769,56 @@ func normalizePorts(raw any) []int {
 		result = append(result, port)
 	}
 	return result
+}
+
+func normalizeAliases(raw any) []string {
+	var values []any
+	switch typed := raw.(type) {
+	case nil:
+		return nil
+	case []any:
+		values = typed
+	case []string:
+		values = make([]any, 0, len(typed))
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		if err := json.Unmarshal([]byte(text), &values); err != nil {
+			values = []any{text}
+		}
+	default:
+		values = []any{typed}
+	}
+	result := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		alias := strings.TrimSpace(stringValue(value))
+		if alias == "" {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		result = append(result, alias)
+	}
+	return result
+}
+
+func mustJSON(value any) []byte {
+	if value == nil {
+		return []byte(`{}`)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil || len(raw) == 0 {
+		return []byte(`{}`)
+	}
+	return raw
 }
 
 func coercePort(value any) (int, bool) {

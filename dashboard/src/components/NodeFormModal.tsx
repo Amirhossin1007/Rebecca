@@ -21,6 +21,9 @@ import {
 	Tooltip,
 	useClipboard,
 	useToast,
+	VStack,
+	Wrap,
+	WrapItem,
 } from "@chakra-ui/react";
 import {
 	ArrowDownTrayIcon,
@@ -32,15 +35,28 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	getNodeDefaultValues,
 	NodeSchema,
+	type NodeType,
 	useNodes,
 } from "contexts/NodesContext";
 import dayjs from "dayjs";
-import { type FC, useCallback, useEffect, useState } from "react";
+import {
+	type FC,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "react-query";
 import { getPanelSettings } from "service/settings";
 import { SizeFormatter } from "../utils/outbound";
+import {
+	AnimatedSubmitButton,
+	type AnimatedSubmitStatus,
+} from "./common/AnimatedSubmitButton";
 import { Input } from "./Input";
 import {
 	XrayModalBody,
@@ -48,6 +64,7 @@ import {
 	XrayModalFooter,
 	XrayModalHeader,
 } from "./xray/XrayDialog";
+import { NodeModalStatusBadge } from "./NodeModalStatusBadge";
 
 const EyeIconStyled = chakra(EyeIcon, { baseStyle: { w: 4, h: 4 } });
 const EyeSlashIconStyled = chakra(EyeSlashIcon, { baseStyle: { w: 4, h: 4 } });
@@ -69,22 +86,98 @@ const getInputError = (error: unknown): string | undefined => {
 	return undefined;
 };
 
+const uniqueValues = (items: string[]): string[] =>
+	Array.from(new Set(items.filter(Boolean)));
+
+const getConfigInbounds = (config: NodeType["xray_config"]): string[] => {
+	if (!config || typeof config !== "object" || Array.isArray(config)) {
+		return [];
+	}
+
+	const inbounds = (config as { inbounds?: unknown }).inbounds;
+	if (!Array.isArray(inbounds)) {
+		return [];
+	}
+
+	return inbounds
+		.map((inbound) => {
+			if (!inbound || typeof inbound !== "object") {
+				return "";
+			}
+			const item = inbound as { tag?: unknown; remark?: unknown };
+			return typeof item.tag === "string" && item.tag
+				? item.tag
+				: typeof item.remark === "string" && item.remark
+					? item.remark
+					: "inbound";
+		})
+		.filter(Boolean);
+};
+
+const formatNodeBytes = (value?: number | null) =>
+	value !== null && value !== undefined ? SizeFormatter.sizeFormat(value) : "-";
+
+const formatNodeSpeed = (value?: number | null) =>
+	value !== null && value !== undefined ? `${SizeFormatter.sizeFormat(value)}/s` : "-";
+
+const formatNodePercent = (value?: number | null) =>
+	value !== null && value !== undefined && Number.isFinite(value)
+		? `${Math.round(value * 10) / 10}%`
+		: "-";
+
+const formatCPUFrequency = (value?: number | null) => {
+	if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+		return "-";
+	}
+	return `${Math.round((value / 1_000_000_000) * 100) / 100} GHz`;
+};
+
+const OverviewItem: FC<{
+	detail?: ReactNode;
+	label: ReactNode;
+	value: ReactNode;
+}> = ({ detail, label, value }) => (
+	<Box>
+		<Text fontSize="xs" textTransform="uppercase" color="gray.500">
+			{label}
+		</Text>
+		<Box fontWeight="medium" lineHeight="short" mt={0.5}>
+			{value}
+		</Box>
+		{detail && (
+			<Text fontSize="xs" color="gray.500" mt={1}>
+				{detail}
+			</Text>
+		)}
+	</Box>
+);
+
 interface NodeFormModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	node?: any;
-	mutate: (data: any) => void;
+	node?: NodeType;
+	defaultInboundTags?: string[];
+	mutate: (
+		data: any,
+		options?: {
+			onError?: (error: unknown) => void;
+			onSuccess?: (data: NodeType) => void;
+		},
+	) => void;
 	isLoading: boolean;
 	isAddMode?: boolean;
+	onSubmitSuccess?: (node: NodeType) => void;
 }
 
 export const NodeFormModal: FC<NodeFormModalProps> = ({
 	isOpen,
 	onClose,
 	node,
+	defaultInboundTags = [],
 	mutate,
 	isLoading,
 	isAddMode = false,
+	onSubmitSuccess,
 }) => {
 	const { t } = useTranslation();
 	const toast = useToast();
@@ -94,6 +187,10 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 		uplink: number;
 		downlink: number;
 	} | null>(null);
+	const [submitStatus, setSubmitStatus] =
+		useState<AnimatedSubmitStatus>("idle");
+	const submitResetTimerRef = useRef<number | null>(null);
+	const successCloseTimerRef = useRef<number | null>(null);
 
 	const { data: panelSettings } = useQuery({
 		queryKey: "panel-settings",
@@ -141,6 +238,59 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 		useClipboard(nodeCertificateValue);
 	const useNobetci = form.watch("use_nobetci");
 	const proxyEnabled = form.watch("proxy_enabled");
+	const overviewInboundTags = useMemo(() => {
+		const customInbounds = uniqueValues(getConfigInbounds(node?.xray_config));
+		return customInbounds.length ? customInbounds : defaultInboundTags;
+	}, [defaultInboundTags, node?.xray_config]);
+	const nodeStatus = node?.status || "error";
+	const nodeUsageTotal = (node?.uplink ?? 0) + (node?.downlink ?? 0);
+	const nodeUsagePeriodTotal =
+		nodeUsage !== null ? nodeUsage.uplink + nodeUsage.downlink : null;
+	const nodeLimitDisplay =
+		node?.data_limit !== null &&
+		node?.data_limit !== undefined &&
+		node.data_limit > 0
+			? formatNodeBytes(node.data_limit)
+			: t("nodes.unlimited", "Unlimited");
+	const nodeRuntimeVersion =
+		node?.node_binary_tag || node?.node_service_version || "";
+	const nodeInstallLabel =
+		[node?.node_install_mode, node?.node_update_channel]
+			.filter(Boolean)
+			.join(" / ") || "-";
+	const certificateState = node?.uses_default_certificate
+		? t("nodes.legacyCertificate", "Legacy shared")
+		: node?.has_custom_certificate
+			? t("nodes.privateCertificate", "Private")
+			: "-";
+
+	const clearSubmitTimers = useCallback(() => {
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+			submitResetTimerRef.current = null;
+		}
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => clearSubmitTimers, [clearSubmitTimers]);
+
+	const showSubmitError = useCallback(() => {
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+		}
+		setSubmitStatus("error");
+		submitResetTimerRef.current = window.setTimeout(() => {
+			setSubmitStatus("idle");
+			submitResetTimerRef.current = null;
+		}, 900);
+	}, []);
 
 	useEffect(() => {
 		if (!allowNobetci || !useNobetci) {
@@ -150,11 +300,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 			return;
 		}
 		const currentPort = form.getValues("nobetci_port");
-		if (
-			currentPort === null ||
-			currentPort === undefined ||
-			currentPort === ""
-		) {
+		if (currentPort === null || currentPort === undefined) {
 			form.setValue("nobetci_port", DEFAULT_NOBETCI_PORT);
 		}
 	}, [useNobetci, form, allowNobetci]);
@@ -182,6 +328,8 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 
 	useEffect(() => {
 		if (isOpen) {
+			clearSubmitTimers();
+			setSubmitStatus("idle");
 			const defaults = isAddMode
 				? { ...getNodeDefaultValues(), add_as_new_host: false }
 				: {
@@ -195,17 +343,22 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 			});
 			setShowCertificate(!isAddMode && !!node?.node_certificate);
 		}
-	}, [isOpen, isAddMode, node, form, formatDataLimitForInput]);
+	}, [isOpen, isAddMode, node, form, formatDataLimitForInput, clearSubmitTimers]);
 
 	useEffect(() => {
 		if (!isAddMode && node && isOpen) {
+			if (node.id === null || node.id === undefined) {
+				setNodeUsage(null);
+				return;
+			}
+			const nodeId = String(node.id);
 			fetchNodesUsage({
 				start: dayjs().utc().subtract(30, "day").format("YYYY-MM-DDTHH:00:00"),
 			}).then(
 				(data: {
 					usages?: Record<string, { uplink?: number; downlink?: number }>;
 				}) => {
-					const usage = data.usages?.[node.id];
+					const usage = data.usages?.[nodeId];
 					if (usage) {
 						setNodeUsage({
 							uplink: usage.uplink ?? 0,
@@ -222,11 +375,31 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 	}, [node, isAddMode, isOpen, fetchNodesUsage]);
 
 	const handleSubmit = form.handleSubmit((data) => {
+		if (submitStatus !== "idle" || isLoading) return;
+		clearSubmitTimers();
+		setSubmitStatus("loading");
 		const payload = {
 			...data,
 			data_limit: convertLimitToBytes(data.data_limit ?? null),
 		};
-		mutate(payload);
+		mutate(payload, {
+			onError: () => {
+				showSubmitError();
+			},
+			onSuccess: (createdOrUpdatedNode) => {
+				setSubmitStatus("success");
+				successCloseTimerRef.current = window.setTimeout(() => {
+					successCloseTimerRef.current = null;
+					handleClose();
+					window.setTimeout(() => {
+						onSubmitSuccess?.(createdOrUpdatedNode);
+					}, 0);
+				}, 1000);
+			},
+		});
+	}, () => {
+		if (submitStatus !== "idle") return;
+		showSubmitError();
 	});
 
 	const handleCopyNodeCertificate = () => {
@@ -252,11 +425,13 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 		URL.revokeObjectURL(url);
 	};
 
-	const handleClose = () => {
+	function handleClose() {
+		clearSubmitTimers();
+		setSubmitStatus("idle");
 		setShowCertificate(false);
 		setNodeUsage(null);
 		onClose();
-	};
+	}
 
 	return (
 		<Modal
@@ -306,19 +481,155 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 				<ModalCloseButton />
 				<XrayModalBody>
 					<Stack spacing={4}>
-						{!isAddMode && nodeUsage && (
-							<Stack className="xray-dialog-section" spacing={2}>
-								<Text fontWeight="medium">{t("nodes.usage")}</Text>
-								<HStack>
-									<Tag colorScheme="green">
-										{t("nodes.uplink")}:{" "}
-										{SizeFormatter.sizeFormat(nodeUsage.uplink)}
-									</Tag>
-									<Tag colorScheme="blue">
-										{t("nodes.downlink")}:{" "}
-										{SizeFormatter.sizeFormat(nodeUsage.downlink)}
-									</Tag>
+						{!isAddMode && node && (
+							<Stack className="xray-dialog-section" spacing={4}>
+								<HStack justify="space-between" align="flex-start" gap={3}>
+									<VStack align="flex-start" spacing={1}>
+										<Text fontWeight="semibold">
+											{t("nodes.overview", "Node overview")}
+										</Text>
+										<Text fontSize="xs" color="gray.500">
+											{node.name || t("nodes.unnamedNode", "Unnamed node")} ·{" "}
+											{t("nodes.id", "ID")}: {node.id ?? "-"}
+										</Text>
+									</VStack>
+									<NodeModalStatusBadge status={nodeStatus} compact />
 								</HStack>
+								{node.message && (
+									<Box
+										borderWidth="1px"
+										borderColor="red.200"
+										borderRadius="md"
+										bg="red.50"
+										color="red.700"
+										px={3}
+										py={2}
+										_dark={{
+											bg: "red.900",
+											borderColor: "red.700",
+											color: "red.100",
+										}}
+									>
+										<Text fontSize="sm">{node.message}</Text>
+									</Box>
+								)}
+								<SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={3}>
+									<OverviewItem
+										label={t("nodes.nodeAddress", "Address")}
+										value={
+											<Text as="span" dir="ltr" sx={{ unicodeBidi: "isolate" }}>
+												{node.address || "-"}
+											</Text>
+										}
+										detail={`${t("nodes.nodePort", "Port")}: ${
+											node.port ?? "-"
+										} · ${t("nodes.nodeAPIPort", "API port")}: ${
+											node.api_port ?? "-"
+										}`}
+									/>
+									<OverviewItem
+										label={t("nodes.trafficLimit", "Traffic / Limit")}
+										value={`${formatNodeBytes(nodeUsageTotal)} / ${nodeLimitDisplay}`}
+										detail={`${t("nodes.uplink", "Uplink")}: ${formatNodeBytes(
+											node.uplink,
+										)} · ${t("nodes.downlink", "Downlink")}: ${formatNodeBytes(
+											node.downlink,
+										)}`}
+									/>
+									<OverviewItem
+										label={t("nodes.usageLast30Days", "Last 30 days")}
+										value={
+											nodeUsagePeriodTotal !== null
+												? formatNodeBytes(nodeUsagePeriodTotal)
+												: "-"
+										}
+										detail={
+											nodeUsage
+												? `${t("nodes.uplink", "Uplink")}: ${formatNodeBytes(
+														nodeUsage.uplink,
+													)} · ${t("nodes.downlink", "Downlink")}: ${formatNodeBytes(
+														nodeUsage.downlink,
+													)}`
+												: t("nodes.usageUnavailable", "Usage data unavailable")
+										}
+									/>
+									<OverviewItem
+										label={t("nodes.bandwidthSpeed", "Upload / Download")}
+										value={`${formatNodeSpeed(node.upload_speed)} / ${formatNodeSpeed(
+											node.download_speed,
+										)}`}
+									/>
+									<OverviewItem
+										label={t("nodes.cpu", "CPU")}
+										value={formatNodePercent(node.cpu_usage_percent)}
+										detail={`${node.cpu_cores ?? "-"} ${t(
+											"cores",
+											"cores",
+										)} · ${formatCPUFrequency(node.cpu_frequency_hz)}`}
+									/>
+									<OverviewItem
+										label={t("nodes.ram", "RAM")}
+										value={formatNodePercent(node.memory_usage_percent)}
+										detail={`${formatNodeBytes(node.memory_used)} / ${formatNodeBytes(
+											node.memory_total,
+										)}`}
+									/>
+									<OverviewItem
+										label={t("nodes.runtime", "Runtime")}
+										value={
+											node.xray_version
+												? `Xray ${node.xray_version}`
+												: t("nodes.versionUnknown", "Version unknown")
+										}
+										detail={
+											nodeRuntimeVersion
+												? `${t("nodes.nodeServiceVersionTag", {
+														version: nodeRuntimeVersion,
+													})} · ${nodeInstallLabel}`
+												: nodeInstallLabel
+										}
+									/>
+									<OverviewItem
+										label={t("nodes.certificate", "Certificate")}
+										value={
+											<Tag
+												size="sm"
+												colorScheme={
+													node.uses_default_certificate
+														? "orange"
+														: node.has_custom_certificate
+															? "green"
+															: "gray"
+												}
+											>
+												{certificateState}
+											</Tag>
+										}
+									/>
+								</SimpleGrid>
+								<Box>
+									<Text fontSize="xs" textTransform="uppercase" color="gray.500">
+										{t("nodes.inbounds", "Inbounds")}
+									</Text>
+									{overviewInboundTags.length ? (
+										<Wrap spacing={1.5} mt={1}>
+											{overviewInboundTags.map((tag) => (
+												<WrapItem key={tag}>
+													<Tag size="sm" colorScheme="teal" variant="subtle">
+														{tag}
+													</Tag>
+												</WrapItem>
+											))}
+										</Wrap>
+									) : (
+										<Text fontSize="sm" color="gray.500" mt={1}>
+											{t(
+												"nodes.noInboundsConfigured",
+												"No inbounds configured",
+											)}
+										</Text>
+									)}
+								</Box>
 							</Stack>
 						)}
 
@@ -694,9 +1005,14 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 					<Button variant="outline" onClick={handleClose}>
 						{t("cancel")}
 					</Button>
-					<Button type="submit" colorScheme="primary" isLoading={isLoading}>
-						{isAddMode ? t("nodes.addNode") : t("nodes.editNode")}
-					</Button>
+					<AnimatedSubmitButton
+						status={submitStatus}
+						idleContent={isAddMode ? t("nodes.addNode") : t("nodes.editNode")}
+						successLabel={t("userDialog.submitSuccess", "Done")}
+						isDisabled={isLoading}
+						type="submit"
+						containerProps={{ w: { base: "full", sm: "180px" } }}
+					/>
 				</XrayModalFooter>
 			</XrayModalContent>
 		</Modal>

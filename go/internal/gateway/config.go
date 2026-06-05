@@ -11,39 +11,63 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	TLSCertFile        string
-	TLSKeyFile         string
-	MasterAPIEnabled   bool
-	MasterAPIAddr      string
-	MasterAPIURL       string
-	NativeNodeRoutes   bool
-	MasterAPIStartWait time.Duration
-	PythonBin          string
-	PythonApp          string
-	PythonHost         string
-	PythonPort         int
-	PythonEnvFile      string
-	PythonStartTimeout time.Duration
+	Addr                     string
+	TLSCertFile              string
+	TLSKeyFile               string
+	MasterAPIEnabled         bool
+	MasterAPIAddr            string
+	MasterAPIURL             string
+	NativeNodeRoutes         bool
+	NativeSubscriptionRoutes bool
+	SubscriptionPrefixes     []string
+	MasterAPIStartWait       time.Duration
+	PythonBin                string
+	PythonApp                string
+	PythonHost               string
+	PythonPort               int
+	PythonEnvFile            string
+	PythonStartTimeout       time.Duration
 }
 
 func LoadConfig() Config {
 	return Config{
-		Addr:               env("REBECCA_GATEWAY_ADDR", ":8000"),
-		TLSCertFile:        firstEnv("REBECCA_GATEWAY_TLS_CERTFILE", "UVICORN_SSL_CERTFILE"),
-		TLSKeyFile:         firstEnv("REBECCA_GATEWAY_TLS_KEYFILE", "UVICORN_SSL_KEYFILE"),
-		MasterAPIEnabled:   envBool("REBECCA_MASTER_API_ENABLED", true),
-		MasterAPIAddr:      env("REBECCA_MASTER_API_ADDR", "127.0.0.1:18081"),
-		MasterAPIURL:       env("GO_MASTER_API_URL", ""),
-		NativeNodeRoutes:   envBool("REBECCA_GATEWAY_NATIVE_NODE_ROUTES", true),
-		MasterAPIStartWait: time.Duration(envInt("REBECCA_MASTER_API_START_TIMEOUT_SECONDS", 30)) * time.Second,
-		PythonBin:          env("REBECCA_PYTHON_BIN", defaultPythonBin()),
-		PythonApp:          env("REBECCA_PYTHON_APP", "app:app"),
-		PythonHost:         env("REBECCA_PYTHON_HOST", "127.0.0.1"),
-		PythonPort:         envInt("REBECCA_PYTHON_PORT", 18000),
-		PythonEnvFile:      env("REBECCA_PYTHON_ENV_FILE", ""),
-		PythonStartTimeout: time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 300)) * time.Second,
+		Addr:                     env("REBECCA_GATEWAY_ADDR", ":8000"),
+		TLSCertFile:              firstEnv("REBECCA_GATEWAY_TLS_CERTFILE", "UVICORN_SSL_CERTFILE"),
+		TLSKeyFile:               firstEnv("REBECCA_GATEWAY_TLS_KEYFILE", "UVICORN_SSL_KEYFILE"),
+		MasterAPIEnabled:         envBool("REBECCA_MASTER_API_ENABLED", true),
+		MasterAPIAddr:            env("REBECCA_MASTER_API_ADDR", "127.0.0.1:18081"),
+		MasterAPIURL:             env("GO_MASTER_API_URL", ""),
+		NativeNodeRoutes:         envBool("REBECCA_GATEWAY_NATIVE_NODE_ROUTES", true),
+		NativeSubscriptionRoutes: envBool("REBECCA_GATEWAY_NATIVE_SUBSCRIPTION_ROUTES", true),
+		SubscriptionPrefixes:     splitCSVEnv("REBECCA_GATEWAY_SUBSCRIPTION_PREFIXES"),
+		MasterAPIStartWait:       time.Duration(envInt("REBECCA_MASTER_API_START_TIMEOUT_SECONDS", 30)) * time.Second,
+		PythonBin:                env("REBECCA_PYTHON_BIN", defaultPythonBin()),
+		PythonApp:                env("REBECCA_PYTHON_APP", "app:app"),
+		PythonHost:               env("REBECCA_PYTHON_HOST", "127.0.0.1"),
+		PythonPort:               envInt("REBECCA_PYTHON_PORT", 18000),
+		PythonEnvFile:            env("REBECCA_PYTHON_ENV_FILE", ""),
+		PythonStartTimeout:       time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 300)) * time.Second,
 	}
+}
+
+func splitCSVEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		cleaned := strings.TrimSpace(part)
+		if cleaned == "" {
+			continue
+		}
+		if !strings.HasPrefix(cleaned, "/") {
+			cleaned = "/" + cleaned
+		}
+		result = append(result, cleaned)
+	}
+	return result
 }
 
 func defaultPythonBin() string {

@@ -204,34 +204,6 @@ const formatCellValue = (value?: string | number | null): string => {
 const uniqueValues = (items: string[]): string[] =>
 	Array.from(new Set(items.filter(Boolean)));
 
-const getConfigInbounds = (config: NodeType["xray_config"]): string[] => {
-	if (!config || typeof config !== "object" || Array.isArray(config)) {
-		return [];
-	}
-
-	const inbounds = (config as { inbounds?: unknown }).inbounds;
-	if (!Array.isArray(inbounds)) {
-		return [];
-	}
-
-	return inbounds
-		.map((inbound) => {
-			if (!inbound || typeof inbound !== "object") {
-				return "";
-			}
-			const item = inbound as {
-				tag?: unknown;
-				remark?: unknown;
-			};
-			return typeof item.tag === "string" && item.tag
-				? item.tag
-				: typeof item.remark === "string" && item.remark
-					? item.remark
-					: "inbound";
-		})
-		.filter(Boolean);
-};
-
 const getNodeServiceUpdateAvailable = (
 	currentVersion?: string | null,
 	latestVersion?: string | null,
@@ -239,66 +211,6 @@ const getNodeServiceUpdateAvailable = (
 	const current = normalizeVersion(currentVersion);
 	const latest = normalizeVersion(latestVersion);
 	return Boolean(current && latest && current !== latest);
-};
-
-const NodeInboundTags: FC<{
-	tags: string[];
-	emptyLabel: string;
-	detailsLabel: string;
-}> = ({ tags, emptyLabel, detailsLabel }) => {
-	const visibleTags = tags.slice(0, 3);
-	const hiddenTags = tags.slice(3);
-
-	if (!tags.length) {
-		return <Text color="gray.400">{emptyLabel}</Text>;
-	}
-
-	return (
-		<HStack spacing={1.5} align="center" flexWrap="wrap">
-			{visibleTags.map((tag) => (
-				<Tag key={tag} size="sm" colorScheme="teal">
-					{tag}
-				</Tag>
-			))}
-			{hiddenTags.length > 0 && (
-				<Popover
-					trigger="hover"
-					placement="bottom-start"
-					openDelay={120}
-					closeDelay={120}
-					isLazy
-				>
-					<PopoverTrigger>
-						<Tag
-							size="sm"
-							colorScheme="teal"
-							variant="outline"
-							cursor="default"
-						>
-							+{hiddenTags.length}
-						</Tag>
-					</PopoverTrigger>
-					<PopoverContent w="auto" minW="180px" maxW="320px" p={2}>
-						<PopoverArrow />
-						<PopoverBody p={1}>
-							<VStack align="stretch" spacing={1}>
-								<Text fontSize="xs" fontWeight="semibold" color="gray.500">
-									{detailsLabel}
-								</Text>
-								<HStack spacing={1.5} align="center" flexWrap="wrap">
-									{tags.map((tag) => (
-										<Tag key={tag} size="sm" colorScheme="teal">
-											{tag}
-										</Tag>
-									))}
-								</HStack>
-							</VStack>
-						</PopoverBody>
-					</PopoverContent>
-				</Popover>
-			)}
-		</HStack>
-	);
 };
 
 const formatNodeBytes = (value?: number | null, precision = 2) =>
@@ -583,19 +495,9 @@ export const NodesPage: FC = () => {
 			generateSuccessMessage(t("nodes.addNodeSuccess"), toast);
 			queryClient.invalidateQueries(FetchNodesQueryKey);
 			refetchNodes();
-			setAddNodeOpen(false);
-			if (createdNode?.node_certificate) {
-				setNewNodeCertificate({
-					certificate: createdNode.node_certificate,
-					name: createdNode.name,
-				});
-			}
 		},
 		onError: (err) => {
 			generateErrorMessage(err, toast);
-		},
-		onSettled: () => {
-			setAddNodeOpen(false);
 		},
 	});
 
@@ -606,13 +508,9 @@ export const NodesPage: FC = () => {
 				generateSuccessMessage(t("nodes.nodeUpdated"), toast);
 				queryClient.invalidateQueries(FetchNodesQueryKey);
 				refetchNodes();
-				setEditingNode(null);
 			},
 			onError: (err) => {
 				generateErrorMessage(err, toast);
-			},
-			onSettled: () => {
-				setEditingNode(null);
 			},
 		},
 	);
@@ -1163,6 +1061,15 @@ export const NodesPage: FC = () => {
 		});
 	}, [nodes, searchTerm]);
 
+	const nodeSummary = useMemo(() => {
+		const items = nodes ?? [];
+		return {
+			total: items.length,
+			connected: items.filter((node) => node.status === "connected").length,
+			disabled: items.filter((node) => node.status === "disabled").length,
+		};
+	}, [nodes]);
+
 	const hasConnectedNodes = useMemo(
 		() =>
 			(nodes ?? []).some(
@@ -1560,9 +1467,24 @@ export const NodesPage: FC = () => {
 				bg={nodePanelBg}
 				p={3}
 			>
-				<Text fontWeight="semibold">
-					{t("nodes.manageNodesHeader", "Node list")}
-				</Text>
+				<VStack align="flex-start" spacing={1}>
+					<Text fontWeight="semibold">
+						{t("nodes.manageNodesHeader", "Node list")}
+					</Text>
+					<HStack spacing={2} flexWrap="wrap">
+						<Tag size="sm" colorScheme="gray" variant="subtle">
+							{t("nodes.summaryTotal", "Total")}: {nodeSummary.total}
+						</Tag>
+						<Tag size="sm" colorScheme="green" variant="subtle">
+							{t("nodes.summaryConnected", "Connected")}:{" "}
+							{nodeSummary.connected}
+						</Tag>
+						<Tag size="sm" colorScheme="gray" variant="subtle">
+							{t("nodes.summaryDisabled", "Disabled")}:{" "}
+							{nodeSummary.disabled}
+						</Tag>
+					</HStack>
+				</VStack>
 				<Stack
 					direction={{ base: "column", md: "row" }}
 					spacing={{ base: 3, md: 3 }}
@@ -1711,12 +1633,12 @@ export const NodesPage: FC = () => {
 					boxShadow="sm"
 					overflowX="auto"
 				>
-					<Table size="sm" variant="simple" minW="1240px">
+					<Table size="sm" variant="simple" minW="1120px">
 						<Thead bg={nodePanelBg}>
 							<Tr>
-								<Th minW="210px">{t("nodes.columns.name", "Name")}</Th>
+								<Th minW="180px">{t("nodes.columns.name", "Name")}</Th>
+								<Th minW="130px">{t("nodes.columns.status", "Status")}</Th>
 								<Th minW="150px">{t("nodes.columns.address", "Address")}</Th>
-								<Th minW="180px">{t("nodes.columns.inbounds", "Inbounds")}</Th>
 								<Th minW="130px">
 									{t("nodes.columns.xrayVersion", "Xray version")}
 								</Th>
@@ -1797,12 +1719,6 @@ export const NodesPage: FC = () => {
 											<VStack align="flex-start" spacing={1}>
 												<HStack spacing={2} align="center" flexWrap="wrap">
 													<Text fontWeight="semibold">{masterLabel}</Text>
-													<NodeModalStatusBadge status={masterStatus} compact />
-													{masterState?.limit_exceeded && (
-														<Tag colorScheme="red" size="sm">
-															{t("nodes.limitReached", "Limit reached")}
-														</Tag>
-													)}
 												</HStack>
 												<Text
 													fontSize="xs"
@@ -1814,17 +1730,17 @@ export const NodesPage: FC = () => {
 											</VStack>
 										</HStack>
 									</Td>
-									<Td>{EMPTY_CELL_VALUE}</Td>
 									<Td>
-										<NodeInboundTags
-											tags={defaultInboundSummaries}
-											emptyLabel={t(
-												"nodes.noInboundsConfigured",
-												"No inbounds configured",
+										<VStack align="flex-start" spacing={1}>
+											<NodeModalStatusBadge status={masterStatus} compact />
+											{masterState?.limit_exceeded && (
+												<Tag colorScheme="red" size="sm">
+													{t("nodes.limitReached", "Limit reached")}
+												</Tag>
 											)}
-											detailsLabel={t("nodes.inbounds", "Inbounds")}
-										/>
+										</VStack>
 									</Td>
+									<Td>{EMPTY_CELL_VALUE}</Td>
 									<Td>
 										<Tag
 											as="button"
@@ -1910,6 +1826,13 @@ export const NodesPage: FC = () => {
 										? formatNodeLimit(node.data_limit)
 										: t("nodes.unlimited", "Unlimited")
 								}`;
+								const nodeRemainingDataDisplay =
+									node.data_limit != null && node.data_limit > 0
+										? formatNodeBytes(
+												Math.max(node.data_limit - totalUsage, 0),
+												2,
+											)
+										: null;
 								const nodeCPUDisplay = `${formatCPUFrequency(
 									node.cpu_frequency_hz,
 								)} / ${formatNodePercent(node.cpu_usage_percent)}`;
@@ -1920,12 +1843,6 @@ export const NodesPage: FC = () => {
 								const nodeBandwidthDisplay = `${formatNodeSpeed(
 									node.upload_speed,
 								)} / ${formatNodeSpeed(node.download_speed)}`;
-								const customInbounds = uniqueValues(
-									getConfigInbounds(node.xray_config),
-								);
-								const inboundSummaries = customInbounds.length
-									? customInbounds
-									: defaultInboundSummaries;
 								const certificateCopyValue =
 									node.node_certificate || node.certificate_public_key || "";
 								const statusBadge = (
@@ -2109,7 +2026,6 @@ export const NodesPage: FC = () => {
 															{node.name ||
 																t("nodes.unnamedNode", "Unnamed node")}
 														</Text>
-														{statusDisplay}
 													</HStack>
 													<Text fontSize="xs" color="gray.500">
 														{t("nodes.id", "ID")}: {node.id ?? EMPTY_CELL_VALUE}
@@ -2117,6 +2033,7 @@ export const NodesPage: FC = () => {
 												</VStack>
 											</HStack>
 										</Td>
+										<Td>{statusDisplay}</Td>
 										<Td>
 											<Tooltip label={t("copy", "Copy")}>
 												<Text
@@ -2137,16 +2054,6 @@ export const NodesPage: FC = () => {
 													{formatCellValue(node.address)}
 												</Text>
 											</Tooltip>
-										</Td>
-										<Td>
-											<NodeInboundTags
-												tags={inboundSummaries}
-												emptyLabel={t(
-													"nodes.noInboundsConfigured",
-													"No inbounds configured",
-												)}
-												detailsLabel={t("nodes.inbounds", "Inbounds")}
-											/>
 										</Td>
 										<Td>
 											<Tag
@@ -2197,7 +2104,15 @@ export const NodesPage: FC = () => {
 											</VStack>
 										</Td>
 										<Td>
-											<Text fontWeight="medium">{nodeTrafficLimitDisplay}</Text>
+											<VStack align="flex-start" spacing={1}>
+												<Text fontWeight="medium">{nodeTrafficLimitDisplay}</Text>
+												{nodeRemainingDataDisplay && (
+													<Text fontSize="xs" color="gray.500">
+														{t("nodes.remainingData", "Remaining data")}:{" "}
+														{nodeRemainingDataDisplay}
+													</Text>
+												)}
+											</VStack>
 										</Td>
 										<Td>
 											<Text fontWeight="medium">{nodeBandwidthDisplay}</Text>
@@ -2936,11 +2851,20 @@ export const NodesPage: FC = () => {
 				mutate={addNodeMutate}
 				isLoading={isAdding}
 				isAddMode
+				onSubmitSuccess={(createdNode) => {
+					if (createdNode?.node_certificate) {
+						setNewNodeCertificate({
+							certificate: createdNode.node_certificate,
+							name: createdNode.name,
+						});
+					}
+				}}
 			/>
 			<NodeFormModal
 				isOpen={!!editingNode}
 				onClose={() => setEditingNode(null)}
 				node={editingNode || undefined}
+				defaultInboundTags={defaultInboundSummaries}
 				mutate={updateNodeMutate}
 				isLoading={isUpdating}
 			/>

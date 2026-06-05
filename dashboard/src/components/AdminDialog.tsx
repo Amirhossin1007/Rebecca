@@ -37,7 +37,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useAdminsStore } from "contexts/AdminsContext";
 import dayjs from "dayjs";
 import useGetUser from "hooks/useGetUser";
-import { type FC, useCallback, useEffect, useMemo, useState } from "react";
+import { type FC, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { fetch } from "service/http";
@@ -57,6 +57,10 @@ import {
 import { z } from "zod";
 import AdminPermissionsEditor from "./AdminPermissionsEditor";
 import AdminPermissionsModal from "./AdminPermissionsModal";
+import {
+	AnimatedSubmitButton,
+	type AnimatedSubmitStatus,
+} from "./common/AnimatedSubmitButton";
 import { NumericInput } from "./common/NumericInput";
 import { DateTimePicker } from "./DateTimePicker";
 import {
@@ -469,6 +473,10 @@ export const AdminDialog: FC = () => {
 	const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
 	const [serviceOptions, setServiceOptions] = useState<ServiceSummary[]>([]);
 	const [adminExpireDate, setAdminExpireDate] = useState<Date | null>(null);
+	const [submitStatus, setSubmitStatus] =
+		useState<AnimatedSubmitStatus>("idle");
+	const submitResetTimerRef = useRef<number | null>(null);
+	const successCloseTimerRef = useRef<number | null>(null);
 	const adminExpireUnix = useMemo(
 		() => (adminExpireDate ? dayjs(adminExpireDate).utc().unix() : null),
 		[adminExpireDate],
@@ -546,6 +554,41 @@ export const AdminDialog: FC = () => {
 			shouldValidate: true,
 		});
 	}, [generateRandomString, setValue]);
+
+	const clearSubmitTimers = useCallback(() => {
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+			submitResetTimerRef.current = null;
+		}
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => clearSubmitTimers, [clearSubmitTimers]);
+
+	const showSubmitError = useCallback(() => {
+		if (successCloseTimerRef.current !== null) {
+			window.clearTimeout(successCloseTimerRef.current);
+			successCloseTimerRef.current = null;
+		}
+		if (submitResetTimerRef.current !== null) {
+			window.clearTimeout(submitResetTimerRef.current);
+		}
+		setSubmitStatus("error");
+		submitResetTimerRef.current = window.setTimeout(() => {
+			setSubmitStatus("idle");
+			submitResetTimerRef.current = null;
+		}, 900);
+	}, []);
+
+	const handleCloseAdminDialog = useCallback(() => {
+		clearSubmitTimers();
+		setSubmitStatus("idle");
+		closeAdminDialog();
+	}, [clearSubmitTimers, closeAdminDialog]);
+
 	const { errors, isSubmitting } = formState;
 	const watchRole = watch("role");
 	const watchTrafficLimitMode = watch("traffic_limit_mode");
@@ -784,7 +827,17 @@ export const AdminDialog: FC = () => {
 		}
 	}, [permissionsValue.users.delete, setValue]);
 
+	useEffect(() => {
+		if (isOpen) {
+			setSubmitStatus("idle");
+			clearSubmitTimers();
+		}
+	}, [clearSubmitTimers, isOpen]);
+
 	const handleFormSubmit = handleSubmit(async (values) => {
+		if (submitStatus !== "idle") return;
+		clearSubmitTimers();
+		setSubmitStatus("loading");
 		const selectedRole: AdminRole = values.role ?? AdminRole.Standard;
 		let permissionPayload: AdminPermissions | undefined;
 		if (selectedRole === AdminRole.Reseller) {
@@ -797,6 +850,7 @@ export const AdminDialog: FC = () => {
 				),
 				isClosable: true,
 			});
+			showSubmitError();
 			return;
 		}
 
@@ -815,6 +869,7 @@ export const AdminDialog: FC = () => {
 							"Enter a positive number or leave empty.",
 						),
 					});
+					showSubmitError();
 					return;
 				}
 				computedPermissions.users.max_data_limit_per_user =
@@ -840,6 +895,7 @@ export const AdminDialog: FC = () => {
 							active: currentActive,
 						}),
 					});
+					showSubmitError();
 					return;
 				}
 			}
@@ -1020,10 +1076,18 @@ export const AdminDialog: FC = () => {
 					toast,
 				);
 			}
-			closeAdminDialog();
+			setSubmitStatus("success");
+			successCloseTimerRef.current = window.setTimeout(() => {
+				successCloseTimerRef.current = null;
+				handleCloseAdminDialog();
+			}, 1000);
 		} catch (error) {
 			generateErrorMessage(error, toast, form);
+			showSubmitError();
 		}
+	}, () => {
+		if (submitStatus !== "idle") return;
+		showSubmitError();
 	});
 
 	const detailsForm = (
@@ -1779,7 +1843,7 @@ export const AdminDialog: FC = () => {
 		<>
 			<Modal
 				isOpen={isOpen}
-				onClose={closeAdminDialog}
+				onClose={handleCloseAdminDialog}
 				size="3xl"
 				scrollBehavior="inside"
 			>
@@ -1860,18 +1924,23 @@ export const AdminDialog: FC = () => {
 					</XrayModalBody>
 					<XrayModalFooter>
 						<HStack spacing={3}>
-							<Button variant="ghost" onClick={closeAdminDialog}>
+							<Button variant="ghost" onClick={handleCloseAdminDialog}>
 								{t("cancel")}
 							</Button>
-							<Button
-								colorScheme="primary"
+							<AnimatedSubmitButton
 								onClick={handleFormSubmit}
-								isLoading={isSubmitting}
-							>
-								{mode === "create"
-									? t("admins.addAdmin", "Create")
-									: t("save", "Save")}
-							</Button>
+								status={submitStatus}
+								idleContent={
+									mode === "create"
+										? t("admins.addAdmin", "Create")
+										: t("save", "Save")
+								}
+								successLabel={t("userDialog.submitSuccess", "Done")}
+								isDisabled={isSubmitting}
+								containerProps={{
+									w: { base: "full", sm: "180px" },
+								}}
+							/>
 						</HStack>
 					</XrayModalFooter>
 				</XrayModalContent>

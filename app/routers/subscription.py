@@ -65,7 +65,15 @@ client_type_aliases = {
     "json": "v2ray-json",
 }
 
-router = APIRouter(tags=["Subscription"], prefix="/sub")
+def _go_native_subscription_route():
+    raise HTTPException(status_code=503, detail="Subscription routes are served by the Go Master API")
+
+
+router = APIRouter(
+    tags=["Subscription"],
+    prefix="/sub",
+    dependencies=[Depends(_go_native_subscription_route)],
+)
 
 
 def _resolve_support_url(settings) -> str:
@@ -404,6 +412,7 @@ def user_subscription(
     user_agent: str = Header(default=""),
 ):
     """Provides a subscription link based on the identifier (credential key or token)."""
+    _go_native_subscription_route()
     dbuser = _get_user_by_identifier(identifier, db)
     return _serve_subscription_response(request, identifier, db, dbuser, user_agent)
 
@@ -414,6 +423,7 @@ def user_subscription_info(
     db: Session = Depends(get_db),
 ):
     """Retrieves detailed information about the user's subscription."""
+    _go_native_subscription_route()
     dbuser = _get_user_by_identifier(identifier, db)
     return dbuser
 
@@ -426,6 +436,7 @@ def user_get_usage(
     db: Session = Depends(get_db),
 ):
     """Fetches the usage statistics for the user within a specified date range."""
+    _go_native_subscription_route()
     dbuser = _get_user_by_identifier(identifier, db)
     return _build_usage_payload(dbuser, start, end, db)
 
@@ -439,6 +450,7 @@ def user_subscription_by_key(
     user_agent: str = Header(default=""),
 ):
     """Subscription endpoint that validates credential keys instead of tokens."""
+    _go_native_subscription_route()
     token_hint = f"{username}/{credential_key}"
     return _serve_subscription_response(request, token_hint, db, dbuser, user_agent)
 
@@ -449,6 +461,7 @@ def user_subscription_info_by_key(
     dbuser: UserResponse = Depends(get_validated_sub_by_key),
 ):
     """Key-based variant of the subscription info endpoint."""
+    _go_native_subscription_route()
     return dbuser
 
 
@@ -462,6 +475,7 @@ def user_get_usage_by_key(
     db: Session = Depends(get_db),
 ):
     """Key-based variant of the usage endpoint."""
+    _go_native_subscription_route()
     return _build_usage_payload(dbuser, start, end, db)
 
 
@@ -481,6 +495,7 @@ def user_subscription_two_part(
     db: Session = Depends(get_db),
     user_agent: str = Header(default=""),
 ):
+    _go_native_subscription_route()
     client_type = client_type_aliases.get(part2, part2)
     if client_type in client_config:
         dbuser = _get_user_by_identifier(part1, db)
@@ -500,6 +515,7 @@ def user_subscription_with_client_type_by_key(
     dbuser: UserResponse = Depends(get_validated_sub_by_key),
     db: Session = Depends(get_db),
 ):
+    _go_native_subscription_route()
     client_type = _validate_client_type(client_type)
     return _subscription_with_client_type(request, dbuser, client_type, db)
 
@@ -511,6 +527,7 @@ def user_subscription_with_client_type(
     client_type: str = Path(...),
     db: Session = Depends(get_db),
 ):
+    _go_native_subscription_route()
     dbuser = _get_user_by_identifier(identifier, db)
     client_type = _validate_client_type(client_type)
     return _subscription_with_client_type(request, dbuser, client_type, db)

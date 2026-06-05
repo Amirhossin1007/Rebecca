@@ -44,6 +44,7 @@ interface BalancerModalProps {
 	mode: "create" | "edit";
 	initialBalancer?: BalancerFormValues | null;
 	outboundTags: string[];
+	excludedOutboundTags?: string[];
 	existingTags: string[];
 	onSubmit: (values: BalancerFormValues) => void;
 }
@@ -62,6 +63,7 @@ const parseTags = (value: string) =>
 		.filter(Boolean);
 
 const uniq = (values: string[]) => Array.from(new Set(values));
+const normalizeBalancerOutboundTag = (tag: string) => tag.trim().toLowerCase();
 
 export const BalancerModal: FC<BalancerModalProps> = ({
 	isOpen,
@@ -69,6 +71,7 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 	mode,
 	initialBalancer,
 	outboundTags,
+	excludedOutboundTags = [],
 	existingTags,
 	onSubmit,
 }) => {
@@ -84,8 +87,29 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 	}, [modalForm]);
 
 	const tagValue = modalForm.watch("tag");
-	const selectorValue = modalForm.watch("selector") ?? [];
-	const fallbackTagValue = modalForm.watch("fallbackTag") ?? "";
+	const rawSelectorValue = modalForm.watch("selector") ?? [];
+	const rawFallbackTagValue = modalForm.watch("fallbackTag") ?? "";
+	const excludedOutboundTagKeys = useMemo(
+		() =>
+			new Set(
+				excludedOutboundTags.map(normalizeBalancerOutboundTag).filter(Boolean),
+			),
+		[excludedOutboundTags],
+	);
+	const isExcludedBalancerOutbound = (tag: string) => {
+		const normalized = normalizeBalancerOutboundTag(tag);
+		return normalized === "blocked" || excludedOutboundTagKeys.has(normalized);
+	};
+	const selectableOutboundTags = useMemo(
+		() => outboundTags.filter((tag) => !isExcludedBalancerOutbound(tag)),
+		[excludedOutboundTagKeys, outboundTags],
+	);
+	const selectorValue = rawSelectorValue.filter(
+		(tag) => !isExcludedBalancerOutbound(tag),
+	);
+	const fallbackTagValue = isExcludedBalancerOutbound(rawFallbackTagValue)
+		? ""
+		: rawFallbackTagValue;
 	const normalizedTag = tagValue.trim();
 	const duplicateTag = !normalizedTag || existingTags.includes(normalizedTag);
 	const emptySelector = selectorValue.length === 0;
@@ -98,16 +122,24 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 						...DEFAULT_BALANCER,
 						...initialBalancer,
 						tag: initialBalancer.tag ?? "",
-						selector: initialBalancer.selector ?? [],
-						fallbackTag: initialBalancer.fallbackTag ?? "",
+						selector: (initialBalancer.selector ?? []).filter(
+							(tag) => !isExcludedBalancerOutbound(tag),
+						),
+						fallbackTag: isExcludedBalancerOutbound(
+							initialBalancer.fallbackTag ?? "",
+						)
+							? ""
+							: initialBalancer.fallbackTag ?? "",
 					}
 				: DEFAULT_BALANCER,
 		);
 		setSelectorInput("");
-	}, [initialBalancer, isOpen, modalForm]);
+	}, [excludedOutboundTagKeys, initialBalancer, isOpen, modalForm]);
 
 	const addSelectorTags = (value: string) => {
-		const tags = parseTags(value);
+		const tags = parseTags(value).filter(
+			(tag) => !isExcludedBalancerOutbound(tag),
+		);
 		if (tags.length === 0) return;
 		const merged = uniq([...(selectorValue ?? []), ...tags]);
 		modalForm.setValue("selector", merged, { shouldDirty: true });
@@ -126,8 +158,14 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 		const payload: BalancerFormValues = {
 			tag: data.tag.trim(),
 			strategy: data.strategy,
-			selector: uniq(data.selector.map((item) => item.trim()).filter(Boolean)),
-			fallbackTag: data.fallbackTag ?? "",
+			selector: uniq(
+				data.selector
+					.map((item) => item.trim())
+					.filter((item) => item && !isExcludedBalancerOutbound(item)),
+			),
+			fallbackTag: isExcludedBalancerOutbound(data.fallbackTag ?? "")
+				? ""
+				: data.fallbackTag ?? "",
 		};
 		onSubmit(payload);
 	});
@@ -188,10 +226,10 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 											{t("pages.xray.balancer.balancerSelectors")}
 										</FormLabel>
 										<VStack align="stretch" spacing={2}>
-											{outboundTags.length > 0 && (
+											{selectableOutboundTags.length > 0 && (
 												<SearchableTagSelect
 													mode="multiple"
-													options={outboundTags}
+													options={selectableOutboundTags}
 													value={selectorValue}
 													onChange={(value) =>
 														modalForm.setValue("selector", value as string[], {
@@ -275,7 +313,7 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 										</FormLabel>
 										<SearchableTagSelect
 											mode="single"
-											options={outboundTags}
+											options={selectableOutboundTags}
 											value={fallbackTagValue}
 											onChange={(value) =>
 												modalForm.setValue("fallbackTag", value as string, {

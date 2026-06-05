@@ -81,12 +81,21 @@ func BuildSubscriptionLinks(req SubscriptionLinkRequest, base SubscriptionSettin
 
 func effectiveSubscriptionSettings(base SubscriptionSettings, admin AdminLinkSettings) SubscriptionSettings {
 	effective := SubscriptionSettings{
-		DefaultSubscriptionType: preferredType("", base.DefaultSubscriptionType),
-		SubscriptionURLPrefix:   normalizePrefix(base.SubscriptionURLPrefix),
-		SubscriptionPath:        normalizePath(base.SubscriptionPath),
-		SubscriptionPorts:       normalizePorts(base.SubscriptionPorts),
-		RawPanelSettings:        base.RawPanelSettings,
-		RawSubscriptionSettings: base.RawSubscriptionSettings,
+		DefaultSubscriptionType:    preferredType("", base.DefaultSubscriptionType),
+		SubscriptionURLPrefix:      normalizePrefix(base.SubscriptionURLPrefix),
+		SubscriptionProfileTitle:   firstNonEmptyString(base.SubscriptionProfileTitle, "Subscription"),
+		SubscriptionSupportURL:     firstNonEmptyString(base.SubscriptionSupportURL, "https://t.me/"),
+		SubscriptionUpdateInterval: firstNonEmptyString(base.SubscriptionUpdateInterval, "12"),
+		SubscriptionPath:           normalizePath(base.SubscriptionPath),
+		SubscriptionPorts:          normalizePorts(base.SubscriptionPorts),
+		SubscriptionAliases:        append([]string{}, base.SubscriptionAliases...),
+		UseCustomJSONDefault:       base.UseCustomJSONDefault,
+		UseCustomJSONForV2rayN:     base.UseCustomJSONForV2rayN,
+		UseCustomJSONForV2rayNG:    base.UseCustomJSONForV2rayNG,
+		UseCustomJSONForStreisand:  base.UseCustomJSONForStreisand,
+		UseCustomJSONForHapp:       base.UseCustomJSONForHapp,
+		RawPanelSettings:           base.RawPanelSettings,
+		RawSubscriptionSettings:    base.RawSubscriptionSettings,
 	}
 
 	var overrides map[string]any
@@ -102,12 +111,36 @@ func effectiveSubscriptionSettings(base SubscriptionSettings, admin AdminLinkSet
 			if text, ok := coerceString(value); ok {
 				effective.SubscriptionURLPrefix = normalizePrefix(text)
 			}
+		case "subscription_profile_title":
+			if text, ok := coerceString(value); ok && text != "" {
+				effective.SubscriptionProfileTitle = text
+			}
+		case "subscription_support_url":
+			if text, ok := coerceString(value); ok && text != "" {
+				effective.SubscriptionSupportURL = ensureScheme(text)
+			}
+		case "subscription_update_interval":
+			if text, ok := coerceString(value); ok && text != "" {
+				effective.SubscriptionUpdateInterval = text
+			}
 		case "subscription_path":
 			if text, ok := coerceString(value); ok {
 				effective.SubscriptionPath = normalizePath(text)
 			}
 		case "subscription_ports":
 			effective.SubscriptionPorts = normalizePorts(value)
+		case "subscription_aliases":
+			effective.SubscriptionAliases = normalizeAliases(value)
+		case "use_custom_json_default":
+			effective.UseCustomJSONDefault = truthy(value)
+		case "use_custom_json_for_v2rayn":
+			effective.UseCustomJSONForV2rayN = truthy(value)
+		case "use_custom_json_for_v2rayng":
+			effective.UseCustomJSONForV2rayNG = truthy(value)
+		case "use_custom_json_for_streisand":
+			effective.UseCustomJSONForStreisand = truthy(value)
+		case "use_custom_json_for_happ":
+			effective.UseCustomJSONForHapp = truthy(value)
 		}
 	}
 

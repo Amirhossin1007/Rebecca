@@ -10,6 +10,7 @@ from app.models.user import UserResponse
 from app.routers.subscription import (
     _build_usage_payload,
     _get_user_by_identifier,
+    _go_native_subscription_route,
     _serve_subscription_response,
     _subscription_with_client_type,
     _validate_client_type,
@@ -17,7 +18,7 @@ from app.routers.subscription import (
 )
 from app.services.subscription_settings import SubscriptionSettingsService
 
-router = APIRouter(tags=["Subscription"])
+router = APIRouter(tags=["Subscription"], dependencies=[Depends(_go_native_subscription_route)])
 
 
 def _resolve_identifier(token: Optional[str], key: Optional[str], identifier: Optional[str]) -> str:
@@ -164,6 +165,7 @@ def subscribe_query_style(
     db: Session = Depends(get_db),
     user_agent: str = Header(default=""),
 ):
+    _go_native_subscription_route()
     resolved = _resolve_identifier(token, key, identifier)
     dbuser: UserResponse = _get_user_by_identifier(resolved, db)
     return _serve_subscription_response(request, resolved, db, dbuser, user_agent)
@@ -176,6 +178,7 @@ def subscribe_path_style(
     db: Session = Depends(get_db),
     user_agent: str = Header(default=""),
 ):
+    _go_native_subscription_route()
     dbuser: UserResponse = _get_user_by_identifier(identifier, db)
     return _serve_subscription_response(request, identifier, db, dbuser, user_agent)
 
@@ -189,6 +192,7 @@ def subscribe_custom_alias(
     db: Session = Depends(get_db),
     user_agent: str = Header(default=""),
 ):
+    _go_native_subscription_route()
     settings = SubscriptionSettingsService.get_settings(ensure_record=True, db=db)
     aliases = settings.subscription_aliases or []
     route = _resolve_alias_route(request, aliases, settings.subscription_path)
