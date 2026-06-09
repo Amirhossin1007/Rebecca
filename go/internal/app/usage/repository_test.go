@@ -93,17 +93,13 @@ func TestAdminUsageByDayAndNodes(t *testing.T) {
 		t.Fatalf("AdminUsageByDay() = %#v, want %#v", dayRows, wantDay)
 	}
 
-	masterID := int64(0)
-	masterRows, err := repo.AdminUsageByDay(context.Background(), 1, &masterID, "hour", start, end)
+	removedMasterID := int64(0)
+	removedMasterRows, err := repo.AdminUsageByDay(context.Background(), 1, &removedMasterID, "hour", start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantMaster := []DateUsageRow{
-		{Date: "2026-05-08 09:00", UsedTraffic: 100},
-		{Date: "2026-05-08 10:00", UsedTraffic: 300},
-	}
-	if !reflect.DeepEqual(masterRows, wantMaster) {
-		t.Fatalf("AdminUsageByDay(master) = %#v, want %#v", masterRows, wantMaster)
+	if len(removedMasterRows) != 0 {
+		t.Fatalf("AdminUsageByDay(removed master) = %#v, want empty", removedMasterRows)
 	}
 
 	nodeRows, err := repo.AdminUsageByNodes(context.Background(), 1, start, end)
@@ -111,7 +107,6 @@ func TestAdminUsageByDayAndNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNodes := []NodeTrafficRow{
-		{NodeID: nil, NodeName: "Master", Uplink: 0, Downlink: 400},
 		{NodeID: int64Ptr(10), NodeName: "edge-a", Uplink: 0, Downlink: 600},
 	}
 	if !reflect.DeepEqual(nodeRows, wantNodes) {

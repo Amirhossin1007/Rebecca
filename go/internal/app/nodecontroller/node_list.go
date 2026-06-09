@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	nodev1 "github.com/rebeccapanel/rebecca/go/internal/proto/node/v1"
 )
@@ -14,21 +16,45 @@ func (c Controller) List(ctx context.Context, req Request) (NodeListResult, erro
 	if err != nil {
 		return NodeListResult{}, err
 	}
+	type metricResult struct {
+		idx     int
+		runtime RuntimeResult
+		err     error
+	}
+	updates := make(chan metricResult, len(rows))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+
 	for idx := range rows {
 		enrichCertificateFields(&rows[idx], defaultCert)
 		if rows[idx].Status == "disabled" || rows[idx].Status == "limited" {
 			continue
 		}
-		metricsCtx, cancel := WithDefaultTimeout(ctx)
-		runtime, err := c.Metrics(metricsCtx, Request{NodeID: rows[idx].ID})
-		cancel()
-		if err != nil {
-			rows[idx].Status = "error"
-			message := friendlyNodeError("metrics", rows[idx].ID, err).Error()
-			rows[idx].Message = &message
+		wg.Add(1)
+		go func(idx int, nodeID int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			metricsCtx, cancel := withListMetricsTimeout(ctx)
+			defer cancel()
+			runtime, err := c.Metrics(metricsCtx, Request{NodeID: nodeID})
+			updates <- metricResult{idx: idx, runtime: runtime, err: err}
+		}(idx, rows[idx].ID)
+	}
+
+	go func() {
+		wg.Wait()
+		close(updates)
+	}()
+
+	for update := range updates {
+		if update.err != nil {
+			rows[update.idx].Status = "error"
+			message := friendlyNodeError("metrics", rows[update.idx].ID, update.err).Error()
+			rows[update.idx].Message = &message
 			continue
 		}
-		applyRuntimeToNodeItem(&rows[idx], runtime)
+		applyRuntimeToNodeItem(&rows[update.idx], update.runtime)
 	}
 	return NodeListResult{Nodes: rows}, nil
 }
@@ -44,7 +70,7 @@ func (c Controller) Get(ctx context.Context, req Request) (NodeListItem, error) 
 	item := rows[0]
 	enrichCertificateFields(&item, defaultCert)
 	if item.Status != "disabled" && item.Status != "limited" {
-		metricsCtx, cancel := WithDefaultTimeout(ctx)
+		metricsCtx, cancel := withListMetricsTimeout(ctx)
 		runtime, err := c.Metrics(metricsCtx, Request{NodeID: item.ID})
 		cancel()
 		if err != nil {
@@ -123,4 +149,8 @@ func enrichCertificateFields(item *NodeListItem, defaultCert string) {
 	}
 	item.HasCustomCertificate = true
 	item.UsesDefaultCertificate = false
+}
+
+func withListMetricsTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 3*time.Second)
 }

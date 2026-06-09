@@ -20,9 +20,6 @@ from app.utils.xray_defaults import apply_log_paths, load_legacy_xray_config
 from app.services.subscription_settings import SubscriptionSettingsService
 from config import XRAY_SUBSCRIPTION_PATH
 
-# MasterSettingsService not available in current project structure
-MASTER_NODE_NAME = "Master"
-
 _USER_STATUS_ENUM_ENSURED = False
 
 _logger = logging.getLogger(__name__)

@@ -6,12 +6,11 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Union, Literal
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Query, Session
 from app.db.models import (
     Admin,
     AdminUsageLogs,
-    MasterNodeState,
     Node,
     NodeUsage,
     NodeUserUsage,
@@ -19,15 +18,12 @@ from app.db.models import (
     User,
     UserUsageResetLogs,
 )
-from app.models.node import NodeStatus, NodeUsageResponse
+from app.models.node import NodeUsageResponse
 from app.models.user import (
     UserStatus,
     UserUsageResponse,
 )
 
-# MasterSettingsService not available in current project structure
-from .common import MASTER_NODE_NAME
-from .node import _ensure_master_state
 from .user import _status_to_str, _ensure_active_user_capacity, get_user_queryset
 from .admin import _maybe_enable_admin_after_data_limit
 from .admin_traffic import record_admin_created_traffic
@@ -80,7 +76,9 @@ def _get_usage_data(
             service_filter = and_(User.service_id == entity_id, User.status != UserStatus.deleted)
     elif entity_type == "node":
         if entity_id is not None:
-            node_filter = (NodeUserUsage.node_id == entity_id) if entity_id != 0 else NodeUserUsage.node_id.is_(None)
+            if entity_id <= 0:
+                return []
+            node_filter = NodeUserUsage.node_id == entity_id
     elif entity_type == "all_nodes":
         pass  # No specific filter
 
@@ -99,9 +97,9 @@ def _get_usage_data(
 
     query = query.filter(NodeUserUsage.created_at >= start_aware, NodeUserUsage.created_at <= end_aware)
 
-    # Get node lookup
-    _ensure_master_state(db, for_update=False)
-    node_lookup: Dict[Optional[int], str] = {None: MASTER_NODE_NAME}
+    # Get real node lookup. Historical NULL node_id rows belonged to the removed
+    # master pseudo-node and are intentionally ignored.
+    node_lookup: Dict[Optional[int], str] = {}
     for node_id, node_name in db.query(Node.id, Node.name).all():
         node_lookup[node_id] = node_name
 
@@ -251,11 +249,13 @@ def _get_usage_timeseries(
         if include_node_breakdown:
             node_entries = []
             for nid, usage in usage_map[bucket]["nodes"].items():
+                if nid is None:
+                    continue
                 if usage:
                     node_entries.append(
                         {
-                            "node_id": nid if nid is not None else 0,
-                            "node_name": node_lookup.get(nid, MASTER_NODE_NAME),
+                            "node_id": nid,
+                            "node_name": node_lookup.get(nid, f"Node {nid}"),
                             "used_traffic": int(usage),
                         }
                     )
@@ -280,10 +280,12 @@ def _get_usage_by_nodes(query: Query, node_lookup: Dict[Optional[int], str]) -> 
 
     result = []
     for node_id in sorted(node_usage.keys(), key=lambda x: (x is None, x or -1)):
+        if node_id is None:
+            continue
         result.append(
             {
                 "node_id": node_id,
-                "node_name": node_lookup.get(node_id, MASTER_NODE_NAME),
+                "node_name": node_lookup.get(node_id, f"Node {node_id}"),
                 "used_traffic": node_usage[node_id],
             }
         )
@@ -322,16 +324,9 @@ def _get_usage_aggregated(
 ) -> Union[List[UserUsageResponse], List[NodeUsageResponse]]:
     """Helper for aggregated format"""
     if is_node_usage:
-        # For NodeUsage (not NodeUserUsage)
-        usages: Dict[Optional[int], NodeUsageResponse] = {
-            None: NodeUsageResponse(node_id=None, node_name=MASTER_NODE_NAME, uplink=0, downlink=0)
-        }
-        # This would need NodeUsage table, handled separately
-        return list(usages.values())
+        return []
     else:
-        usages: Dict[Optional[int], UserUsageResponse] = {
-            None: UserUsageResponse(node_id=None, node_name=MASTER_NODE_NAME, used_traffic=0)
-        }
+        usages: Dict[Optional[int], UserUsageResponse] = {}
         for node_id in node_lookup.keys():
             if node_id is not None:
                 usages[node_id] = UserUsageResponse(node_id=node_id, node_name=node_lookup[node_id], used_traffic=0)
@@ -345,6 +340,8 @@ def _get_usage_aggregated(
             .all()
         )
         for node_id, used_traffic in rows:
+            if node_id is None:
+                continue
             node_key = node_id if node_id is not None else None
             if node_key in usages:
                 usages[node_key].used_traffic += int(used_traffic or 0)
@@ -370,9 +367,8 @@ def get_user_usage_timeseries(
         format="timeseries",
         include_node_breakdown=True,
     )
-    # Convert to expected format with 'total' field
-    master = _ensure_master_state(db, for_update=False)
-    node_lookup: Dict[Optional[int], str] = {None: MASTER_NODE_NAME}
+    # Convert to expected format with 'total' field for real nodes only.
+    node_lookup: Dict[Optional[int], str] = {}
     for node_id, node_name in db.query(Node.id, Node.name).all():
         node_lookup[node_id] = node_name
 
@@ -381,11 +377,12 @@ def get_user_usage_timeseries(
         node_entries = []
         for node_info in entry.get("nodes", []):
             nid = node_info["node_id"]
-            resolved_id = 0 if nid == master.id else nid
+            if nid is None or nid == 0:
+                continue
             node_entries.append(
                 {
-                    "node_id": resolved_id,
-                    "node_name": node_lookup.get(nid) or node_lookup.get(None, "Master"),
+                    "node_id": nid,
+                    "node_name": node_lookup.get(nid, f"Node {nid}"),
                     "used_traffic": node_info["used_traffic"],
                 }
             )
@@ -405,14 +402,15 @@ def get_user_usage_by_nodes(
     node_lookup: Dict[Optional[int], Dict] = {}
     for node in db.query(Node).all():
         node_lookup[node.id] = {"node_id": node.id, "node_name": node.name, "uplink": 0, "downlink": 0}
-    node_lookup[None] = {"node_id": None, "node_name": MASTER_NODE_NAME, "uplink": 0, "downlink": 0}
 
     for entry in result:
         nid = entry["node_id"]
+        if nid is None or nid == 0:
+            continue
         if nid not in node_lookup:
             node_lookup[nid] = {
                 "node_id": nid,
-                "node_name": MASTER_NODE_NAME if nid is None else f"Node {nid}",
+                "node_name": f"Node {nid}",
                 "uplink": 0,
                 "downlink": 0,
             }
@@ -561,27 +559,6 @@ def reset_admin_usage(db: Session, dbadmin: Admin) -> int:
     return dbadmin
 
 
-def reset_master_usage(db: Session) -> MasterNodeState:
-    master_state = _ensure_master_state(db, for_update=True)
-
-    db.query(NodeUsage).filter(or_(NodeUsage.node_id.is_(None), NodeUsage.node_id == master_state.id)).delete(
-        synchronize_session=False
-    )
-    db.query(NodeUserUsage).filter(
-        or_(NodeUserUsage.node_id.is_(None), NodeUserUsage.node_id == master_state.id)
-    ).delete(synchronize_session=False)
-
-    master_state.uplink = 0
-    master_state.downlink = 0
-    master_state.status = NodeStatus.connected
-    master_state.message = None
-    master_state.updated_at = datetime.now(timezone.utc)
-
-    db.commit()
-    db.refresh(master_state)
-    return master_state
-
-
 def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsageResponse]:
     """
     Retrieves usage data for all nodes within a specified time range.
@@ -594,16 +571,7 @@ def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsa
     Returns:
         List[NodeUsageResponse]: A list of NodeUsageResponse objects containing usage data.
     """
-    _ensure_master_state(db, for_update=False)
-
-    usages: Dict[Optional[int], NodeUsageResponse] = {
-        None: NodeUsageResponse(
-            node_id=None,
-            node_name=MASTER_NODE_NAME,
-            uplink=0,
-            downlink=0,
-        )
-    }
+    usages: Dict[Optional[int], NodeUsageResponse] = {}
 
     for node in db.query(Node).all():
         usages[node.id] = NodeUsageResponse(
@@ -627,10 +595,12 @@ def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsa
 
     for node_id, uplink, downlink in rows:
         target_id = node_id
+        if target_id is None:
+            continue
         if target_id not in usages:
             usages[target_id] = NodeUsageResponse(
                 node_id=target_id,
-                node_name=MASTER_NODE_NAME if target_id is None else f"Node {target_id}",
+                node_name=f"Node {target_id}",
                 uplink=0,
                 downlink=0,
             )
@@ -638,29 +608,6 @@ def get_nodes_usage(db: Session, start: datetime, end: datetime) -> List[NodeUsa
         usages[target_id].downlink += int(downlink or 0)
 
     return list(usages.values())
-
-
-def reset_node_usage(db: Session, dbnode: Node) -> Node:
-    """
-    Resets the stored data usage metrics for a node.
-
-    Args:
-        db (Session): The database session.
-        dbnode (Node): The node whose usage should be reset.
-
-    Returns:
-        Node: The updated node object.
-    """
-    db.query(NodeUsage).filter(NodeUsage.node_id == dbnode.id).delete(synchronize_session=False)
-    db.query(NodeUserUsage).filter(NodeUserUsage.node_id == dbnode.id).delete(synchronize_session=False)
-
-    dbnode.uplink = 0
-    dbnode.downlink = 0
-    dbnode.status = NodeStatus.connected
-    dbnode.message = None
-    db.commit()
-    db.refresh(dbnode)
-    return dbnode
 
 
 def get_node_usage_by_day(
@@ -677,5 +624,3 @@ def get_node_usage_by_day(
     return _get_usage_data(
         db=db, entity_type="node", entity_id=node_id, start=start, end=end, granularity=granularity, format="by_day"
     )
-
-

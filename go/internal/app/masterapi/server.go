@@ -13,6 +13,7 @@ import (
 	"time"
 
 	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
+	nodeapp "github.com/rebeccapanel/rebecca/go/internal/app/node"
 	"github.com/rebeccapanel/rebecca/go/internal/app/nodecontroller"
 	"github.com/rebeccapanel/rebecca/go/internal/app/usage"
 	userapp "github.com/rebeccapanel/rebecca/go/internal/app/user"
@@ -27,6 +28,7 @@ type Server struct {
 	adminRepo      adminapp.Repository
 	adminAuth      adminapp.Authenticator
 	nodeController nodecontroller.Controller
+	nodeMutations  nodeapp.Repository
 	usageService   usage.Service
 	userService    userapp.Service
 	configRepo     xrayconfig.Repository
@@ -39,6 +41,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	adminRepo := adminapp.NewRepository(pool.DB, pool.Dialect)
 	nodeRepo := nodecontroller.NewRepository(pool.DB, pool.Dialect)
+	nodeMutationRepo := nodeapp.NewRepository(pool.DB, pool.Dialect)
 	usageRepo := usage.NewRepository(pool.DB, pool.Dialect)
 	userRepo := userapp.NewRepository(pool.DB, pool.Dialect)
 	configRepo := xrayconfig.NewRepository(pool.DB, pool.Dialect, xrayconfig.Options{
@@ -56,6 +59,7 @@ func New(cfg Config) (*Server, error) {
 		adminRepo:      adminRepo,
 		adminAuth:      adminapp.NewAuthenticator(adminRepo, adminapp.WithSudoers(sudoers)),
 		nodeController: nodecontroller.NewController(nodeRepo),
+		nodeMutations:  nodeMutationRepo,
 		usageService:   usage.NewService(usageRepo),
 		userService:    userapp.NewService(userRepo),
 		configRepo:     configRepo,
@@ -108,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/client/subscribe/", s.handleSubscriptionPath)
 	mux.HandleFunc("/api/nodes", s.requireSudo(s.handleNodes))
 	mux.HandleFunc("/api/nodes/usage", s.requireSudo(s.handleNodesUsage))
+	mux.HandleFunc("/api/node", s.requireSudo(s.handleNodeRoot))
 	mux.HandleFunc("/api/node/", s.requireSudo(s.handleNodePath))
 	mux.HandleFunc("/", s.handleSubscriptionPath)
 	return mux
@@ -206,6 +211,36 @@ func (s *Server) handleNodesUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNodePath(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/api/node/settings":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleNodeSettings(w, r)
+		return
+	case "/api/node/certificate/new":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleNodeCertificateNew(w, r)
+		return
+	case "/api/node/master":
+		if r.Method != http.MethodGet && r.Method != http.MethodPut {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		writeError(w, http.StatusGone, "master node usage/runtime routes have been removed")
+		return
+	case "/api/node/master/usage/reset":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		writeError(w, http.StatusGone, "master node usage/runtime routes have been removed")
+		return
+	}
 	id, suffix, ok := parseNodePath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found")
@@ -213,11 +248,16 @@ func (s *Server) handleNodePath(w http.ResponseWriter, r *http.Request) {
 	}
 	switch suffix {
 	case "":
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleNode(w, r, id)
+		case http.MethodPut:
+			s.handleNodeUpdate(w, r, id)
+		case http.MethodDelete:
+			s.handleNodeDelete(w, r, id)
+		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
 		}
-		s.handleNode(w, r, id)
 	case "reconnect":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -272,13 +312,25 @@ func (s *Server) handleNodePath(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleNodeServiceUpdate(w, r, id)
+	case "certificate/regenerate":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleNodeCertificateRegenerate(w, r, id)
+	case "usage/reset":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.handleNodeUsageReset(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
 }
 
 func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	node, err := s.nodeController.Get(ctx, nodecontroller.Request{NodeID: nodeID})
 	if err != nil {
@@ -331,7 +383,7 @@ func (s *Server) handleNodeLogs(w http.ResponseWriter, r *http.Request, nodeID i
 		}
 		maxLines = parsed
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	result, err := s.nodeController.Logs(ctx, nodecontroller.Request{NodeID: nodeID, MaxLines: maxLines})
 	if err != nil {

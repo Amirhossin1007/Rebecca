@@ -66,8 +66,6 @@ from .admin_traffic import (
     validate_created_traffic_data_limit_change,
 )
 
-MASTER_NODE_NAME = "Master"
-
 _USER_STATUS_ENUM_ENSURED = False
 
 _logger = logging.getLogger(__name__)

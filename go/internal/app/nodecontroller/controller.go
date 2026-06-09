@@ -133,6 +133,8 @@ func (c Controller) Metrics(ctx context.Context, req Request) (RuntimeResult, er
 }
 
 func (c Controller) Logs(ctx context.Context, req Request) (RuntimeResult, error) {
+	// TODO: expose NodeLogsService.StreamLogs end-to-end through the Go gateway
+	// WebSocket/streaming path; this handler intentionally buffers a bounded tail.
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())

@@ -34,10 +34,7 @@ from app.models.user import (
 # Imported inside functions to avoid circular import
 # from .usage import _get_usage_data, _get_usage_timeseries
 # from .user import get_user_queryset, _apply_service_filter
-# MasterSettingsService not available in current project structure
 from .proxy import get_or_create_inbound, _fetch_hosts_by_ids
-
-MASTER_NODE_NAME = "Master"
 
 _USER_STATUS_ENUM_ENSURED = False
 

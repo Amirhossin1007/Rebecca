@@ -4,9 +4,6 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 
 import logging
 
-# MasterSettingsService not available in current project structure
-MASTER_NODE_NAME = "Master"
-
 _USER_STATUS_ENUM_ENSURED = False
 
 _logger = logging.getLogger(__name__)

@@ -390,15 +390,11 @@ const NodesUsageAnalytics: FC = () => {
 		const seen = new Set<number>();
 
 		adminDailySlices.forEach((slice) => {
-			if (!seen.has(slice.nodeId)) {
+			if (slice.nodeId > 0 && !seen.has(slice.nodeId)) {
 				seen.add(slice.nodeId);
 				options.push({ value: slice.nodeId, label: slice.nodeName });
 			}
 		});
-
-		if (!seen.has(0)) {
-			options.push({ value: 0, label: t("nodes.masterNode", "Master") });
-		}
 
 		if (Array.isArray(nodes)) {
 			nodes.forEach((node) => {
@@ -410,7 +406,7 @@ const NodesUsageAnalytics: FC = () => {
 		}
 
 		return options.sort((a, b) => a.label.localeCompare(b.label));
-	}, [adminDailySlices, nodes, t]);
+	}, [adminDailySlices, nodes]);
 
 	const adminSelectOptions = useMemo(
 		() =>

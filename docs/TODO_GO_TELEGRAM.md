@@ -34,7 +34,24 @@ admin API to Telegram delivery.
 - Admin user disable/activate actions.
 - Admin usage and deleted-users usage reset.
 - User created, updated, deleted, reset, revoked, next-plan changes.
+- Node created (`node_created`).
+- Node deleted (`node_deleted`).
+- Node usage reset (`node_usage_reset`).
+- Node status changes (`node_status_change`), including connected, connecting,
+  error, disabled, and limited transitions.
 - Service mutation notifications, if required by the product behavior.
+
+## Node Report Notes
+
+- Node mutation paths are now Go-native, so Python `report.node_*` wrappers and
+  Telegram node formatting are intentionally not part of the active runtime.
+- Go should emit node reports from the mutation/status-change boundary after a
+  Go Telegram notifier exists.
+- Notification delivery must not affect node transaction success. Prefer an
+  outbox/background worker if Telegram delivery can fail or rate-limit.
+- Message formatting should include the previous Python report content where it
+  still makes product sense: node name, address, API port, data limit, usage
+  coefficient, previous/current status, and actor username.
 
 ## Rollout Notes
 

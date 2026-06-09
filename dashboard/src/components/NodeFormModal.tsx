@@ -218,11 +218,10 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 			: Math.round(value * BYTES_IN_GB);
 
 	const baseDefaults = isAddMode
-		? { ...getNodeDefaultValues(), add_as_new_host: false }
+		? getNodeDefaultValues()
 		: {
 				...getNodeDefaultValues(),
 				...node,
-				add_as_new_host: false,
 			};
 
 	const form = useForm({
@@ -331,11 +330,10 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 			clearSubmitTimers();
 			setSubmitStatus("idle");
 			const defaults = isAddMode
-				? { ...getNodeDefaultValues(), add_as_new_host: false }
+				? getNodeDefaultValues()
 				: {
 						...getNodeDefaultValues(),
 						...node,
-						add_as_new_host: false,
 					};
 			form.reset({
 				...defaults,
@@ -992,13 +990,6 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 							</Collapse>
 						</Stack>
 
-						{isAddMode && (
-							<Box className="xray-dialog-section">
-								<Checkbox {...form.register("add_as_new_host")}>
-									{t("nodes.addHostForEveryInbound")}
-								</Checkbox>
-							</Box>
-						)}
 					</Stack>
 				</XrayModalBody>
 				<XrayModalFooter justifyContent="flex-end">

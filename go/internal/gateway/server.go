@@ -73,6 +73,10 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if isDeprecatedMasterNodeRoute(r) {
+			http.Error(w, "master node usage/runtime routes have been removed", http.StatusGone)
+			return
+		}
 		if isNativeAdminRoute(r) {
 			if masterProxy == nil {
 				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
@@ -393,6 +397,18 @@ func isNativeServiceRoute(r *http.Request) bool {
 	return isNativeServiceUsersActionRoute(path, r.Method)
 }
 
+func isDeprecatedMasterNodeRoute(r *http.Request) bool {
+	path := strings.TrimRight(r.URL.Path, "/")
+	switch path {
+	case "/api/node/master":
+		return r.Method == http.MethodGet || r.Method == http.MethodPut
+	case "/api/node/master/usage/reset":
+		return r.Method == http.MethodPost
+	default:
+		return false
+	}
+}
+
 func isNativeNodeRoute(r *http.Request) bool {
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return false
@@ -403,6 +419,12 @@ func isNativeNodeRoute(r *http.Request) bool {
 		return r.Method == http.MethodGet
 	case "/api/nodes/usage":
 		return r.Method == http.MethodGet
+	case "/api/node":
+		return r.Method == http.MethodPost
+	case "/api/node/settings":
+		return r.Method == http.MethodGet
+	case "/api/node/certificate/new":
+		return r.Method == http.MethodPost
 	}
 
 	if !strings.HasPrefix(path, "/api/node/") {
@@ -419,11 +441,13 @@ func isNativeNodeRoute(r *http.Request) bool {
 	suffix := strings.Join(parts[1:], "/")
 	switch suffix {
 	case "":
-		return r.Method == http.MethodGet
+		return r.Method == http.MethodGet || r.Method == http.MethodPut || r.Method == http.MethodDelete
 	case "reconnect", "restart", "sync", "xray/update", "geo/update", "service/restart", "service/update":
 		return r.Method == http.MethodPost
 	case "logs", "usage/daily":
 		return r.Method == http.MethodGet
+	case "certificate/regenerate", "usage/reset":
+		return r.Method == http.MethodPost
 	default:
 		return false
 	}

@@ -2,7 +2,6 @@ import importlib
 
 
 JOB_MODULES = (
-    "add_db_users",
     "remove_expired_users",
     "send_notifications",
 )

@@ -72,7 +72,6 @@ export const NodeSchema = z
 			.nullable()
 			.optional(),
 		message: z.string().nullable().optional(),
-		add_as_new_host: z.boolean().optional(),
 		usage_coefficient: z
 			.number()
 			.or(z.string().transform((v) => parseFloat(v))),
@@ -209,10 +208,6 @@ export type NodeStore = {
 	restartNodeService: (node: NodeType) => Promise<unknown>;
 	updateNodeService: (node: NodeServiceUpdateRequest) => Promise<unknown>;
 	resetNodeUsage: (node: NodeType) => Promise<unknown>;
-	updateMasterNode: (payload: {
-		data_limit: number | null;
-	}) => Promise<unknown>;
-	resetMasterUsage: () => Promise<unknown>;
 	deletingNode?: NodeType | null;
 	deleteNode: () => Promise<unknown>;
 	setDeletingNode: (node: NodeType | null) => void;
@@ -275,17 +270,6 @@ export const useNodes = create<NodeStore>((set, get) => ({
 	},
 	resetNodeUsage(body) {
 		return fetch(`/node/${body.id}/usage/reset`, {
-			method: "POST",
-		});
-	},
-	updateMasterNode(body) {
-		return fetch("/node/master", {
-			method: "PUT",
-			body,
-		});
-	},
-	resetMasterUsage() {
-		return fetch("/node/master/usage/reset", {
 			method: "POST",
 		});
 	},

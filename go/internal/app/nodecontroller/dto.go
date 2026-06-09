@@ -1,23 +1,5 @@
 package nodecontroller
 
-const (
-	ActionConnect           = "node.connect"
-	ActionReconnect         = "node.reconnect"
-	ActionRestart           = "node.restart"
-	ActionHealth            = "node.health"
-	ActionMetrics           = "node.metrics"
-	ActionLogs              = "node.logs"
-	ActionList              = "node.list"
-	ActionGet               = "node.get"
-	ActionSync              = "node.sync"
-	ActionUpdateRuntime     = "node.runtime.update"
-	ActionUpdateGeo         = "node.geo.update"
-	ActionRestartService    = "node.service.restart"
-	ActionUpdateService     = "node.service.update"
-	ActionProcessOperations = "node.operations.process"
-	ActionCollectUsage      = "usage.collect"
-)
-
 type Request struct {
 	NodeID     int64  `json:"node_id"`
 	ConfigJSON string `json:"config_json,omitempty"`

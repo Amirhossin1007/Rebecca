@@ -5,7 +5,6 @@ import {
 	AlertTitle,
 	Button,
 	Input as ChakraInput,
-	Checkbox,
 	Collapse,
 	chakra,
 	FormControl,
@@ -106,9 +105,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 
 	const form = useForm({
 		resolver: zodResolver(NodeSchema),
-		defaultValues: isAddMode
-			? { ...getNodeDefaultValues(), add_as_new_host: false }
-			: node,
+		defaultValues: isAddMode ? getNodeDefaultValues() : node,
 	});
 
 	const _certificateToUse = !isAddMode ? node?.node_certificate : undefined;
@@ -126,7 +123,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 			return;
 		}
 		if (isAddMode) {
-			form.reset({ ...getNodeDefaultValues(), add_as_new_host: false });
+			form.reset(getNodeDefaultValues());
 			setDataLimitInput("");
 			setShowCertificate(false);
 		} else if (node) {
@@ -377,15 +374,6 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 									<FormErrorMessage>{dataLimitError}</FormErrorMessage>
 								)}
 							</FormControl>
-							{isAddMode && (
-								<FormControl>
-									<Checkbox {...form.register("add_as_new_host")}>
-										<FormLabel m={0}>
-											{t("nodes.addHostForEveryInbound")}
-										</FormLabel>
-									</Checkbox>
-								</FormControl>
-							)}
 							<Button
 								type="submit"
 								colorScheme="primary"

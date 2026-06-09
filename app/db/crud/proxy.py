@@ -32,9 +32,6 @@ from app.models.proxy import (
     ProxySettings,
 )
 
-# MasterSettingsService not available in current project structure
-MASTER_NODE_NAME = "Master"
-
 _USER_STATUS_ENUM_ENSURED = False
 
 _logger = logging.getLogger(__name__)

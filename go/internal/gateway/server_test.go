@@ -19,7 +19,12 @@ func TestIsNativeNodeRoute(t *testing.T) {
 	}{
 		{name: "nodes list", method: http.MethodGet, path: "/api/nodes", want: true},
 		{name: "nodes usage", method: http.MethodGet, path: "/api/nodes/usage", want: true},
+		{name: "node settings", method: http.MethodGet, path: "/api/node/settings", want: true},
+		{name: "node certificate new", method: http.MethodPost, path: "/api/node/certificate/new", want: true},
+		{name: "node create", method: http.MethodPost, path: "/api/node", want: true},
 		{name: "node get", method: http.MethodGet, path: "/api/node/12", want: true},
+		{name: "node update", method: http.MethodPut, path: "/api/node/12", want: true},
+		{name: "node delete", method: http.MethodDelete, path: "/api/node/12", want: true},
 		{name: "node reconnect", method: http.MethodPost, path: "/api/node/12/reconnect", want: true},
 		{name: "node restart", method: http.MethodPost, path: "/api/node/12/restart", want: true},
 		{name: "node sync", method: http.MethodPost, path: "/api/node/12/sync", want: true},
@@ -29,9 +34,10 @@ func TestIsNativeNodeRoute(t *testing.T) {
 		{name: "node geo update", method: http.MethodPost, path: "/api/node/12/geo/update", want: true},
 		{name: "node service restart", method: http.MethodPost, path: "/api/node/12/service/restart", want: true},
 		{name: "node service update", method: http.MethodPost, path: "/api/node/12/service/update", want: true},
+		{name: "node certificate regenerate", method: http.MethodPost, path: "/api/node/12/certificate/regenerate", want: true},
+		{name: "node usage reset", method: http.MethodPost, path: "/api/node/12/usage/reset", want: true},
 		{name: "node websocket logs stays python", method: http.MethodGet, path: "/api/node/12/logs", header: "websocket", want: false},
-		{name: "node create stays python", method: http.MethodPost, path: "/api/node", want: false},
-		{name: "node update stays python", method: http.MethodPut, path: "/api/node/12", want: false},
+		{name: "master node route is deprecated", method: http.MethodGet, path: "/api/node/master", want: false},
 		{name: "runtime route stays python", method: http.MethodGet, path: "/api/core", want: false},
 	}
 
@@ -43,6 +49,164 @@ func TestIsNativeNodeRoute(t *testing.T) {
 			}
 			if got := isNativeNodeRoute(req); got != tt.want {
 				t.Fatalf("isNativeNodeRoute() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNativeNodeMutationRoutesProxyToMasterAPI(t *testing.T) {
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("native node route reached python: %s %s", r.Method, r.URL.Path)
+	}))
+	defer python.Close()
+	masterHits := 0
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		masterHits++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer master.Close()
+	pythonURL := strings.TrimPrefix(python.URL, "http://")
+	host, portValue, err := net.SplitHostPort(pythonURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		Addr:             "127.0.0.1:0",
+		PythonHost:       host,
+		PythonPort:       port,
+		MasterAPIURL:     master.URL,
+		NativeNodeRoutes: true,
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/node/settings"},
+		{method: http.MethodPost, path: "/api/node/certificate/new"},
+		{method: http.MethodPost, path: "/api/node"},
+		{method: http.MethodPut, path: "/api/node/12"},
+		{method: http.MethodDelete, path: "/api/node/12"},
+		{method: http.MethodPost, path: "/api/node/12/certificate/regenerate"},
+		{method: http.MethodPost, path: "/api/node/12/usage/reset"},
+		{method: http.MethodGet, path: "/api/nodes"},
+		{method: http.MethodGet, path: "/api/node/12"},
+		{method: http.MethodPost, path: "/api/node/12/reconnect"},
+		{method: http.MethodPost, path: "/api/node/12/restart"},
+		{method: http.MethodPost, path: "/api/node/12/sync"},
+		{method: http.MethodGet, path: "/api/node/12/logs"},
+		{method: http.MethodPost, path: "/api/node/12/xray/update"},
+		{method: http.MethodPost, path: "/api/node/12/geo/update"},
+		{method: http.MethodPost, path: "/api/node/12/service/restart"},
+		{method: http.MethodPost, path: "/api/node/12/service/update"},
+	}
+	for _, tc := range routes {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			server.server.Handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if masterHits != len(routes) {
+		t.Fatalf("master hits=%d want %d", masterHits, len(routes))
+	}
+}
+
+func TestNativeNodeRoutesReturnUnavailableWhenMasterAPIDown(t *testing.T) {
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("native node route reached python while master API was down: %s %s", r.Method, r.URL.Path)
+	}))
+	defer python.Close()
+	pythonURL := strings.TrimPrefix(python.URL, "http://")
+	host, portValue, err := net.SplitHostPort(pythonURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		Addr:             "127.0.0.1:0",
+		PythonHost:       host,
+		PythonPort:       port,
+		NativeNodeRoutes: true,
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/node", nil)
+	rec := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "native Go Master API unavailable") {
+		t.Fatalf("unexpected body=%s", rec.Body.String())
+	}
+}
+
+func TestDeprecatedMasterNodeRoutesReturnGone(t *testing.T) {
+	python := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("deprecated master node route reached python: %s %s", r.Method, r.URL.Path)
+	}))
+	defer python.Close()
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("deprecated master node route reached master api: %s %s", r.Method, r.URL.Path)
+	}))
+	defer master.Close()
+	pythonURL := strings.TrimPrefix(python.URL, "http://")
+	host, portValue, err := net.SplitHostPort(pythonURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		Addr:             "127.0.0.1:0",
+		PythonHost:       host,
+		PythonPort:       port,
+		MasterAPIURL:     master.URL,
+		NativeNodeRoutes: true,
+	}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/node/master"},
+		{method: http.MethodPut, path: "/api/node/master"},
+		{method: http.MethodPost, path: "/api/node/master/usage/reset"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			server.server.Handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusGone {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
 		})
 	}

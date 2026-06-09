@@ -9,7 +9,6 @@ from telebot.formatting import escape_html
 from app.runtime import logger
 from app.db.models import User
 from app.models.admin import Admin
-from app.models.node import NodeResponse, NodeStatus
 from app.models.user import UserDataLimitResetStrategy
 from app.telegram import ensure_forum_topic, get_bot
 from app.telegram.utils.keyboard import BotKeyboard
@@ -19,7 +18,6 @@ from app.utils.system import readable_size
 CATEGORY_USERS = "users"
 CATEGORY_AUTO_RENEW = "auto_renew"
 CATEGORY_LOGIN = "login"
-CATEGORY_NODES = "nodes"
 CATEGORY_ADMINS = "admins"
 CATEGORY_ERRORS = "errors"
 
@@ -502,106 +500,6 @@ def report_login(
     )
 
     report(text=text, category=CATEGORY_LOGIN)
-
-
-def report_node_created(
-    node: NodeResponse,
-    by: str,
-) -> None:
-    text = """\
-🆕 <b>#NodeCreated</b>
-━━━━━━━━━━━━
-<b>Name:</b> <code>{name}</code>
-<b>Address:</b> <code>{address}</code>
-<b>API Port:</b> <code>{api_port}</code>
-<b>Usage Coefficient:</b> <code>{coefficient}</code>
-<b>Data Limit:</b> <code>{data_limit}</code>
-━━━━━━━━━━━━
-<b>By:</b> <b>#{by}</b>""".format(
-        name=escape_html(node.name),
-        address=escape_html(node.address),
-        api_port=node.api_port,
-        coefficient=node.usage_coefficient,
-        data_limit=_format_data_limit(getattr(node, "data_limit", None)),
-        by=escape_html(by),
-    )
-
-    report(text=text, category=CATEGORY_NODES)
-
-
-def report_node_deleted(
-    node_name: str,
-    by: str,
-) -> None:
-    text = """\
-🗑️ <b>#NodeDeleted</b>
-━━━━━━━━━━━━
-<b>Name:</b> <code>{name}</code>
-<b>By:</b> <b>#{by}</b>""".format(
-        name=escape_html(node_name),
-        by=escape_html(by),
-    )
-    report(text=text, category=CATEGORY_NODES)
-
-
-def report_node_usage_reset(
-    node: NodeResponse,
-    by: str,
-) -> None:
-    text = """\
-🔄 <b>#NodeUsageReset</b>
-━━━━━━━━━━━━
-<b>Name:</b> <code>{name}</code>
-<b>By:</b> <b>#{by}</b>""".format(
-        name=escape_html(node.name),
-        by=escape_html(by),
-    )
-    report(text=text, category=CATEGORY_NODES)
-
-
-def report_node_status_change(
-    node: NodeResponse,
-    previous_status: Optional[NodeStatus] = None,
-) -> None:
-    status_labels = {
-        NodeStatus.connected: "🟢 Connected",
-        NodeStatus.connecting: "🟡 Connecting",
-        NodeStatus.error: "🔴 Error",
-        NodeStatus.disabled: "⛔ Disabled",
-        NodeStatus.limited: "📉 Limited",
-    }
-    current_label = status_labels.get(node.status, str(node.status))
-    previous_label = status_labels.get(previous_status, str(previous_status)) if previous_status else "-"
-
-    text = """\
-📡 <b>#NodeStatus</b>
-━━━━━━━━━━━━
-<b>Name:</b> <code>{name}</code>
-<b>Status:</b> <code>{status}</code>
-<b>Previous:</b> <code>{previous}</code>
-<b>Message:</b> <code>{message}</code>""".format(
-        name=escape_html(node.name),
-        status=escape_html(current_label),
-        previous=escape_html(previous_label),
-        message=escape_html(node.message or "-"),
-    )
-
-    report(text=text, category=CATEGORY_NODES)
-
-
-def report_node_error(
-    node_name: str,
-    error: str,
-) -> None:
-    text = """\
-❗ <b>#NodeError</b>
-━━━━━━━━━━━━
-<b>Name:</b> <code>{name}</code>
-<b>Error:</b> <code>{error}</code>""".format(
-        name=escape_html(node_name),
-        error=escape_html(error),
-    )
-    report(text=text, category=CATEGORY_ERRORS)
 
 
 def report_admin_created(

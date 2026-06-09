@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const masterNodeName = "Master"
-
 type Repository struct {
 	db      *sql.DB
 	dialect string
@@ -27,7 +25,7 @@ func (r Repository) ListNodes(ctx context.Context) ([]UsageRow, error) {
 	}
 	defer rows.Close()
 
-	result := []UsageRow{{NodeID: nil, NodeName: masterNodeName, UsedTraffic: 0}}
+	result := []UsageRow{}
 	for rows.Next() {
 		var id int64
 		var name string
@@ -171,12 +169,11 @@ func (r Repository) AdminUsageByDay(ctx context.Context, adminID int64, nodeID *
 		    AND nu.created_at >= ? AND nu.created_at <= ?`, bucket)
 
 	if nodeID != nil {
-		if *nodeID == 0 {
-			query += ` AND nu.node_id IS NULL`
-		} else {
-			query += ` AND nu.node_id = ?`
-			args = append(args, *nodeID)
+		if *nodeID <= 0 {
+			return []DateUsageRow{}, nil
 		}
+		query += ` AND nu.node_id = ?`
+		args = append(args, *nodeID)
 	}
 
 	query += ` GROUP BY bucket ORDER BY bucket`
@@ -223,16 +220,14 @@ func (r Repository) AdminUsageByNodes(ctx context.Context, adminID int64, start 
 		if !downlink.Valid || downlink.Int64 <= 0 {
 			continue
 		}
-		var idPtr *int64
-		name := masterNodeName
-		if nodeID.Valid {
-			id := nodeID.Int64
-			idPtr = &id
-			if nodeName, ok := names[id]; ok {
-				name = nodeName
-			} else {
-				name = fmt.Sprintf("Node %d", id)
-			}
+		if !nodeID.Valid {
+			continue
+		}
+		id := nodeID.Int64
+		idPtr := &id
+		name := fmt.Sprintf("Node %d", id)
+		if nodeName, ok := names[id]; ok {
+			name = nodeName
 		}
 		result = append(result, NodeTrafficRow{NodeID: idPtr, NodeName: name, Uplink: 0, Downlink: downlink.Int64})
 	}
@@ -251,8 +246,8 @@ func (r Repository) NodesUsage(ctx context.Context, start time.Time, end time.Ti
 		return nil, err
 	}
 
-	result := []NodeTrafficRow{{NodeID: nil, NodeName: masterNodeName, Uplink: 0, Downlink: 0}}
-	index := map[string]int{nodeKey(nil): 0}
+	result := []NodeTrafficRow{}
+	index := map[string]int{}
 	nodeIDs := make([]int64, 0, len(names))
 	for id := range names {
 		nodeIDs = append(nodeIDs, id)
@@ -287,16 +282,14 @@ func (r Repository) NodesUsage(ctx context.Context, start time.Time, end time.Ti
 			return nil, err
 		}
 
-		var idPtr *int64
-		name := masterNodeName
-		if nodeID.Valid {
-			id := nodeID.Int64
-			idPtr = &id
-			if nodeName, ok := names[id]; ok {
-				name = nodeName
-			} else {
-				name = fmt.Sprintf("Node %d", id)
-			}
+		if !nodeID.Valid {
+			continue
+		}
+		id := nodeID.Int64
+		idPtr := &id
+		name := fmt.Sprintf("Node %d", id)
+		if nodeName, ok := names[id]; ok {
+			name = nodeName
 		}
 		key := nodeKey(idPtr)
 		row := NodeTrafficRow{NodeID: idPtr, NodeName: name, Uplink: uplink.Int64, Downlink: downlink.Int64}

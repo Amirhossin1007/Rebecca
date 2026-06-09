@@ -4,7 +4,6 @@ from app import runtime
 from app.services import TelegramSettingsService
 from app.db.models import UserStatus
 from app.models.admin import Admin
-from app.models.node import NodeResponse, NodeStatus
 from app.models.user import UserResponse
 from app.utils.notification import (
     Notification,
@@ -51,21 +50,6 @@ def _call_telegram(method_name: str, *args, **kwargs) -> bool:
 
 def _event_enabled(event_key: str) -> bool:
     return TelegramSettingsService.is_event_enabled(event_key)
-
-
-def _node_response(node) -> NodeResponse:
-    if isinstance(node, NodeResponse):
-        return node
-    return NodeResponse.model_validate(node)
-
-
-_NODE_STATUS_EVENT_MAP = {
-    NodeStatus.connected: "node.status.connected",
-    NodeStatus.connecting: "node.status.connecting",
-    NodeStatus.error: "node.status.error",
-    NodeStatus.disabled: "node.status.disabled",
-    NodeStatus.limited: "node.status.limited",
-}
 
 
 def status_change(
@@ -195,48 +179,6 @@ def login(username: str, password: str, client_ip: str, success: bool) -> None:
             client_ip=client_ip,
             status="✅ Success" if success else "❌ Failed",
         )
-
-
-def node_created(node, by: Admin) -> None:
-    node_resp = _node_response(node)
-    actor = getattr(by, "username", str(by))
-    enabled = _event_enabled("node.created")
-    if enabled:
-        _call_telegram("report_node_created", node=node_resp, by=actor)
-
-
-def node_deleted(node, by: Admin) -> None:
-    node_resp = _node_response(node)
-    actor = getattr(by, "username", str(by))
-    enabled = _event_enabled("node.deleted")
-    if enabled:
-        _call_telegram("report_node_deleted", node_name=node_resp.name, by=actor)
-
-
-def node_usage_reset(node, by: Admin) -> None:
-    node_resp = _node_response(node)
-    actor = getattr(by, "username", str(by))
-    enabled = _event_enabled("node.usage_reset")
-    if enabled:
-        _call_telegram("report_node_usage_reset", node=node_resp, by=actor)
-
-
-def node_status_change(node, previous_status: Optional[NodeStatus] = None) -> None:
-    node_resp = _node_response(node)
-    event_key = _NODE_STATUS_EVENT_MAP.get(node_resp.status)
-    enabled = True if event_key is None else _event_enabled(event_key)
-    if enabled:
-        _call_telegram(
-            "report_node_status_change",
-            node=node_resp,
-            previous_status=previous_status,
-        )
-
-
-def node_error(node_name: str, error: str) -> None:
-    enabled = _event_enabled("errors.node")
-    if enabled:
-        _call_telegram("report_node_error", node_name=node_name, error=error)
 
 
 def admin_created(admin: Admin, by: Admin) -> None:

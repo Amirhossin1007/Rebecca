@@ -19,6 +19,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
+	nodeapp "github.com/rebeccapanel/rebecca/go/internal/app/node"
 	"github.com/rebeccapanel/rebecca/go/internal/app/xrayconfig"
 )
 
@@ -140,6 +141,11 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 			host_id INTEGER NOT NULL,
 			sort INTEGER DEFAULT 0
 		)`,
+		`CREATE TABLE tls (
+			id INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			certificate TEXT NOT NULL
+		)`,
 		`CREATE TABLE exclude_inbounds_association (
 			proxy_id INTEGER NOT NULL,
 			inbound_tag TEXT NOT NULL
@@ -150,10 +156,40 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 		)`,
 		`CREATE TABLE nodes (
 			id INTEGER PRIMARY KEY,
-			name TEXT,
+			name TEXT UNIQUE,
+			address TEXT NOT NULL DEFAULT '127.0.0.1',
+			port INTEGER NOT NULL DEFAULT 62050,
+			api_port INTEGER NOT NULL DEFAULT 62051,
+			xray_version TEXT NULL,
 			status TEXT DEFAULT 'connected',
+			last_status_change DATETIME NULL,
+			message TEXT NULL,
+			created_at DATETIME NULL,
+			uplink INTEGER NOT NULL DEFAULT 0,
+			downlink INTEGER NOT NULL DEFAULT 0,
+			usage_coefficient REAL NOT NULL DEFAULT 1,
+			geo_mode TEXT NOT NULL DEFAULT 'default',
+			data_limit INTEGER NULL,
+			use_nobetci INTEGER NOT NULL DEFAULT 0,
+			nobetci_port INTEGER NULL,
+			proxy_enabled INTEGER NOT NULL DEFAULT 0,
+			proxy_type TEXT NULL,
+			proxy_host TEXT NULL,
+			proxy_port INTEGER NULL,
+			proxy_username TEXT NULL,
+			proxy_password TEXT NULL,
+			certificate TEXT NULL,
+			certificate_key TEXT NULL,
 			xray_config_mode TEXT DEFAULT 'default',
 			xray_config TEXT NULL
+		)`,
+		`CREATE TABLE pending_node_certificates (
+			id INTEGER PRIMARY KEY,
+			token TEXT NOT NULL UNIQUE,
+			certificate TEXT NOT NULL,
+			certificate_key TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME NOT NULL
 		)`,
 		`CREATE TABLE xray_config (
 			id INTEGER PRIMARY KEY,
@@ -167,6 +203,21 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 			user_id INTEGER,
 			node_id INTEGER,
 			used_traffic BIGINT DEFAULT 0
+		)`,
+		`CREATE TABLE node_usages (
+			id INTEGER PRIMARY KEY,
+			created_at DATETIME NOT NULL,
+			node_id INTEGER,
+			uplink BIGINT DEFAULT 0,
+			downlink BIGINT DEFAULT 0
+		)`,
+		`CREATE TABLE outbound_traffic (
+			id INTEGER PRIMARY KEY,
+			target_id TEXT NOT NULL,
+			node_id INTEGER NULL,
+			outbound_id TEXT NOT NULL,
+			uplink BIGINT DEFAULT 0,
+			downlink BIGINT DEFAULT 0
 		)`,
 		`CREATE TABLE node_operations (
 			id INTEGER PRIMARY KEY,
@@ -182,6 +233,7 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 			updated_at DATETIME NULL
 		)`,
 		`INSERT INTO jwt (id, admin_secret_key, secret_key) VALUES (1, 'admin-secret', 'legacy-secret')`,
+		`INSERT INTO tls (id, key, certificate) VALUES (1, 'legacy-key', 'legacy-cert')`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -206,7 +258,8 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 			repo,
 			adminapp.WithSudoers([]string{"env-admin"}),
 		),
-		configRepo: xrayconfig.NewRepository(db, "sqlite", xrayconfig.Options{}),
+		nodeMutations: nodeapp.NewRepository(db, "sqlite"),
+		configRepo:    xrayconfig.NewRepository(db, "sqlite", xrayconfig.Options{}),
 	}, db
 }
 

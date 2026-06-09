@@ -32,7 +32,6 @@ pyinstaller_add_data() {
 }
 
 JOB_HIDDEN_IMPORT_ARGS=(
-    --hidden-import app.jobs.add_db_users
     --hidden-import app.jobs.remove_expired_users
     --hidden-import app.jobs.send_notifications
 )

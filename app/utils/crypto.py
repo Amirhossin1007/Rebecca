@@ -1,7 +1,6 @@
 import secrets
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
 from OpenSSL import crypto
 
 
@@ -36,21 +35,3 @@ def generate_certificate(cn: str = None):
 
 def generate_unique_cn(node_id: int = None, node_name: str = None) -> str:
     return secrets.token_hex(16)
-
-
-def extract_public_key_from_certificate(cert_pem: str) -> str:
-    """
-    Extract a PEM-encoded public key from a PEM certificate string.
-    """
-    if not cert_pem:
-        raise ValueError("Certificate is empty")
-
-    cert = x509.load_pem_x509_certificate(
-        cert_pem.encode("utf-8") if isinstance(cert_pem, str) else cert_pem,
-        default_backend(),
-    )
-    public_key = cert.public_key()
-    return public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("utf-8")
