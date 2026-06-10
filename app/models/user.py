@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models.admin import Admin
 from app.models.proxy import ProxySettings, ProxyTypes
-from app.subscription.share import generate_v2ray_links
 from app.utils.credentials import (
     apply_credentials_to_settings,
     runtime_proxy_settings,
@@ -660,16 +659,10 @@ class UserResponse(User):
 
     @model_validator(mode="after")
     def validate_links(self):
-        # Skip expensive link generation when loading user lists
-        if _skip_expensive_computations.get():
-            return self
-        if not self.links:
-            self.links = generate_v2ray_links(
-                self.proxies,
-                self.inbounds,
-                extra_data=self.model_dump(),
-                reverse=False,
-            )
+        # Subscription/config generation is Go-native. Python serializers keep
+        # already-populated links only for transitional response compatibility.
+        if self.links is None:
+            self.links = []
         return self
 
     @model_validator(mode="after")
@@ -712,23 +705,12 @@ class UserResponse(User):
 
     @model_validator(mode="after")
     def validate_subscription_url(self):
-        if _skip_expensive_computations.get():
-            return self
         if self.subscription_url and self.subscription_urls:
             if self.credential_key and not self.key_subscription_url:
                 self.key_subscription_url = self.subscription_urls.get("key")  # type: ignore[attr-defined]
             return self
-        try:
-            from app.utils.subscription_links import build_subscription_links
-
-            links = build_subscription_links(self)
-        except Exception:
-            links = {}
-
-        self.subscription_urls = {key: value for key, value in links.items() if key != "primary"}
-        self.subscription_url = links.get("primary") or next(iter(self.subscription_urls.values()), "")
-
-        # Preserve legacy field for compatibility
+        if self.subscription_urls is None:
+            self.subscription_urls = {}
         if self.credential_key:
             self.key_subscription_url = self.subscription_urls.get("key")  # type: ignore[attr-defined]
         return self
@@ -837,7 +819,7 @@ class UserResponse(User):
 
 
 class UserCreateResponse(UserResponse):
-    # Include share links in create-user responses.
+    # Go user routes populate links for active API responses.
     links: List[str] = Field(default_factory=list, exclude=False)
 
 

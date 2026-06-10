@@ -196,64 +196,6 @@ $ completion show [OPTIONS]
 * `--shell [bash|zsh|fish|powershell|pwsh]`: The shell to install completion for.
 * `--help`: Show this message and exit.
 
-## `subscription`
-
-**Usage**:
-
-```console
-$ subscription [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `get-config`: Generates a subscription config.
-* `get-link`: Prints the given user's subscription link.
-
-### `subscription get-config`
-
-Generates a subscription config.
-
-Generates a subscription config for the given user in the given format.
-
-The output will be written in the output file when the `output-file` is present,
-  otherwise will be shown in the terminal.
-
-**Usage**:
-
-```console
-$ subscription get-config [OPTIONS]
-```
-
-**Options**:
-
-* `-u, --username TEXT`: [required]
-* `-f, --format [v2ray|clash]`: [required]
-* `-o, --output TEXT`: Writes the generated config in the file if provided
-* `--base64`: Encodes output in base64 format if present
-* `--help`: Show this message and exit.
-
-### `subscription get-link`
-
-Prints the given user's subscription link.
-
-NOTE: This command needs `XRAY_SUBSCRIPTION_URL_PREFIX` environment variable to be set
-  in order to work correctly.
-
-**Usage**:
-
-```console
-$ subscription get-link [OPTIONS]
-```
-
-**Options**:
-
-* `-u, --username TEXT`: [required]
-* `--help`: Show this message and exit.
-
 ## `user`
 
 **Usage**:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -10,8 +9,8 @@ from app.db import models as db_models
 
 
 def get_xray_config_cached(db: Session, force_refresh: bool = False) -> dict:
-    # TODO(go-config-cleanup): keep only until Python subscription/share and
-    # access-insight compatibility no longer need to inspect stored Xray JSON.
+    # TODO(go-config-cleanup): keep only until remaining Python validators no
+    # longer need to inspect stored Xray JSON.
     del force_refresh
     return crud.get_xray_config(db)
 
@@ -64,44 +63,53 @@ def get_service_host_map_cached(service_id: Optional[int], force_refresh: bool =
         return host_map
 
 
-def _runtime_inbounds_by_tag() -> Dict[str, Any]:
-    try:
-        from app import runtime as runtime_state
+def _stream_metadata(inbound: dict) -> dict:
+    stream = inbound.get("streamSettings") or {}
+    if not isinstance(stream, dict):
+        stream = {}
+    network = stream.get("network") or "tcp"
+    network_settings = stream.get(f"{network}Settings") or {}
+    if not isinstance(network_settings, dict):
+        network_settings = {}
+    headers = network_settings.get("headers") or {}
+    if not isinstance(headers, dict):
+        headers = {}
+    tls_settings = stream.get("tlsSettings") or stream.get("realitySettings") or stream.get("xtlsSettings") or {}
+    if not isinstance(tls_settings, dict):
+        tls_settings = {}
+    return {
+        "network": network,
+        "tls": stream.get("security"),
+        "path": network_settings.get("path") or "",
+        "host": headers.get("Host", []),
+        "sni": tls_settings.get("serverName") or "",
+    }
 
-        runtime_xray = runtime_state.xray
-        runtime_config = getattr(runtime_xray, "config", None)
-        runtime_inbounds = getattr(runtime_config, "inbounds_by_tag", None)
-        runtime_protocols = getattr(runtime_config, "inbounds_by_protocol", None)
-        inbounds: Dict[str, Any] = {}
-        if isinstance(runtime_inbounds, dict):
-            inbounds.update(
-                {
-                    tag: dict(inbound) if isinstance(inbound, dict) else {"tag": tag}
-                    for tag, inbound in runtime_inbounds.items()
-                }
-            )
-        if isinstance(runtime_protocols, dict):
-            for protocol, protocol_inbounds in runtime_protocols.items():
-                for inbound in protocol_inbounds or []:
-                    if not isinstance(inbound, dict):
-                        continue
-                    tag = inbound.get("tag")
-                    if not tag:
-                        continue
-                    item = inbounds.setdefault(tag, {"tag": tag})
-                    item.setdefault("tag", tag)
-                    item.setdefault("protocol", protocol)
-        return inbounds
-    except Exception:
-        return {}
+
+def _inbounds_from_raw_config(raw_config: dict) -> Dict[str, Any]:
+    inbounds: Dict[str, Any] = {}
+    for inbound in raw_config.get("inbounds") or []:
+        if not isinstance(inbound, dict):
+            continue
+        tag = inbound.get("tag")
+        protocol = inbound.get("protocol")
+        if not tag or not protocol:
+            continue
+        item = dict(inbound)
+        item.setdefault("tag", tag)
+        item.setdefault("protocol", protocol)
+        item.setdefault("port", inbound.get("port"))
+        item.update({key: value for key, value in _stream_metadata(inbound).items() if key not in item})
+        inbounds.setdefault(str(tag), item)
+    return inbounds
 
 
 def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict[str, Any]:
-    # TODO(go-config-cleanup): active inbound management is Go-native. This
-    # reader remains for legacy Python serializers that have not yet moved.
+    # Active inbound management is Go-native. This lightweight reader is kept
+    # only for transitional Python validators/serializers that need tag and
+    # protocol metadata from stored JSON.
     del force_refresh
     from app.utils.xray_targets import iter_stored_raw_configs
-    from app.xray.config import XRayConfig
 
     inbounds: Dict[str, Any] = {}
     try:
@@ -109,13 +117,8 @@ def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict
     except Exception:
         config_sources = []
     for _target_id, raw_config in config_sources:
-        try:
-            config = XRayConfig(raw_config, api_port=8080)
-        except Exception:
+        if not isinstance(raw_config, dict):
             continue
-        for tag, inbound in config.inbounds_by_tag.items():
+        for tag, inbound in _inbounds_from_raw_config(raw_config).items():
             inbounds.setdefault(tag, inbound)
-    runtime_inbounds = _runtime_inbounds_by_tag()
-    if runtime_inbounds and (not inbounds or os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1"):
-        inbounds.update(runtime_inbounds)
     return inbounds
