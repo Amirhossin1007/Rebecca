@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/rebeccapanel/rebecca/go/internal/app/migrations"
 	"github.com/rebeccapanel/rebecca/go/internal/platform/db"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/curve25519"
@@ -180,6 +181,8 @@ func (c *cli) run(args []string) error {
 		return c.runUser(args[1:])
 	case "subscription":
 		return c.runSubscription(args[1:])
+	case "migrate":
+		return c.runMigrate(args[1:])
 	case "completion":
 		fmt.Println("Shell completion is not needed by the Go CLI yet.")
 		return nil
@@ -188,6 +191,64 @@ func (c *cli) run(args []string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
+	}
+}
+
+func (c *cli) runMigrate(args []string) error {
+	if len(args) == 0 {
+		printMigrateUsage()
+		return nil
+	}
+	ctx := context.Background()
+	switch args[0] {
+	case "up":
+		fs := flag.NewFlagSet("migrate up", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		targetVersion := fs.Int64("to", 0, "target goose migration version")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *targetVersion > 0 {
+			if err := migrations.RunMigrationsTo(ctx, c.db, c.dialect, *targetVersion); err != nil {
+				return err
+			}
+		} else if err := migrations.RunMigrations(ctx, c.db, c.dialect); err != nil {
+			return err
+		}
+		version, err := migrations.Version(ctx, c.db, c.dialect)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Migrations applied. goose version: %d\n", version.GooseVersion)
+		if version.HasAlembic {
+			fmt.Printf("Legacy Alembic revision detected: %s\n", version.AlembicRevision)
+		}
+		return nil
+	case "status":
+		status, err := migrations.Status(ctx, c.db, c.dialect)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Dialect: %s\n", status.Version.Dialect)
+		if status.Version.HasGoose {
+			fmt.Printf("Goose version: %d\n", status.Version.GooseVersion)
+		} else {
+			fmt.Println("Goose version: not initialized")
+		}
+		if status.Version.HasAlembic {
+			fmt.Printf("Alembic revision: %s\n", status.Version.AlembicRevision)
+		}
+		if status.Message != "" {
+			fmt.Println(status.Message)
+		}
+		return nil
+	case "down", "downgrade":
+		return migrations.UnsupportedDowngrade()
+	case "-h", "--help", "help":
+		printMigrateUsage()
+		return nil
+	default:
+		return fmt.Errorf("unknown migrate command %q", args[0])
 	}
 }
 
@@ -2211,6 +2272,7 @@ func printUsage() {
 	fmt.Println("  admin          Manage admins")
 	fmt.Println("  user           Manage users")
 	fmt.Println("  subscription   Subscription helpers")
+	fmt.Println("  migrate        Database migrations")
 }
 
 func printAdminUsage() {
@@ -2226,6 +2288,12 @@ func printUserUsage() {
 func printSubscriptionUsage() {
 	fmt.Println("Usage: rebecca cli subscription <command> [options]")
 	fmt.Println("Commands: get-link, get-config")
+}
+
+func printMigrateUsage() {
+	fmt.Println("Usage: rebecca migrate <command>")
+	fmt.Println("Commands: up [--to version], status")
+	fmt.Println("Downgrades are intentionally unsupported.")
 }
 
 func exitErr(err error) {

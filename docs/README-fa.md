@@ -187,10 +187,10 @@ python3 -m pip install -r requirements.txt
 
 همچنین میتواند از , [Python Virtualenv](https://pypi.org/project/virtualenv/) هم استفاده کنید.
 
-سپس کامند زیر را اجرا کنید تا دیتابیس تنظیم شود.
+سپس کامند زیر را اجرا کنید تا migrationهای Go دیتابیس اجرا شوند.
 
 ```bash
-alembic upgrade head
+rebecca migrate up
 ```
 
 اگر می‌خواهید از CLI استفاده کنید، می‌توانید فایل `rebecca-cli.py` موجود را به نام اجرایی جدید لینک کنید و تکمیل خودکار آن را نصب کنید:

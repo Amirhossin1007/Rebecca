@@ -22,7 +22,7 @@ def ensure_users_credential_key_column() -> None:
     """
     Ensure the users table contains the credential_key column.
 
-    Some installations might skip Alembic migrations; rather than crashing,
+    Some installations might skip Go migrations; rather than crashing,
     attempt to add the missing column automatically so the application can start.
     """
     try:
@@ -53,7 +53,7 @@ def ensure_users_subadress_column() -> None:
     """
     Ensure the users table contains the subadress column used for 3x-ui compatibility.
 
-    Some installations might skip Alembic migrations; rather than crashing,
+    Some installations might skip Go migrations; rather than crashing,
     attempt to add the missing column automatically so the application can start.
     """
     try:

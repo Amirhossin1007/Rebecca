@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type Pool struct {
@@ -59,8 +60,19 @@ func Open(databaseURL string) (Pool, error) {
 	pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := sqlDB.PingContext(pingCtx); err != nil {
-		sqlDB.Close()
-		return Pool{}, err
+		_ = sqlDB.Close()
+		if dialect == "sqlite" && strings.Contains(err.Error(), "go-sqlite3 requires cgo") {
+			sqlDB, err = sql.Open("sqlite", dsn)
+			if err != nil {
+				return Pool{}, err
+			}
+			if pingErr := sqlDB.PingContext(pingCtx); pingErr != nil {
+				_ = sqlDB.Close()
+				return Pool{}, pingErr
+			}
+		} else {
+			return Pool{}, err
+		}
 	}
 
 	pool := Pool{DB: sqlDB, Dialect: dialect}

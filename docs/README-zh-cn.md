@@ -174,10 +174,10 @@ python3 -m pip install -r requirements.txt
 
 另外，为了拥有一个隔离的环境，您可以使用 [Python Virtualenv](https://pypi.org/project/virtualenv/)。
 
-然后运行以下命令运行数据库迁移脚本：
+然后运行以下命令运行 Go 数据库迁移：
 
 ```bash
-alembic upgrade head
+rebecca migrate up
 ```
 
 现在开始配置：

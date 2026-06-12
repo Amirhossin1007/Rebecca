@@ -185,11 +185,14 @@ python3 -m pip install -r requirements.txt
 
 Alternatively, to have an isolated environment you can use [Python Virtualenv](https://pypi.org/project/virtualenv/)
 
-Then run the following command to run the database migration scripts
+Then run the following command to run the Go database migrations:
 
 ```bash
-alembic upgrade head
+rebecca migrate up
 ```
+
+Downgrade migrations are not supported. For troubleshooting legacy databases,
+see `docs/MIGRATION_GO_ONLY.md`.
 
 If you want to use the CLI, you can link the bundled `rebecca-cli.py` to a new executable name and install the auto-completion:
 

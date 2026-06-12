@@ -142,7 +142,7 @@ def _ensure_user_deleted_status(db: Session) -> bool:
             with engine.begin() as conn:
                 conn.exec_driver_sql("ALTER TYPE userstatus ADD VALUE IF NOT EXISTS 'deleted'")
         else:
-            # SQLite and other backends require running the Alembic migration.
+            # SQLite and other backends require running the Go migration.
             return False
     except Exception:  # pragma: no cover - ALTER failure
         return False

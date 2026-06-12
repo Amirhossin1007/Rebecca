@@ -15,6 +15,7 @@ import (
 	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
 	adsapp "github.com/rebeccapanel/rebecca/go/internal/app/ads"
 	backupapp "github.com/rebeccapanel/rebecca/go/internal/app/backup"
+	"github.com/rebeccapanel/rebecca/go/internal/app/migrations"
 	nodeapp "github.com/rebeccapanel/rebecca/go/internal/app/node"
 	"github.com/rebeccapanel/rebecca/go/internal/app/nodecontroller"
 	settingsapp "github.com/rebeccapanel/rebecca/go/internal/app/settings"
@@ -49,6 +50,11 @@ func New(cfg Config) (*Server, error) {
 	pool, err := db.Open(cfg.Database)
 	if err != nil {
 		return nil, err
+	}
+	migrationCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := migrations.RunMigrations(migrationCtx, pool.DB, pool.Dialect); err != nil {
+		return nil, fmt.Errorf("run database migrations: %w", err)
 	}
 	adminRepo := adminapp.NewRepository(pool.DB, pool.Dialect)
 	nodeRepo := nodecontroller.NewRepository(pool.DB, pool.Dialect)

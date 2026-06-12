@@ -69,12 +69,27 @@ if [ $attempt -eq $max_attempts ]; then
     echo "Warning: Database connection timeout, proceeding anyway..."
 fi
 
-# Run migrations with timeout
+# Run Go/goose migrations with timeout. The Go gateway also runs migrations
+# before serving, but this keeps container startup explicit and compatible with
+# older launch flows that still invoke the Python process.
 echo "Running database migrations..."
-timeout 300 python -m alembic upgrade head || {
-    echo "Migration failed or timed out, but continuing..."
-    echo "You may need to run migrations manually: python -m alembic upgrade head"
-}
+if command -v rebecca >/dev/null 2>&1; then
+    MIGRATE_CMD="rebecca migrate up"
+elif [ -x "/usr/local/bin/rebecca" ]; then
+    MIGRATE_CMD="/usr/local/bin/rebecca migrate up"
+else
+    MIGRATE_CMD=""
+fi
+
+if [ -n "$MIGRATE_CMD" ]; then
+    timeout 300 $MIGRATE_CMD || {
+        echo "Migration failed or timed out, but continuing..."
+        echo "You may need to run migrations manually: rebecca migrate up"
+    }
+else
+    echo "Rebecca Go CLI not found; skipping explicit entrypoint migration."
+    echo "The Go gateway runs migrations on startup when it is the active process."
+fi
 
 # Start the application
 python main.py

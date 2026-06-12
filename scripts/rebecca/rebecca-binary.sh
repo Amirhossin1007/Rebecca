@@ -3746,6 +3746,7 @@ print_menu() {
         "status:Show status"
         "logs:Show logs"
         "cli:Rebecca CLI"
+        "migrate:Run database migrations"
         "install:Install Rebecca"
         "update:Update to latest version"
         "uninstall:Uninstall Rebecca"
@@ -3775,7 +3776,7 @@ print_menu() {
 
 map_choice_to_command() {
     local commands=(
-        up down restart status logs cli install update uninstall
+        up down restart status logs cli migrate install update uninstall
         script-install script-update script-uninstall
         core-update edit-env ssl help
     )
@@ -3803,6 +3804,7 @@ usage() {
     colorized_echo yellow "  status          $(tput sgr0)– Show status"
     colorized_echo yellow "  logs            $(tput sgr0)- Show logs"
     colorized_echo yellow "  cli             $(tput sgr0)- Rebecca CLI"
+    colorized_echo yellow "  migrate         $(tput sgr0)- Run database migrations"
     colorized_echo yellow "  install         $(tput sgr0)- Install Rebecca"
     colorized_echo yellow "  update          $(tput sgr0)- Update to latest/dev or a specific release"
     colorized_echo yellow "  uninstall       $(tput sgr0)- Uninstall Rebecca"
@@ -3855,6 +3857,7 @@ dispatch_command() {
         status) status_command "$@" ;;
         logs) logs_command "$@" ;;
         cli) cli_command "$@" ;;
+        migrate) cli_command migrate "$@" ;;
         install) install_command "$@" ;;
         update) update_command "$@" ;;
         uninstall) uninstall_command "$@" ;;

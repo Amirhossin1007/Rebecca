@@ -6,12 +6,14 @@ on:
       - "**.py"
       - "go/**"
       - "scripts/build_go_bridge.sh"
+      - "scripts/build_go_cli.sh"
       - ".github/workflows/test-db.yml"
   pull_request:
     paths:
       - "**.py"
       - "go/**"
       - "scripts/build_go_bridge.sh"
+      - "scripts/build_go_cli.sh"
       - ".github/workflows/test-db.yml"
 
 jobs:
@@ -61,9 +63,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go/go.mod"
@@ -74,67 +73,33 @@ jobs:
           echo "REBECCA_TEST_DATABASE_URL=${{ matrix.url }}" >> $GITHUB_ENV
           echo "SQLALCHEMY_DATABASE_URL=${{ matrix.url }}" >> $GITHUB_ENV
 
-      - name: Upgrade pip, setuptools and wheel
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-
-      - name: Install project dependencies
-        run: |
-          pip install -e .
-          pip install pymysql
-          
       - name: Build Go usage bridge
         run: bash scripts/build_go_bridge.sh
 
       - name: Verify database connection
+        working-directory: go
         run: |
-          python -c "
-          import os
-          from sqlalchemy import create_engine, text
-          url = os.environ.get('SQLALCHEMY_DATABASE_URL', '')
-          if 'sqlite' not in url:
-              engine = create_engine(url)
-              with engine.connect() as conn:
-                  result = conn.execute(text('SELECT 1'))
-                  print(f'Database connection successful: {url.split(\"@\")[-1] if \"@\" in url else url}')
-          else:
-              print(f'Using SQLite: {url}')
-          "
+          go run ./cmd/rebecca_cli migrate status || true
 
-      - name: Check migration status before upgrade
+      - name: Run Go migration unit tests
+        working-directory: go
         run: |
-          alembic current || echo "No migrations applied yet"
+          go test ./internal/app/migrations ./cmd/rebecca_cli
 
-      - name: Run Alembic Migrations
+      - name: Run Go Migrations
+        working-directory: go
         run: |
           echo "Running migrations for: ${{ matrix.db }}"
-          alembic upgrade head
+          go run ./cmd/rebecca_cli migrate up
           echo "Migrations completed successfully"
 
       - name: Verify migration status after upgrade
+        working-directory: go
         run: |
-          echo "Current migration revision:"
-          alembic current
+          go run ./cmd/rebecca_cli migrate status
 
       - name: Verify database schema
+        working-directory: go
         run: |
-          python -c "
-          import os
-          from sqlalchemy import create_engine, inspect, text
-          url = os.environ.get('SQLALCHEMY_DATABASE_URL', '')
-          engine = create_engine(url)
-          inspector = inspect(engine)
-          tables = inspector.get_table_names()
-          print(f'Found {len(tables)} tables: {sorted(tables)}')
-          
-          # Verify key tables exist
-          key_tables = ['users', 'admins', 'nodes', 'services']
-          for table in key_tables:
-              if table in tables:
-                  print(f'✓ Table {table} exists')
-                  cols = [col['name'] for col in inspector.get_columns(table)]
-                  print(f'  Columns: {len(cols)} columns')
-              else:
-                  print(f'✗ Table {table} missing')
-          "
+          go test ./internal/app/migrations -run TestRunMigrationsExternalDatabase
 

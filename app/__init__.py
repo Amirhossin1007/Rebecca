@@ -25,11 +25,8 @@ __version__ = "0.1.3"
 IS_RUNNING_TESTS = "PYTEST_CURRENT_TEST" in os.environ or any(
     "pytest" in (arg or "").lower() for arg in sys.argv
 )
-IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)
-if IS_RUNNING_ALEMBIC:
-    os.environ.setdefault("REBECCA_SKIP_RUNTIME_INIT", "1")
 
-SKIP_RUNTIME_INIT = os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1" or IS_RUNNING_ALEMBIC
+SKIP_RUNTIME_INIT = os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1"
 runtime.scheduler = None
 runtime.app = None
 
@@ -80,14 +77,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-if not IS_RUNNING_ALEMBIC:
-    from app import routers  # noqa
+from app import routers  # noqa
 
-    if scheduler is not None:
-        register_scheduler_jobs(scheduler)
-    from app.routers import api_router  # noqa
+if scheduler is not None:
+    register_scheduler_jobs(scheduler)
+from app.routers import api_router  # noqa
 
-    app.include_router(api_router)
+app.include_router(api_router)
 
 
 def use_route_names_as_operation_ids(app: FastAPI) -> None:
