@@ -18,14 +18,16 @@ type Server struct {
 }
 
 func NewServer(cfg Config) (*Server, error) {
-	target, err := url.Parse("http://" + cfg.PythonAddr())
-	if err != nil {
-		return nil, err
-	}
-
-	pythonProxy := httputil.NewSingleHostReverseProxy(target)
-	pythonProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, fmt.Sprintf("python runtime unavailable: %s", err), http.StatusBadGateway)
+	var pythonProxy *httputil.ReverseProxy
+	if cfg.PythonEnabled {
+		target, err := url.Parse("http://" + cfg.PythonAddr())
+		if err != nil {
+			return nil, err
+		}
+		pythonProxy = httputil.NewSingleHostReverseProxy(target)
+		pythonProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, fmt.Sprintf("python runtime unavailable: %s", err), http.StatusBadGateway)
+		}
 	}
 
 	var masterProxy *httputil.ReverseProxy
@@ -39,6 +41,7 @@ func NewServer(cfg Config) (*Server, error) {
 			http.Error(w, fmt.Sprintf("native Go Master API unavailable: %s", err), http.StatusServiceUnavailable)
 		}
 	}
+	dashboard := newDashboardFiles(cfg)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__rebecca_go/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -73,6 +76,18 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if dashboard.matches(r) {
+			dashboard.serve(w, r)
+			return
+		}
+		if isNativeHomeAdsRoute(r) {
+			if masterProxy == nil {
+				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			masterProxy.ServeHTTP(w, r)
+			return
+		}
 		if isNativeRuntimeWebSocketRoute(r) || (cfg.NativeNodeRoutes && isNativeNodeWebSocketRoute(r)) {
 			if masterProxy == nil {
 				http.Error(w, "native Go Master API unavailable", http.StatusServiceUnavailable)
@@ -189,7 +204,11 @@ func NewServer(cfg Config) (*Server, error) {
 			masterProxy.ServeHTTP(w, r)
 			return
 		}
-		pythonProxy.ServeHTTP(w, r)
+		if pythonProxy != nil {
+			pythonProxy.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
 	})
 
 	return &Server{
@@ -214,6 +233,21 @@ func isNativeSystemMaintenanceRoute(r *http.Request) bool {
 		return r.Method == http.MethodGet
 	case "/api/maintenance/update", "/api/maintenance/restart", "/api/maintenance/soft-reload":
 		return r.Method == http.MethodPost
+	default:
+		return false
+	}
+}
+
+func isNativeHomeAdsRoute(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	path := strings.TrimRight(r.URL.Path, "/")
+	switch path {
+	case "":
+		return r.URL.Path == "/" && r.Method == http.MethodGet
+	case "/api/ads":
+		return r.Method == http.MethodGet
 	default:
 		return false
 	}

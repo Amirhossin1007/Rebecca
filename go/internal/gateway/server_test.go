@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1514,5 +1516,101 @@ func TestNativeAdminRouteProxiesToGoMasterAPI(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "python fallback") {
 		t.Fatalf("native admin route fell back to python: %s", rec.Body.String())
+	}
+}
+
+func TestGatewayServesDashboardAndStaticsWithoutPython(t *testing.T) {
+	buildDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(buildDir, "index.html"), []byte("<html>dashboard spa</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(buildDir, "statics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(buildDir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "statics", "app.js"), []byte("console.log('ok')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "assets", "local.js"), []byte("console.log('local')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := NewServer(Config{
+		Addr:              "127.0.0.1:0",
+		DashboardPath:     "/dashboard/",
+		DashboardBuildDir: buildDir,
+		PythonEnabled:     false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	redirect := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
+	if redirect.Code != http.StatusTemporaryRedirect || redirect.Header().Get("Location") != "/dashboard/login" {
+		t.Fatalf("dashboard redirect status=%d location=%q", redirect.Code, redirect.Header().Get("Location"))
+	}
+
+	spa := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(spa, httptest.NewRequest(http.MethodGet, "/dashboard/login", nil))
+	if spa.Code != http.StatusOK || !strings.Contains(spa.Body.String(), "dashboard spa") {
+		t.Fatalf("dashboard spa status=%d body=%s", spa.Code, spa.Body.String())
+	}
+
+	static := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(static, httptest.NewRequest(http.MethodGet, "/statics/app.js", nil))
+	if static.Code != http.StatusOK || !strings.Contains(static.Body.String(), "console.log") {
+		t.Fatalf("static status=%d body=%s", static.Code, static.Body.String())
+	}
+
+	asset := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/local.js", nil))
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "local") {
+		t.Fatalf("asset status=%d body=%s", asset.Code, asset.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/unknown", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestNativeHomeAdsRoutesProxyToMasterAPIWithoutPython(t *testing.T) {
+	masterHits := []string{}
+	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		masterHits = append(masterHits, r.Method+" "+r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer master.Close()
+
+	server, err := NewServer(Config{
+		Addr:          "127.0.0.1:0",
+		MasterAPIURL:  master.URL,
+		PythonEnabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/"},
+		{method: http.MethodGet, path: "/api/ads"},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		server.server.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
+	}
+	if strings.Join(masterHits, ",") != "GET /,GET /api/ads" {
+		t.Fatalf("unexpected master hits: %#v", masterHits)
 	}
 }

@@ -30,6 +30,9 @@ type Config struct {
 	SubscriptionReadOnly         bool
 	SudoUsername                 string
 	SudoPassword                 string
+	AdsSourceURL                 string
+	AdsCacheTTLSeconds           int
+	AdsFetchTimeoutSeconds       int
 	WarpAPIBase                  string
 	XrayFallbackInboundTag       string
 	XrayExcludeInboundTags       []string
@@ -82,6 +85,9 @@ func LoadConfig() (Config, error) {
 		SubscriptionReadOnly:         parseBoolDefault(lookup("SUBSCRIPTION_READ_ONLY"), false),
 		SudoUsername:                 lookup("SUDO_USERNAME"),
 		SudoPassword:                 lookup("SUDO_PASSWORD"),
+		AdsSourceURL:                 firstNonEmpty(lookup("ADS_SOURCE_URL"), "https://raw.githubusercontent.com/rebeccapanel/rebecca-ads/main/ads.json"),
+		AdsCacheTTLSeconds:           parseIntDefault(lookup("ADS_CACHE_TTL_SECONDS"), 86400),
+		AdsFetchTimeoutSeconds:       parseIntDefault(lookup("ADS_FETCH_TIMEOUT_SECONDS"), 15),
 		WarpAPIBase:                  lookup("REBECCA_WARP_API_BASE"),
 		XrayFallbackInboundTag:       firstNonEmpty(lookup("XRAY_FALLBACKS_INBOUND_TAG"), lookup("XRAY_FALLBACK_INBOUND_TAG")),
 		XrayExcludeInboundTags:       splitWhitespace(lookup("XRAY_EXCLUDE_INBOUND_TAGS")),

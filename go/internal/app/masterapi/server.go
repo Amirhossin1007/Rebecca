@@ -13,6 +13,7 @@ import (
 	"time"
 
 	adminapp "github.com/rebeccapanel/rebecca/go/internal/app/admin"
+	adsapp "github.com/rebeccapanel/rebecca/go/internal/app/ads"
 	backupapp "github.com/rebeccapanel/rebecca/go/internal/app/backup"
 	nodeapp "github.com/rebeccapanel/rebecca/go/internal/app/node"
 	"github.com/rebeccapanel/rebecca/go/internal/app/nodecontroller"
@@ -41,6 +42,7 @@ type Server struct {
 	configRepo     xrayconfig.Repository
 	settingsRepo   settingsapp.Repository
 	backupService  *backupapp.Service
+	adsService     *adsapp.Service
 }
 
 func New(cfg Config) (*Server, error) {
@@ -56,6 +58,11 @@ func New(cfg Config) (*Server, error) {
 	warpRepo := warpapp.NewRepository(pool.DB, pool.Dialect)
 	settingsRepo := settingsapp.NewRepository(pool.DB, pool.Dialect)
 	backupService := backupapp.NewService(pool.DB, pool.Dialect, cfg.Database)
+	adsService := adsapp.NewService(
+		cfg.AdsSourceURL,
+		time.Duration(cfg.AdsCacheTTLSeconds)*time.Second,
+		time.Duration(cfg.AdsFetchTimeoutSeconds)*time.Second,
+	)
 	configRepo := xrayconfig.NewRepository(pool.DB, pool.Dialect, xrayconfig.Options{
 		FallbackInboundTag:  cfg.XrayFallbackInboundTag,
 		ExcludedInboundTags: cfg.XrayExcludeInboundTags,
@@ -80,6 +87,7 @@ func New(cfg Config) (*Server, error) {
 		configRepo:     configRepo,
 		settingsRepo:   settingsRepo,
 		backupService:  backupService,
+		adsService:     adsService,
 	}, nil
 }
 
@@ -128,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/hosts/", s.requireAdmin(s.handleHostStatusPath))
 	mux.HandleFunc("/hosts", s.requireAdmin(s.handleHostsRoot))
 	mux.HandleFunc("/api/system", s.requireAdmin(s.handleSystemStats))
+	mux.HandleFunc("/api/ads", s.requireAdmin(s.handleAds))
 	mux.HandleFunc("/api/maintenance/info", s.requireSudo(s.handleMaintenanceInfo))
 	mux.HandleFunc("/api/maintenance/update", s.requireSudo(s.handleMaintenanceUpdate))
 	mux.HandleFunc("/api/maintenance/restart", s.requireSudo(s.handleMaintenanceRestart))
@@ -160,7 +169,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/nodes/usage", s.requireSudo(s.handleNodesUsage))
 	mux.HandleFunc("/api/node", s.requireSudo(s.handleNodeRoot))
 	mux.HandleFunc("/api/node/", s.requireSudo(s.handleNodePath))
-	mux.HandleFunc("/", s.handleSubscriptionPath)
+	mux.HandleFunc("/", s.handleHomeOrSubscriptionPath)
 	return mux
 }
 

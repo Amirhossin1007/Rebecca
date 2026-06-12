@@ -19,22 +19,28 @@ func main() {
 
 	masterAPI, masterAPIURL, err := gateway.StartMasterAPI(ctx, cfg)
 	if err != nil {
-		log.Printf("native Go Master API sidecar is unavailable; Python node routes will use fallback: %v", err)
+		log.Printf("native Go Master API sidecar is unavailable: %v", err)
 	} else {
 		cfg.MasterAPIURL = masterAPIURL
 		log.Printf("native Go Master API sidecar is healthy on %s", cfg.MasterAPIURL)
 		go func() {
 			if err := <-masterAPI.Err(); err != nil {
-				log.Printf("native Go Master API sidecar stopped; gateway will fall back to Python for node routes: %v", err)
+				log.Printf("native Go Master API sidecar stopped: %v", err)
 			}
 		}()
 	}
 
-	python, err := gateway.StartPython(ctx, cfg)
-	if err != nil {
-		log.Fatalf("failed to start python runtime: %v", err)
+	var python *gateway.PythonRuntime
+	if cfg.PythonEnabled {
+		python, err = gateway.StartPython(ctx, cfg)
+		if err != nil {
+			log.Fatalf("failed to start python runtime: %v", err)
+		}
+		defer python.Stop()
+		log.Printf("legacy Python runtime is enabled on %s", cfg.PythonAddr())
+	} else {
+		log.Printf("legacy Python runtime is disabled; gateway is serving Go-native routes only")
 	}
-	defer python.Stop()
 
 	server, err := gateway.NewServer(cfg)
 	if err != nil {
@@ -43,7 +49,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("rebecca gateway listening on %s and proxying python on %s", cfg.Addr, cfg.PythonAddr())
+		log.Printf("rebecca gateway listening on %s", cfg.Addr)
 		errCh <- server.Run()
 	}()
 

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [ ! -f "dashboard/build/index.html" ]; then
-    echo "dashboard/build is missing. Build the dashboard before creating binaries." >&2
+if [ ! -f "dashboard/build/index.html" ] && [ ! -f "dashboard/dist/index.html" ]; then
+    echo "Dashboard build is missing. Build dashboard/build or dashboard/dist before creating binaries." >&2
     exit 1
 fi
 
@@ -20,6 +20,22 @@ if ! python -c "import PyInstaller" >/dev/null 2>&1; then
 fi
 
 bash scripts/build_go_bridge.sh
+
+prepare_go_dashboard_embed() {
+    local source_dir="dashboard/build"
+    local target_dir="go/internal/gateway/static/dashboard/build"
+    if [[ ! -f "$source_dir/index.html" && -f "dashboard/dist/index.html" ]]; then
+        source_dir="dashboard/dist"
+    fi
+    if [[ ! -f "$source_dir/index.html" ]]; then
+        echo "Dashboard build is missing. Expected dashboard/build/index.html or dashboard/dist/index.html." >&2
+        exit 1
+    fi
+    rm -rf "$target_dir"
+    mkdir -p "$target_dir"
+    cp -R "$source_dir"/. "$target_dir/"
+    touch "$target_dir/.gitkeep"
+}
 
 if [[ "${OS:-}" == "Windows_NT" ]]; then
     PYINSTALLER_DATA_SEP=";"
@@ -57,7 +73,6 @@ COMMON_PYINSTALLER_ARGS=(
     --collect-all starlette
     --collect-all setuptools
     --collect-all uvicorn
-    --hidden-import dashboard
     --hidden-import main
     --hidden-import passlib.handlers.bcrypt
     --hidden-import httpx
@@ -83,7 +98,6 @@ env REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false python -m PyInstaller \
     "${GO_BRIDGE_BINARY_ARGS[@]}" \
     "${JOB_HIDDEN_IMPORT_ARGS[@]}" \
     --name rebecca-python-server \
-    --add-data "$(pyinstaller_add_data "dashboard/build" "dashboard/build")" \
     packaging/binary_launcher.py
 
 gateway_output="$ROOT_DIR/dist/rebecca-server"
@@ -92,6 +106,7 @@ if [[ "${OS:-}" == "Windows_NT" ]]; then
 fi
 
 (
+    prepare_go_dashboard_embed
     cd "$ROOT_DIR/go"
     CGO_ENABLED=1 go build -trimpath -buildvcs=false -o "$gateway_output" ./cmd/rebecca_gateway
 )

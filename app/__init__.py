@@ -28,12 +28,8 @@ IS_RUNNING_TESTS = "PYTEST_CURRENT_TEST" in os.environ or any(
 IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)
 if IS_RUNNING_ALEMBIC:
     os.environ.setdefault("REBECCA_SKIP_RUNTIME_INIT", "1")
-    os.environ.setdefault("REBECCA_SKIP_DASHBOARD_INIT", "1")
-if IS_RUNNING_TESTS:
-    os.environ.setdefault("REBECCA_SKIP_DASHBOARD_INIT", "1")
 
 SKIP_RUNTIME_INIT = os.getenv("REBECCA_SKIP_RUNTIME_INIT") == "1" or IS_RUNNING_ALEMBIC
-SKIP_DASHBOARD_INIT = os.getenv("REBECCA_SKIP_DASHBOARD_INIT") == "1" or IS_RUNNING_ALEMBIC
 runtime.scheduler = None
 runtime.app = None
 
@@ -84,8 +80,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-if not SKIP_DASHBOARD_INIT:
-    import dashboard  # noqa: F401
 if not IS_RUNNING_ALEMBIC:
     from app import routers  # noqa
 

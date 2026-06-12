@@ -1,18 +1,10 @@
-from fastapi import APIRouter, Depends
-from app.utils.request_context import capture_subscription_request_origin
-from . import (
-    ads,
-    home,
-)
+from fastapi import APIRouter
 
 api_router = APIRouter()
 
-routers = [
-    ads.router,
-    home.router,
-]
+routers = []
 
 for router in routers:
-    api_router.include_router(router, dependencies=[Depends(capture_subscription_request_origin)])
+    api_router.include_router(router)
 
 __all__ = ["api_router"]

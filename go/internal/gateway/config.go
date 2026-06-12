@@ -20,7 +20,10 @@ type Config struct {
 	NativeNodeRoutes         bool
 	NativeSubscriptionRoutes bool
 	SubscriptionPrefixes     []string
+	DashboardPath            string
+	DashboardBuildDir        string
 	MasterAPIStartWait       time.Duration
+	PythonEnabled            bool
 	PythonBin                string
 	PythonApp                string
 	PythonHost               string
@@ -40,7 +43,10 @@ func LoadConfig() Config {
 		NativeNodeRoutes:         envBool("REBECCA_GATEWAY_NATIVE_NODE_ROUTES", true),
 		NativeSubscriptionRoutes: envBool("REBECCA_GATEWAY_NATIVE_SUBSCRIPTION_ROUTES", true),
 		SubscriptionPrefixes:     splitCSVEnv("REBECCA_GATEWAY_SUBSCRIPTION_PREFIXES"),
+		DashboardPath:            env("DASHBOARD_PATH", "/dashboard/"),
+		DashboardBuildDir:        env("REBECCA_DASHBOARD_BUILD_DIR", defaultDashboardBuildDir()),
 		MasterAPIStartWait:       time.Duration(envInt("REBECCA_MASTER_API_START_TIMEOUT_SECONDS", 30)) * time.Second,
+		PythonEnabled:            envBool("REBECCA_PYTHON_ENABLED", false),
 		PythonBin:                env("REBECCA_PYTHON_BIN", defaultPythonBin()),
 		PythonApp:                env("REBECCA_PYTHON_APP", "app:app"),
 		PythonHost:               env("REBECCA_PYTHON_HOST", "127.0.0.1"),
@@ -48,6 +54,29 @@ func LoadConfig() Config {
 		PythonEnvFile:            env("REBECCA_PYTHON_ENV_FILE", ""),
 		PythonStartTimeout:       time.Duration(envInt("REBECCA_PYTHON_START_TIMEOUT_SECONDS", 300)) * time.Second,
 	}
+}
+
+func defaultDashboardBuildDir() string {
+	candidates := []string{}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, "dashboard", "build"))
+		candidates = append(candidates, filepath.Join(cwd, "dashboard", "dist"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(cwd), "dashboard", "build"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(cwd), "dashboard", "dist"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(dir, "dashboard", "build"))
+		candidates = append(candidates, filepath.Join(dir, "dashboard", "dist"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(dir), "dashboard", "build"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(dir), "dashboard", "dist"))
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func splitCSVEnv(key string) []string {
