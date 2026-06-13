@@ -25,7 +25,6 @@ type runtimeUserRow struct {
 	ServiceID     sql.NullInt64
 	Protocol      string
 	Settings      map[string]any
-	ExcludedTags  []string
 }
 
 func (c Controller) buildRuntimeConfig(ctx context.Context, node NodeRow) (string, error) {
@@ -74,14 +73,13 @@ func (c Controller) includeDBUsers(ctx context.Context, raw map[string]any) erro
 	}
 
 	for _, user := range users {
+		if !user.ServiceID.Valid || user.ServiceID.Int64 <= 0 {
+			continue
+		}
 		targets := inboundsByProtocol[user.Protocol]
 		for _, inbound := range targets {
 			tag := stringValue(inbound["tag"])
-			if user.ServiceID.Valid {
-				if !serviceTags[user.ServiceID.Int64][tag] {
-					continue
-				}
-			} else if containsString(user.ExcludedTags, tag) {
+			if !serviceTags[user.ServiceID.Int64][tag] {
 				continue
 			}
 			settings, err := userread.RuntimeProxySettings(user.Settings, user.Protocol, user.CredentialKey, user.Flow, masks)

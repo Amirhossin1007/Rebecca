@@ -83,7 +83,7 @@ export type User = {
 	admin_username?: string | null;
 	service_host_orders: Record<number, number>;
 	auto_delete_in_days: number | null;
-	next_plan: NextPlan | null;
+	next_plans: NextPlan[];
 };
 
 export type UserListItem = {
@@ -107,8 +107,6 @@ export type UserListItem = {
 
 export type UserCreate = Pick<
 	User,
-	| "inbounds"
-	| "proxies"
 	| "expire"
 	| "data_limit"
 	| "ip_limit"
@@ -121,8 +119,10 @@ export type UserCreate = Pick<
 	| "contact_number"
 	| "flow"
 	| "credential_key"
+	| "service_id"
+	| "auto_delete_in_days"
 > & {
-	next_plan?: NextPlan | null;
+	next_plans?: NextPlan[];
 };
 
 export type UserCreateWithService = Pick<
@@ -141,10 +141,8 @@ export type UserCreateWithService = Pick<
 > & {
 	service_id: number;
 	auto_delete_in_days?: number | null;
-	next_plan?: NextPlan | null;
+	next_plans?: NextPlan[];
 	credential_key?: string;
-	proxies?: ProxyType;
-	inbounds?: UserInbounds;
 };
 
 export type UserApi = {

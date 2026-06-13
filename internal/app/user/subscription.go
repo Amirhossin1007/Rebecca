@@ -334,6 +334,17 @@ func (r Repository) subscriptionUserByKeyOnly(ctx context.Context, key string) (
 	var username string
 	err := r.db.QueryRowContext(
 		ctx,
+		`SELECT username FROM users WHERE credential_key = ? AND status != 'deleted' ORDER BY created_at DESC, id DESC LIMIT 1`,
+		normalized,
+	).Scan(&username)
+	if err == nil {
+		return r.subscriptionUserByUsername(ctx, username)
+	}
+	if err != sql.ErrNoRows {
+		return UserDetail{}, err
+	}
+	err = r.db.QueryRowContext(
+		ctx,
 		`SELECT username FROM users WHERE credential_key IS NOT NULL AND REPLACE(LOWER(credential_key), '-', '') = ? AND status != 'deleted' ORDER BY created_at DESC, id DESC LIMIT 1`,
 		normalized,
 	).Scan(&username)
@@ -350,28 +361,50 @@ func (r Repository) subscriptionUserBySubadress(ctx context.Context, subadress s
 	}
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT username FROM users WHERE subadress != '' AND LOWER(subadress) = LOWER(?) AND status != 'deleted' ORDER BY created_at DESC, id DESC LIMIT 2`,
+		`SELECT username FROM users WHERE subadress = ? AND status != 'deleted' ORDER BY created_at DESC, id DESC LIMIT 2`,
 		subadress,
 	)
 	if err != nil {
 		return UserDetail{}, err
 	}
+	usernames, err := scanSubscriptionUsernames(rows)
+	if err != nil {
+		return UserDetail{}, err
+	}
+	if len(usernames) != 1 {
+		rows, err = r.db.QueryContext(
+			ctx,
+			`SELECT username FROM users WHERE subadress != '' AND LOWER(subadress) = LOWER(?) AND status != 'deleted' ORDER BY created_at DESC, id DESC LIMIT 2`,
+			subadress,
+		)
+		if err != nil {
+			return UserDetail{}, err
+		}
+		usernames, err = scanSubscriptionUsernames(rows)
+		if err != nil {
+			return UserDetail{}, err
+		}
+		if len(usernames) != 1 {
+			return UserDetail{}, clientError(404, "Not Found")
+		}
+	}
+	return r.subscriptionUserByUsername(ctx, usernames[0])
+}
+
+func scanSubscriptionUsernames(rows *sql.Rows) ([]string, error) {
 	defer rows.Close()
 	usernames := []string{}
 	for rows.Next() {
 		var username string
 		if err := rows.Scan(&username); err != nil {
-			return UserDetail{}, err
+			return nil, err
 		}
 		usernames = append(usernames, username)
 	}
 	if err := rows.Err(); err != nil {
-		return UserDetail{}, err
+		return nil, err
 	}
-	if len(usernames) != 1 {
-		return UserDetail{}, clientError(404, "Not Found")
-	}
-	return r.subscriptionUserByUsername(ctx, usernames[0])
+	return usernames, nil
 }
 
 func (r Repository) subscriptionRevokedAt(ctx context.Context, userID int64) (time.Time, bool, error) {

@@ -22,7 +22,7 @@ func (r Repository) UserGet(ctx context.Context, req UserGetRequest) (UserDetail
 	}
 	proxies := proxiesByUser[row.ID]
 	row.Proxies = proxiesMap(proxies)
-	row.ExcludedInbounds = excludedInboundsMap(proxies, row.ServiceID)
+	row.ExcludedInbounds = map[string][]string{}
 
 	inboundsByTag, inboundOrder, err := r.ResolvedInboundsByTag(ctx)
 	if err != nil {
@@ -32,7 +32,7 @@ func (r Repository) UserGet(ctx context.Context, req UserGetRequest) (UserDetail
 	if err != nil {
 		return UserDetail{}, err
 	}
-	row.Inbounds = allowedInboundsMap(proxies, row.ServiceID, inboundsByTag, inboundOrder, hosts)
+	row.Inbounds = map[string][]string{}
 
 	nextPlans, err := r.nextPlansByUser(ctx, []int64{row.ID})
 	if err != nil {
@@ -41,9 +41,6 @@ func (r Repository) UserGet(ctx context.Context, req UserGetRequest) (UserDetail
 	row.NextPlans = []NextPlan{}
 	if plans, ok := nextPlans[row.ID]; ok {
 		row.NextPlans = plans
-	}
-	if len(row.NextPlans) > 0 {
-		row.NextPlan = &row.NextPlans[0]
 	}
 
 	if row.ServiceID != nil {
@@ -125,13 +122,13 @@ func (r Repository) UserGet(ctx context.Context, req UserGetRequest) (UserDetail
 }
 
 func (r Repository) userDetailRow(ctx context.Context, username string) (UserDetail, error) {
-	query := `SELECT
+	baseQuery := `SELECT
 	u.id,
 	u.username,
 	u.credential_key,
 	u.status,
 	COALESCE(u.used_traffic, 0),
-	COALESCE(u.used_traffic, 0) + COALESCE(rul.reseted_usage, 0),
+	COALESCE(u.used_traffic, 0) + COALESCE((SELECT SUM(used_traffic_at_reset) FROM user_usage_logs WHERE user_id = u.id), 0),
 	u.created_at,
 	u.expire,
 	u.data_limit,
@@ -155,46 +152,48 @@ func (r Repository) userDetailRow(ctx context.Context, username string) (UserDet
 FROM users u
 LEFT JOIN admins a ON u.admin_id = a.id
 LEFT JOIN services s ON u.service_id = s.id
-LEFT JOIN (
-	SELECT user_id, SUM(used_traffic_at_reset) AS reseted_usage
-	FROM user_usage_logs
-	GROUP BY user_id
-) rul ON rul.user_id = u.id
-WHERE LOWER(u.username) = LOWER(?) AND u.status != ?
+WHERE %s AND u.status != ?
 LIMIT 1`
 	var row UserDetail
 	var createdAt, subUpdatedAt, onlineAt, onHoldTimeout any
 	var credentialKey, resetStrategy, flow, note, telegramID, contactNumber, userAgent, subadress sql.NullString
 	var expire, dataLimit, holdDuration, autoDelete, serviceID, adminID sql.NullInt64
 	var serviceName, adminUsername sql.NullString
-	err := r.db.QueryRowContext(ctx, query, username, "deleted").Scan(
-		&row.ID,
-		&row.Username,
-		&credentialKey,
-		&row.Status,
-		&row.UsedTraffic,
-		&row.LifetimeUsedTraffic,
-		&createdAt,
-		&expire,
-		&dataLimit,
-		&resetStrategy,
-		&flow,
-		&note,
-		&telegramID,
-		&contactNumber,
-		&subUpdatedAt,
-		&userAgent,
-		&onlineAt,
-		&holdDuration,
-		&onHoldTimeout,
-		&row.IPLimit,
-		&autoDelete,
-		&subadress,
-		&serviceID,
-		&serviceName,
-		&adminID,
-		&adminUsername,
-	)
+	scan := func(where string) error {
+		query := fmt.Sprintf(baseQuery, where)
+		return r.db.QueryRowContext(ctx, query, username, "deleted").Scan(
+			&row.ID,
+			&row.Username,
+			&credentialKey,
+			&row.Status,
+			&row.UsedTraffic,
+			&row.LifetimeUsedTraffic,
+			&createdAt,
+			&expire,
+			&dataLimit,
+			&resetStrategy,
+			&flow,
+			&note,
+			&telegramID,
+			&contactNumber,
+			&subUpdatedAt,
+			&userAgent,
+			&onlineAt,
+			&holdDuration,
+			&onHoldTimeout,
+			&row.IPLimit,
+			&autoDelete,
+			&subadress,
+			&serviceID,
+			&serviceName,
+			&adminID,
+			&adminUsername,
+		)
+	}
+	err := scan("u.username = ?")
+	if err == sql.ErrNoRows {
+		err = scan("LOWER(u.username) = LOWER(?)")
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return UserDetail{}, fmt.Errorf("User not found")
@@ -245,63 +244,6 @@ func proxiesMap(proxies []StoredProxy) map[string]map[string]any {
 	result := make(map[string]map[string]any, len(proxies))
 	for _, proxy := range proxies {
 		result[normalizeProxyProtocol(proxy.Type)] = proxy.Settings
-	}
-	return result
-}
-
-func excludedInboundsMap(proxies []StoredProxy, serviceID *int64) map[string][]string {
-	result := make(map[string][]string, len(proxies))
-	for _, proxy := range proxies {
-		protocol := normalizeProxyProtocol(proxy.Type)
-		if serviceID != nil {
-			result[protocol] = []string{}
-		} else {
-			result[protocol] = append([]string{}, proxy.ExcludedInbounds...)
-		}
-	}
-	return result
-}
-
-func allowedInboundsMap(
-	proxies []StoredProxy,
-	serviceID *int64,
-	inbounds map[string]ResolvedInbound,
-	inboundOrder []string,
-	hosts []Host,
-) map[string][]string {
-	result := make(map[string][]string, len(proxies))
-	allowedServiceTags := map[string]struct{}{}
-	if serviceID != nil {
-		for _, host := range hosts {
-			if host.IsDisabled || !hostHasService(host, *serviceID) {
-				continue
-			}
-			allowedServiceTags[host.InboundTag] = struct{}{}
-		}
-	}
-	for _, proxy := range proxies {
-		protocol := normalizeProxyProtocol(proxy.Type)
-		excluded := map[string]struct{}{}
-		for _, tag := range proxy.ExcludedInbounds {
-			excluded[tag] = struct{}{}
-		}
-		for _, tag := range inboundOrder {
-			inbound, ok := inbounds[tag]
-			if !ok || normalizeProxyProtocol(stringValue(inbound["protocol"])) != protocol {
-				continue
-			}
-			if serviceID != nil {
-				if _, ok := allowedServiceTags[tag]; !ok {
-					continue
-				}
-			} else if _, ok := excluded[tag]; ok {
-				continue
-			}
-			result[protocol] = append(result[protocol], tag)
-		}
-		if _, ok := result[protocol]; !ok {
-			result[protocol] = []string{}
-		}
 	}
 	return result
 }

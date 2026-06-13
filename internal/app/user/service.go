@@ -121,10 +121,27 @@ func (s Service) CreateUser(ctx context.Context, admin adminapp.Admin, raw []byt
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return MutationResult{}, clientError(400, "invalid request body")
 	}
+	if rawFieldPresent(fields, "next_plan") {
+		return MutationResult{}, clientError(400, NextPlanRemovedMessage)
+	}
+	if rawFieldPresent(fields, "proxies") {
+		return MutationResult{}, clientError(400, ProxiesPayloadRemovedMessage)
+	}
 	if auto, err := DetectAutoServiceFromInbounds(payload.Inbounds); err != nil {
 		return MutationResult{}, clientError(400, err.Error())
 	} else if serviceID == nil && auto.Detected {
 		serviceID = &auto.ServiceID
+		payload.Inbounds = map[string][]string{}
+	} else if auto.Detected && serviceID != nil && *serviceID != auto.ServiceID {
+		return MutationResult{}, clientError(400, "service_id does not match the selected service inbound")
+	} else if auto.Detected {
+		payload.Inbounds = map[string][]string{}
+	}
+	if hasManualInboundSelection(payload.Inbounds) {
+		return MutationResult{}, clientError(400, ManualInboundSelectionRemovedMessage)
+	}
+	if serviceID == nil || *serviceID <= 0 {
+		return MutationResult{}, clientError(400, "service_id is required. Users must be assigned to a service.")
 	}
 	return retryMutationResult(ctx, func() (MutationResult, error) {
 		return s.repo.createUserMutation(ctx, admin, payload, serviceID)
@@ -140,14 +157,28 @@ func (s Service) UpdateUser(ctx context.Context, admin adminapp.Admin, username 
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return MutationResult{}, clientError(400, "invalid request body")
 	}
+	if rawFieldPresent(fields, "next_plan") {
+		return MutationResult{}, clientError(400, NextPlanRemovedMessage)
+	}
+	if rawFieldPresent(fields, "proxies") {
+		return MutationResult{}, clientError(400, ProxiesPayloadRemovedMessage)
+	}
 	if rawFieldPresent(fields, "service_id") && rawIsNull(fields["service_id"]) {
-		payload.ServiceID = nil
+		return MutationResult{}, clientError(400, "service_id is required. Users must be assigned to a service.")
 	}
 	if auto, err := DetectAutoServiceFromInbounds(payload.Inbounds); err != nil {
 		return MutationResult{}, clientError(400, err.Error())
 	} else if auto.Detected && !rawFieldPresent(fields, "service_id") {
 		payload.ServiceID = &auto.ServiceID
 		fields["service_id"] = []byte(fmt.Sprintf("%d", auto.ServiceID))
+		payload.Inbounds = map[string][]string{}
+	} else if auto.Detected && payload.ServiceID != nil && *payload.ServiceID != auto.ServiceID {
+		return MutationResult{}, clientError(400, "service_id does not match the selected service inbound")
+	} else if auto.Detected {
+		payload.Inbounds = map[string][]string{}
+	}
+	if hasManualInboundSelection(payload.Inbounds) {
+		return MutationResult{}, clientError(400, ManualInboundSelectionRemovedMessage)
 	}
 	return retryMutationResult(ctx, func() (MutationResult, error) {
 		return s.repo.updateUserMutation(ctx, admin, username, payload, fields)

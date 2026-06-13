@@ -50,7 +50,7 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 16 {
+	if !version.HasGoose || version.GooseVersion != 19 {
 		t.Fatalf("unexpected version after first run: %#v", version)
 	}
 	assertTableColumns(t, ctx, db, "sqlite", "admins", []string{"id", "username", "role", "permissions", "status", "created_traffic", "delete_user_usage_limit"})
@@ -63,6 +63,7 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	assertNoTable(t, ctx, db, "sqlite", "notification_reminders")
 	assertNoTable(t, ctx, db, "sqlite", "user_templates")
 	assertNoTable(t, ctx, db, "sqlite", "template_inbounds_association")
+	assertNoTable(t, ctx, db, "sqlite", "exclude_inbounds_association")
 	assertNoTable(t, ctx, db, "sqlite", "access_insights")
 	assertTableColumns(t, ctx, db, "sqlite", "hosts", []string{"id", "remark", "inbound_tag", "noise_setting", "random_user_agent"})
 	assertTableColumns(t, ctx, db, "sqlite", "nodes", []string{"id", "name", "certificate", "certificate_key", "xray_config_mode"})
@@ -76,6 +77,15 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	assertTableColumns(t, ctx, db, "sqlite", "subscription_settings", []string{"subscription_profile_title", "subscription_support_url", "subscription_aliases", "subscription_path", "subscription_ports"})
 	assertTableColumns(t, ctx, db, "sqlite", "subscription_domains", []string{"domain", "admin_id", "email", "provider", "alt_names"})
 	assertTableColumns(t, ctx, db, "sqlite", "telegram_settings", []string{"use_telegram", "event_toggles", "backup_enabled", "backup_scope", "backup_interval_value"})
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vmess_mask")
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vless_mask")
+	assertIndex(t, ctx, db, "sqlite", "users", "ix_users_admin_status_created_id")
+	assertIndex(t, ctx, db, "sqlite", "users", "ix_users_credential_key")
+	assertIndex(t, ctx, db, "sqlite", "proxies", "ix_proxies_user_type")
+	assertIndex(t, ctx, db, "sqlite", "node_user_usages", "ix_node_user_usages_user_created_node")
+	assertNoIndex(t, ctx, db, "sqlite", "admin_api_keys", "ix_admin_api_keys_key_hash")
+	assertNoIndex(t, ctx, db, "sqlite", "subscription_domains", "ix_subscription_domains_domain")
+	assertNoIndex(t, ctx, db, "sqlite", "warp_accounts", "ix_warp_accounts_device_id")
 	assertTableColumns(t, ctx, db, "sqlite", "warp_accounts", []string{"device_id", "access_token", "license_key", "private_key", "public_key"})
 
 	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
@@ -108,7 +118,7 @@ func TestRunMigrationsExternalDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("external version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 16 {
+	if !version.HasGoose || version.GooseVersion != 19 {
 		t.Fatalf("unexpected external version: %#v", version)
 	}
 	for _, table := range []string{"admins", "users", "nodes", "services", "subscription_settings", "goose_db_version"} {
@@ -168,7 +178,7 @@ func TestKnownBadAlembicMergeRevisionIsBypassed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version after migration: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 16 {
+	if !version.HasGoose || version.GooseVersion != 19 {
 		t.Fatalf("unexpected goose version after bypass: %#v", version)
 	}
 	if !version.LegacyRevisionKnownBad || !strings.Contains(version.LegacyRevisionHandling, "merge/no-op") {
@@ -215,7 +225,7 @@ VALUES
 	if err != nil {
 		t.Fatalf("version after migration: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 16 {
+	if !version.HasGoose || version.GooseVersion != 19 {
 		t.Fatalf("unexpected goose version after repair: %#v", version)
 	}
 	if !version.LegacyRevisionKnownBad || !strings.Contains(version.LegacyRevisionHandling, "admin role repair") {
@@ -271,7 +281,7 @@ func TestDetectGooseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 16 {
+	if !version.HasGoose || version.GooseVersion != 19 {
 		t.Fatalf("unexpected goose version: %#v", version)
 	}
 }
@@ -292,14 +302,14 @@ func TestRunMigrationsToSQLite(t *testing.T) {
 	assertTableColumns(t, ctx, db, "sqlite", "nodes", []string{"id", "name", "address", "port"})
 	assertNoTable(t, ctx, db, "sqlite", "services")
 
-	if err := RunMigrationsTo(ctx, db, "sqlite", 16); err != nil {
+	if err := RunMigrationsTo(ctx, db, "sqlite", 19); err != nil {
 		t.Fatalf("run migrations to final checkpoint: %v", err)
 	}
 	finalVersion, err := Version(ctx, db, "sqlite")
 	if err != nil {
 		t.Fatalf("version after final checkpoint: %v", err)
 	}
-	if finalVersion.GooseVersion != 16 {
+	if finalVersion.GooseVersion != 19 {
 		t.Fatalf("unexpected final version: %#v", finalVersion)
 	}
 	assertTableColumns(t, ctx, db, "sqlite", "services", []string{"id", "name", "used_traffic"})
@@ -562,6 +572,77 @@ VALUES
 	}
 	if !lastStatus.Valid || lastStatus.String == "" {
 		t.Fatal("expected expired user last_status_change backfill")
+	}
+}
+
+func TestLegacyMaskedCredentialMaterializedBeforeMaskDrop(t *testing.T) {
+	ctx := context.Background()
+	db := openSQLiteTestDB(t)
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE jwt (
+	id INTEGER PRIMARY KEY,
+	secret_key VARCHAR(64),
+	subscription_secret_key VARCHAR(64) NOT NULL DEFAULT 'sub',
+	admin_secret_key VARCHAR(64) NOT NULL DEFAULT 'admin',
+	vmess_mask VARCHAR(32) NOT NULL DEFAULT '00000000000000000000000000000000',
+	vless_mask VARCHAR(32) NOT NULL DEFAULT '11111111111111111111111111111111'
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO jwt (id, secret_key, subscription_secret_key, admin_secret_key, vmess_mask, vless_mask)
+VALUES (1, 'legacy', 'sub', 'admin', '00000000000000000000000000000000', '11111111111111111111111111111111')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE users (
+	id INTEGER PRIMARY KEY,
+	username VARCHAR(34),
+	credential_key VARCHAR(64),
+	status VARCHAR(32),
+	used_traffic BIGINT,
+	data_limit BIGINT,
+	admin_id INTEGER,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO users (id, username, credential_key, status, used_traffic, data_limit, admin_id)
+VALUES (1, 'legacy_user', '00000000000000000000000000000000', 'deleted', 0, 100, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE proxies (id INTEGER PRIMARY KEY, user_id INTEGER, type VARCHAR(32) NOT NULL, settings TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vmess_mask")
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vless_mask")
+
+	rows, err := db.QueryContext(ctx, `SELECT type, settings FROM proxies WHERE user_id = 1 ORDER BY type`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := map[string]string{}
+	for rows.Next() {
+		var protocol string
+		var raw any
+		if err := rows.Scan(&protocol, &raw); err != nil {
+			t.Fatal(err)
+		}
+		ids[protocol] = stringValue(decodeJSONMap(raw)["id"])
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ids["vmess"] != "00000000-0000-0000-0000-000000000000" {
+		t.Fatalf("vmess id = %q", ids["vmess"])
+	}
+	if ids["vless"] != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("vless id = %q", ids["vless"])
 	}
 }
 
@@ -1172,5 +1253,27 @@ func assertTableColumns(t *testing.T, ctx context.Context, db *sql.DB, dialect s
 		if !hasColumn {
 			t.Fatalf("missing column %s.%s", table, column)
 		}
+	}
+}
+
+func assertIndex(t *testing.T, ctx context.Context, db *sql.DB, dialect string, table string, index string) {
+	t.Helper()
+	has, err := HasIndex(ctx, db, dialect, table, index)
+	if err != nil {
+		t.Fatalf("has index %s.%s: %v", table, index, err)
+	}
+	if !has {
+		t.Fatalf("expected index %s on %s", index, table)
+	}
+}
+
+func assertNoIndex(t *testing.T, ctx context.Context, db *sql.DB, dialect string, table string, index string) {
+	t.Helper()
+	has, err := HasIndex(ctx, db, dialect, table, index)
+	if err != nil {
+		t.Fatalf("has index %s.%s: %v", table, index, err)
+	}
+	if has {
+		t.Fatalf("did not expect index %s on %s", index, table)
 	}
 }

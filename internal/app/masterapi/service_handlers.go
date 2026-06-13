@@ -390,6 +390,13 @@ func (s *Server) handleServiceDelete(w http.ResponseWriter, r *http.Request, ser
 		}
 		switch payload.Mode {
 		case "transfer_users":
+			ids, err := serviceUserIDsTx(r.Context(), tx, serviceID)
+			if err != nil {
+				return err
+			}
+			if len(ids) > 0 && payload.TargetServiceID == nil {
+				return statusError{status: http.StatusBadRequest, detail: "target_service_id is required. Users must be assigned to a service."}
+			}
 			if payload.TargetServiceID != nil {
 				if *payload.TargetServiceID == serviceID {
 					return statusError{status: http.StatusBadRequest, detail: "Target service must be different"}
@@ -400,10 +407,6 @@ func (s *Server) handleServiceDelete(w http.ResponseWriter, r *http.Request, ser
 					}
 					return err
 				}
-			}
-			ids, err := serviceUserIDsTx(r.Context(), tx, serviceID)
-			if err != nil {
-				return err
 			}
 			if _, err := tx.ExecContext(r.Context(), `UPDATE users SET service_id = ? WHERE service_id = ?`, nullableInt64(payload.TargetServiceID), serviceID); err != nil {
 				return err

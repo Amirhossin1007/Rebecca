@@ -211,8 +211,6 @@ type BaseFormFields = Pick<
 	| "contact_number"
 	| "flow"
 	| "credential_key"
-	| "proxies"
-	| "inbounds"
 >;
 
 export type FormType = BaseFormFields & {
@@ -234,7 +232,7 @@ export type FormType = BaseFormFields & {
 };
 
 const formatUser = (user: User): FormType => {
-	const nextPlan = user.next_plan ?? null;
+	const nextPlan = user.next_plans?.[0] ?? null;
 
 	return {
 		...user,
@@ -274,25 +272,6 @@ const formatUser = (user: User): FormType => {
 };
 
 const getDefaultValues = (): FormType => {
-	// Get available protocols from inbounds
-	const { inbounds } = useDashboard.getState();
-	const availableProtocols: Record<string, any> = {};
-
-	// Only include protocols that have inbounds available
-	const protocolDefaults: Record<string, any> = {
-		vless: { id: "" },
-		vmess: { id: "" },
-		trojan: { password: "" },
-		shadowsocks: { password: "", method: "chacha20-ietf-poly1305" },
-	};
-
-	// Filter to only include protocols that have inbounds
-	for (const [protocol, protocolInbounds] of inbounds.entries()) {
-		if (protocolInbounds && protocolInbounds.length > 0) {
-			availableProtocols[protocol] = protocolDefaults[protocol] || {};
-		}
-	}
-
 	return {
 		data_limit: null,
 
@@ -316,10 +295,6 @@ const getDefaultValues = (): FormType => {
 
 		note: "",
 
-		inbounds: {},
-
-		proxies: availableProtocols,
-
 		service_id: null,
 
 		next_plan_enabled: false,
@@ -337,7 +312,8 @@ const getDefaultValues = (): FormType => {
 	};
 };
 
-const CREDENTIAL_KEY_REGEX = /^[0-9a-fA-F]{32}$/;
+const CREDENTIAL_KEY_REGEX =
+	/^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 
 const allowedFlows = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"];
 
@@ -408,30 +384,6 @@ const buildSchema = (isEditing: boolean) => {
 				return Number.isNaN(parsed) ? null : parsed;
 			}),
 
-		proxies: z
-
-			.record(z.string(), z.record(z.string(), z.any()))
-
-			.transform((ins) => {
-				const deleteIfEmpty = (obj: any, key: string) => {
-					if (obj && obj[key] === "") {
-						delete obj[key];
-					}
-				};
-
-				deleteIfEmpty(ins.vmess, "id");
-
-				deleteIfEmpty(ins.vless, "id");
-
-				deleteIfEmpty(ins.trojan, "password");
-
-				deleteIfEmpty(ins.shadowsocks, "password");
-
-				deleteIfEmpty(ins.shadowsocks, "method");
-
-				return ins;
-			}),
-
 		data_limit: z
 
 			.union([z.string(), z.number(), z.null()])
@@ -455,15 +407,6 @@ const buildSchema = (isEditing: boolean) => {
 		expire: z.number().nullable(),
 
 		data_limit_reset_strategy: z.string(),
-
-		inbounds: z.record(z.string(), z.array(z.string())).transform((ins) => {
-			Object.keys(ins).forEach((protocol) => {
-				if (Array.isArray(ins[protocol]) && !ins[protocol]?.length)
-					delete ins[protocol];
-			});
-
-			return ins;
-		}),
 
 		note: z.union([z.string(), z.null(), z.undefined()]).transform((value) => {
 			if (typeof value !== "string") return "";
@@ -607,7 +550,7 @@ const buildSchema = (isEditing: boolean) => {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
 					path: ["credential_key"],
-					message: "Credential key must be a 32-character hexadecimal string.",
+					message: "Credential key must be a 32-character hexadecimal string or UUID.",
 				});
 			}
 		});
@@ -1096,8 +1039,6 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		if (isEditing) {
 			if (editingUser?.service_id) {
 				setSelectedServiceId(editingUser.service_id);
-			} else if (hasPrivilegedRole) {
-				setSelectedServiceId(null);
 			} else if (services.length) {
 				setSelectedServiceId(services[0]?.id ?? null);
 			} else {
@@ -1106,7 +1047,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		} else if (!isOpen) {
 			setSelectedServiceId(null);
 		}
-	}, [isEditing, editingUser, isOpen, hasPrivilegedRole, services]);
+	}, [isEditing, editingUser, isOpen, services]);
 
 	useEffect(() => {
 		if (!isEditing && isOpen && hasServices && !hasPrivilegedRole) {
@@ -1579,10 +1520,6 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
 			flow,
 
-			proxies,
-
-			inbounds,
-
 			status,
 
 			data_limit,
@@ -1743,7 +1680,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 				: (selectedServiceId ??
 					(nonSudoSingleService ? (services[0]?.id ?? null) : null));
 
-			if (!hasPrivilegedRole && !effectiveServiceId) {
+			if (!effectiveServiceId) {
 				setError(t("userDialog.selectService", "Please choose a service"));
 				setLoading(false);
 				showSubmitError();
@@ -1753,7 +1690,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 			const serviceBody: UserCreateWithService = {
 				username: values.username,
 
-				service_id: effectiveServiceId ?? 0,
+				service_id: effectiveServiceId,
 
 				note: values.note,
 
@@ -1788,41 +1725,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 			}
 
 			if (nextPlanPayload) {
-				serviceBody.next_plan = nextPlanPayload;
-			}
-
-			// If service_id is 0 (no service), include proxies and inbounds
-			// Filter out protocols that are disabled on the server
-			if (effectiveServiceId === null || effectiveServiceId === 0) {
-				const { inbounds: availableInbounds } = useDashboard.getState();
-				const enabledProtocols = new Set(availableInbounds.keys());
-
-				// Filter proxies to only include enabled protocols
-				const filteredProxies: Record<string, any> = {};
-				if (proxies) {
-					for (const [protocol, settings] of Object.entries(proxies)) {
-						if (enabledProtocols.has(protocol as any)) {
-							filteredProxies[protocol] = settings;
-						}
-					}
-				}
-
-				// Filter inbounds to only include enabled protocols
-				const filteredInbounds: Record<string, string[]> = {};
-				if (inbounds) {
-					for (const [protocol, tags] of Object.entries(inbounds)) {
-						if (enabledProtocols.has(protocol as any)) {
-							filteredInbounds[protocol] = tags;
-						}
-					}
-				}
-
-				if (Object.keys(filteredProxies).length > 0) {
-					serviceBody.proxies = filteredProxies;
-				}
-				if (Object.keys(filteredInbounds).length > 0) {
-					serviceBody.inbounds = filteredInbounds;
-				}
+				serviceBody.next_plans = [nextPlanPayload];
 			}
 
 			createUserWithService(serviceBody)
@@ -1861,7 +1764,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 							setError(err?.response._data.detail[key] as string);
 
 							form.setError(
-								key as "proxies" | "username" | "data_limit" | "expire",
+								key as "username" | "data_limit" | "expire" | "service_id",
 
 								{
 									type: "custom",
@@ -1904,53 +1807,23 @@ export const UserDialog: FC<UserDialogProps> = () => {
 		}
 
 		if (nextPlanPayload) {
-			body.next_plan = nextPlanPayload;
-		} else if (!next_plan_enabled && editingUser?.next_plan) {
-			body.next_plan = null;
+			body.next_plans = [nextPlanPayload];
+		} else if (!next_plan_enabled && (editingUser?.next_plans?.length ?? 0) > 0) {
+			body.next_plans = [];
 		}
 
-		if (!editingUser?.service_id) {
-			// Filter out protocols that are disabled on the server
-			const { inbounds: availableInbounds } = useDashboard.getState();
-			const enabledProtocols = new Set(availableInbounds.keys());
-
-			// Filter proxies to only include enabled protocols
-			const filteredProxies: Record<string, any> = {};
-			if (proxies) {
-				for (const [protocol, settings] of Object.entries(proxies)) {
-					if (enabledProtocols.has(protocol as any)) {
-						filteredProxies[protocol] = settings;
-					}
-				}
-			}
-
-			// Filter inbounds to only include enabled protocols
-			const filteredInbounds: Record<string, string[]> = {};
-			if (inbounds) {
-				for (const [protocol, tags] of Object.entries(inbounds)) {
-					if (enabledProtocols.has(protocol as any)) {
-						filteredInbounds[protocol] = tags;
-					}
-				}
-			}
-
-			if (Object.keys(filteredProxies).length > 0) {
-				body.proxies = filteredProxies;
-			}
-
-			if (Object.keys(filteredInbounds).length > 0) {
-				body.inbounds = filteredInbounds;
-			}
+		if (!selectedServiceId) {
+			setError(t("userDialog.selectService", "Please choose a service"));
+			setLoading(false);
+			showSubmitError();
+			return;
 		}
 
-		if (!requiresServiceScope && typeof selectedServiceId !== "undefined") {
-			if (selectedServiceId === null) {
-				if (hasPrivilegedRole) {
-					body.service_id = null;
-				}
-			} else if (selectedServiceId !== editingUser?.service_id) {
-				body.service_id = selectedServiceId;
-			}
+		if (
+			selectedServiceId !== editingUser?.service_id &&
+			(!requiresServiceScope || !editingUser?.service_id)
+		) {
+			body.service_id = selectedServiceId;
 		}
 
 		editUser(editingUser?.username, body as UserCreate)
@@ -1985,7 +1858,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 						setError(err?.response._data.detail[key] as string);
 
 						form.setError(
-							key as "proxies" | "username" | "data_limit" | "expire",
+							key as "username" | "data_limit" | "expire" | "service_id",
 
 							{
 								type: "custom",
@@ -3035,11 +2908,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
 												{showServiceSelector && (
 													<GridItem mt={useTwoColumns ? 0 : 4}>
-														<FormControl
-															isRequired={
-																!hasPrivilegedRole || requiresServiceScope
-															}
-														>
+														<FormControl isRequired>
 															<FormLabel>
 																{t("userDialog.selectServiceLabel", "Service")}
 															</FormLabel>
@@ -3058,98 +2927,6 @@ export const UserDialog: FC<UserDialogProps> = () => {
 																</HStack>
 															) : hasServices ? (
 																<VStack align="stretch" spacing={3}>
-																	{hasPrivilegedRole && (
-																		<Box
-																			role="button"
-																			tabIndex={
-																				serviceSelectionDisabled ? -1 : 0
-																			}
-																			aria-pressed={selectedServiceId === null}
-																			onKeyDown={(event) => {
-																				if (serviceSelectionDisabled) return;
-
-																				if (
-																					event.key === "Enter" ||
-																					event.key === " "
-																				) {
-																					event.preventDefault();
-
-																					setSelectedServiceId(null);
-																				}
-																			}}
-																			onClick={() => {
-																				if (serviceSelectionDisabled) return;
-
-																				setSelectedServiceId(null);
-																			}}
-																			borderWidth="1px"
-																			borderRadius="md"
-																			p={4}
-																			borderColor={
-																				selectedServiceId === null
-																					? "primary.500"
-																					: "gray.200"
-																			}
-																			bg={
-																				selectedServiceId === null
-																					? "primary.50"
-																					: "transparent"
-																			}
-																			cursor={
-																				serviceSelectionDisabled
-																					? "not-allowed"
-																					: "pointer"
-																			}
-																			pointerEvents={
-																				serviceSelectionDisabled
-																					? "none"
-																					: "auto"
-																			}
-																			transition="border-color 0.2s ease, background-color 0.2s ease"
-																			_hover={
-																				serviceSelectionDisabled
-																					? {}
-																					: {
-																							borderColor:
-																								selectedServiceId === null
-																									? "primary.500"
-																									: "gray.300",
-																						}
-																			}
-																			_dark={{
-																				borderColor:
-																					selectedServiceId === null
-																						? "primary.400"
-																						: "gray.700",
-
-																				bg:
-																					selectedServiceId === null
-																						? "primary.900"
-																						: "transparent",
-																			}}
-																		>
-																			<Text fontWeight="semibold">
-																				{t(
-																					"userDialog.noServiceOption",
-																					"No service",
-																				)}
-																			</Text>
-
-																			<Text
-																				fontSize="sm"
-																				color="gray.500"
-																				_dark={{ color: "gray.400" }}
-																				mt={1}
-																			>
-																				{t(
-																					"userDialog.noServiceHelper",
-
-																					"Keep this user detached from shared service settings.",
-																				)}
-																			</Text>
-																		</Box>
-																	)}
-
 																	{services.map((service) => {
 																		const isSelected =
 																			selectedServiceId === service.id;

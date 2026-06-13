@@ -46,7 +46,7 @@ func (r Repository) createUserMutation(ctx context.Context, admin adminapp.Admin
 	}
 	defer rollbackQuiet(tx)
 
-	catalog, err := r.mutationContextTx(ctx, tx, admin, nil)
+	catalog, err := r.createMutationContextTx(ctx, tx, admin, payload, serviceID)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -68,7 +68,6 @@ func (r Repository) createUserMutation(ctx context.Context, admin adminapp.Admin
 			OnHoldTimeout:          payload.OnHoldTimeout,
 			OnHoldExpireDuration:   payload.OnHoldExpireDuration,
 			AutoDeleteInDays:       payload.AutoDeleteInDays,
-			NextPlan:               payload.NextPlan,
 			NextPlans:              payload.NextPlans,
 			IPLimit:                payload.IPLimit,
 			Flow:                   payload.Flow,
@@ -89,27 +88,19 @@ func (r Repository) createUserMutation(ctx context.Context, admin adminapp.Admin
 			return MutationResult{}, permissionHTTPError(err)
 		}
 	}
-	if err := r.ensureUsernameAvailableTx(ctx, tx, payload.Username); err != nil {
-		return MutationResult{}, err
-	}
-
 	status := string(UserStatusActive)
 	if payload.Status != "" {
 		status = string(payload.Status)
 	}
 	credentialKey := ""
 	if payload.CredentialKey != nil {
-		credentialKey = strings.TrimSpace(*payload.CredentialKey)
+		credentialKey = *payload.CredentialKey
 	}
-	if shouldGenerateCredentialKey(payload.Proxies, payload.CredentialKey) {
+	if credentialKey == "" {
 		credentialKey, err = generateCredentialKey()
 		if err != nil {
 			return MutationResult{}, err
 		}
-	}
-	proxies, err := normalizeProxyPayload(payload.Proxies, credentialKey, false, nil)
-	if err != nil {
-		return MutationResult{}, err
 	}
 	now := time.Now().UTC()
 	adminID := nullableInt64Value(admin.ID)
@@ -140,18 +131,21 @@ INSERT INTO users (
 		nullableInt64Ptr(serviceID),
 	)
 	if err != nil {
+		if isDuplicateUserInsertError(err) {
+			return MutationResult{}, clientError(409, "User username already exists")
+		}
 		return MutationResult{}, err
 	}
 	userID, err := res.LastInsertId()
 	if err != nil || userID == 0 {
-		if scanErr := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE LOWER(username) = LOWER(?) ORDER BY id DESC LIMIT 1`, payload.Username).Scan(&userID); scanErr != nil {
+		if scanErr := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE username = ? ORDER BY id DESC LIMIT 1`, payload.Username).Scan(&userID); scanErr != nil {
 			return MutationResult{}, errors.Join(err, scanErr)
 		}
 	}
-	if err := r.replaceProxiesTx(ctx, tx, userID, proxies, payload.Inbounds, serviceID, catalog); err != nil {
+	if err := r.insertProxiesForNewUserTx(ctx, tx, userID, ProxyPayload{}, payload.Inbounds, serviceID, catalog); err != nil {
 		return MutationResult{}, err
 	}
-	if err := r.replaceNextPlansTx(ctx, tx, userID, payload.NextPlan, payload.NextPlans); err != nil {
+	if err := r.insertNextPlansForNewUserTx(ctx, tx, userID, payload.NextPlans); err != nil {
 		return MutationResult{}, err
 	}
 	delta := int64(0)
@@ -225,6 +219,9 @@ func (r Repository) updateUserMutation(ctx context.Context, admin adminapp.Admin
 		} else if admin.UseServiceTrafficLimits && admin.Role != adminapp.RoleFullAccess {
 			return MutationResult{}, clientError(403, "This admin must manage users inside an assigned service.")
 		}
+	}
+	if targetServiceID == nil || *targetServiceID <= 0 {
+		return MutationResult{}, clientError(400, "service_id is required. Users must be assigned to a service.")
 	}
 
 	newStatus := string(existing.Status)
@@ -343,26 +340,16 @@ func (r Repository) updateUserMutation(ctx context.Context, admin adminapp.Admin
 
 	credentialKey := existing.CredentialKey
 	if payload.CredentialKey != nil && strings.TrimSpace(*payload.CredentialKey) != "" {
-		credentialKey = strings.TrimSpace(*payload.CredentialKey)
+		credentialKey = *payload.CredentialKey
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET credential_key = ? WHERE id = ?`, credentialKey, existing.ID); err != nil {
 			return MutationResult{}, err
 		}
-	}
-	if len(payload.Proxies) > 0 {
-		proxies, err := normalizeProxyPayload(payload.Proxies, credentialKey, true, existing.Proxies)
-		if err != nil {
-			return MutationResult{}, err
-		}
-		if err := r.replaceProxiesTx(ctx, tx, existing.ID, proxies, payload.Inbounds, targetServiceID, catalog); err != nil {
-			return MutationResult{}, err
-		}
-	} else if rawFieldPresent(rawFields, "inbounds") {
-		if err := r.updateProxyInboundsTx(ctx, tx, existing.ID, payload.Inbounds, targetServiceID, catalog); err != nil {
+		if err := r.deleteProxiesTx(ctx, tx, existing.ID); err != nil {
 			return MutationResult{}, err
 		}
 	}
-	if rawFieldPresent(rawFields, "next_plan") || rawFieldPresent(rawFields, "next_plans") {
-		if err := r.replaceNextPlansTx(ctx, tx, existing.ID, payload.NextPlan, payload.NextPlans); err != nil {
+	if rawFieldPresent(rawFields, "next_plans") {
+		if err := r.replaceNextPlansTx(ctx, tx, existing.ID, payload.NextPlans); err != nil {
 			return MutationResult{}, err
 		}
 	}
@@ -504,15 +491,11 @@ func (r Repository) revokeUserMutation(ctx context.Context, admin adminapp.Admin
 	if err != nil {
 		return MutationResult{}, err
 	}
-	proxies, err := normalizeProxyPayload(existing.Proxies, key, false, nil)
-	if err != nil {
-		return MutationResult{}, err
-	}
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET credential_key = ?, sub_revoked_at = ? WHERE id = ?`, key, dbTime(now), existing.ID); err != nil {
 		return MutationResult{}, err
 	}
-	if err := r.replaceProxySettingsOnlyTx(ctx, tx, existing.ID, proxies); err != nil {
+	if err := r.deleteProxiesTx(ctx, tx, existing.ID); err != nil {
 		return MutationResult{}, err
 	}
 	if isRuntimeStatus(existing.Status) {

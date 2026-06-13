@@ -181,9 +181,6 @@ CREATE TABLE warp_accounts (
 			return err
 		}
 	}
-	if err := createIndex(ctx, tx, dialect, "warp_accounts", "ix_warp_accounts_device_id", []string{"device_id"}, false); err != nil {
-		return err
-	}
 	return nil
 }
 

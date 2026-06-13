@@ -25,7 +25,6 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies: map[string]map[string]any{"vless": {}},
 					Flow:    &validFlow,
 					IPLimit: &negativeIP,
 				},
@@ -33,7 +32,7 @@ func TestUserPayloadValidation(t *testing.T) {
 		},
 		{
 			name:    "invalid username",
-			payload: UserCreate{Username: "no", UserPayloadBase: UserPayloadBase{Proxies: map[string]map[string]any{"vless": {}}}},
+			payload: UserCreate{Username: "no"},
 			wantErr: UsernameValidationMessage,
 		},
 		{
@@ -41,8 +40,7 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies: map[string]map[string]any{"vless": {}},
-					Note:    &longNote,
+					Note: &longNote,
 				},
 			},
 			wantErr: "maximum of 500",
@@ -52,7 +50,6 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies:    map[string]map[string]any{"vless": {}},
 					TelegramID: strPtr("bad/telegram"),
 				},
 			},
@@ -63,7 +60,6 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies:       map[string]map[string]any{"vless": {}},
 					ContactNumber: strPtr("phoneABC"),
 				},
 			},
@@ -74,23 +70,25 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies: map[string]map[string]any{"vless": {}},
-					Flow:    strPtr("reality"),
+					Flow: strPtr("reality"),
 				},
 			},
 			wantErr: "Unsupported flow",
 		},
 		{
-			name:    "missing proxies",
-			payload: UserCreate{Username: "valid-user"},
-			wantErr: "Each user needs at least one proxy",
+			name: "proxies payload removed",
+			payload: UserCreate{
+				Username:        "valid-user",
+				UserPayloadBase: UserPayloadBase{Proxies: map[string]map[string]any{"vless": {}}},
+			},
+			wantErr: ProxiesPayloadRemovedMessage,
 		},
 		{
 			name: "on hold needs duration",
 			payload: UserCreate{
 				Username:        "valid-user",
 				Status:          UserStatusCreateOnHold,
-				UserPayloadBase: UserPayloadBase{Proxies: map[string]map[string]any{"vless": {}}},
+				UserPayloadBase: UserPayloadBase{},
 			},
 			wantErr: "on_hold_expire_duration",
 		},
@@ -100,7 +98,6 @@ func TestUserPayloadValidation(t *testing.T) {
 				Username: "valid-user",
 				Status:   UserStatusCreateOnHold,
 				UserPayloadBase: UserPayloadBase{
-					Proxies:              map[string]map[string]any{"vless": {}},
 					OnHoldExpireDuration: &duration,
 					Expire:               &expire,
 				},
@@ -112,18 +109,16 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies:  map[string]map[string]any{"vless": {}},
 					Inbounds: map[string][]string{"vless": {"missing"}},
 				},
 			},
-			wantErr: "doesn't exist",
+			wantErr: ManualInboundSelectionRemovedMessage,
 		},
 		{
 			name: "negative data limit",
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies:   map[string]map[string]any{"vless": {}},
 					DataLimit: i64(-1),
 				},
 			},
@@ -134,7 +129,6 @@ func TestUserPayloadValidation(t *testing.T) {
 			payload: UserCreate{
 				Username: "valid-user",
 				UserPayloadBase: UserPayloadBase{
-					Proxies:   map[string]map[string]any{"vless": {}},
 					DataLimit: &dataLimit,
 				},
 			},
@@ -208,8 +202,8 @@ func TestAutoServiceDetection(t *testing.T) {
 	}
 
 	_, err = DetectAutoServiceFromInbounds(map[string][]string{"vless": {"setservice-42", "real-inbound"}})
-	if err == nil || !strings.Contains(err.Error(), "selected alone") {
-		t.Fatalf("expected selected-alone error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), ManualInboundSelectionRemovedMessage) {
+		t.Fatalf("expected manual inbound removal error, got %v", err)
 	}
 
 	_, err = DetectAutoServiceFromInbounds(map[string][]string{"vless": {"setservice-42"}, "vmess": {"setservice-43"}})
@@ -236,7 +230,7 @@ func TestPermissionAndLimitEnforcement(t *testing.T) {
 	if err := EnsureUserConstraints(admin, UserConstraintInput{Expire: i64(0)}); err == nil || !strings.Contains(err.Error(), "Unlimited validity") {
 		t.Fatalf("expected unlimited expire denied, got %v", err)
 	}
-	if err := EnsureUserConstraints(admin, UserConstraintInput{NextPlan: &NextPlanPayload{DataLimit: i64(1024)}}); err == nil || !strings.Contains(err.Error(), "next plans") {
+	if err := EnsureUserConstraints(admin, UserConstraintInput{NextPlans: []NextPlanPayload{{DataLimit: i64(1024)}}}); err == nil || !strings.Contains(err.Error(), "next plans") {
 		t.Fatalf("expected next plan denied, got %v", err)
 	}
 	if err := EnsureUserConstraints(admin, UserConstraintInput{Status: "on_hold"}); err == nil || !strings.Contains(err.Error(), "on-hold") {

@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
 )
 
@@ -148,38 +150,124 @@ func ensureCanAccessUser(admin adminapp.Admin, user existingUserRow) error {
 	return clientError(403, "You're not allowed")
 }
 
-func excludedTagsForProtocol(protocol string, selected []string, catalog MutationContext) []string {
-	protocol = normalizeProtocol(protocol)
-	selectedSet := map[string]struct{}{}
-	for _, tag := range selected {
-		tag = strings.TrimSpace(tag)
-		if tag != "" {
-			selectedSet[tag] = struct{}{}
+func (r Repository) createMutationContextTx(ctx context.Context, tx *sql.Tx, admin adminapp.Admin, payload UserCreate, serviceID *int64) (MutationContext, error) {
+	if admin.Role != adminapp.RoleFullAccess || serviceID != nil {
+		return r.mutationContextTx(ctx, tx, admin, nil)
+	}
+	return r.fastCreateMutationContextTx(ctx, tx)
+}
+
+func (r Repository) fastCreateMutationContextTx(ctx context.Context, tx *sql.Tx) (MutationContext, error) {
+	if cached, ok := r.cachedFastCreateMutationContext(); ok {
+		return cached, nil
+	}
+	ctxData := MutationContext{
+		ServiceActiveUsers: map[int64]int64{},
+		Services:           map[int64]ServiceInfo{},
+		Inbounds:           map[string]InboundInfo{},
+	}
+	resolved, _, err := r.resolvedInboundsByTagTx(ctx, tx)
+	if err != nil {
+		return ctxData, err
+	}
+	hostRows, err := tx.QueryContext(ctx, `
+SELECT h.inbound_tag, COALESCE(h.is_disabled, 0)
+FROM hosts h`)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			for tag, inbound := range resolved {
+				protocol := normalizeProtocol(stringValueAny(inbound["protocol"]))
+				if protocol == "" {
+					protocol = "vless"
+				}
+				ctxData.Inbounds[tag] = InboundInfo{Tag: tag, Protocol: protocol}
+			}
+			return ctxData, nil
 		}
+		return ctxData, err
 	}
-	all := []string{}
-	for tag, info := range catalog.Inbounds {
-		if normalizeProtocol(info.Protocol) != protocol {
-			continue
+	for hostRows.Next() {
+		var tag string
+		var disabled bool
+		if err := hostRows.Scan(&tag, &disabled); err != nil {
+			hostRows.Close()
+			return ctxData, err
 		}
-		if !info.HasEnabledHosts {
-			continue
+		protocol := "vless"
+		if inbound, ok := resolved[tag]; ok && strings.TrimSpace(stringValueAny(inbound["protocol"])) != "" {
+			protocol = normalizeProtocol(stringValueAny(inbound["protocol"]))
 		}
-		all = append(all, tag)
-	}
-	if len(all) == 0 {
-		return []string{}
-	}
-	if len(selectedSet) == 0 {
-		return all
-	}
-	excluded := []string{}
-	for _, tag := range all {
-		if _, ok := selectedSet[tag]; !ok {
-			excluded = append(excluded, tag)
+		info := ctxData.Inbounds[tag]
+		info.Tag = tag
+		info.Protocol = protocol
+		if !disabled {
+			info.HasEnabledHosts = true
 		}
+		ctxData.Inbounds[tag] = info
 	}
-	return excluded
+	if err := hostRows.Err(); err != nil {
+		hostRows.Close()
+		return ctxData, err
+	}
+	if err := hostRows.Close(); err != nil {
+		return ctxData, err
+	}
+	for tag, inbound := range resolved {
+		info := ctxData.Inbounds[tag]
+		info.Tag = tag
+		protocol := normalizeProtocol(stringValueAny(inbound["protocol"]))
+		if protocol == "" {
+			protocol = "vless"
+		}
+		info.Protocol = protocol
+		ctxData.Inbounds[tag] = info
+	}
+	r.storeFastCreateMutationContext(ctxData)
+	return ctxData, nil
+}
+
+func (r Repository) cachedFastCreateMutationContext() (MutationContext, bool) {
+	if r.cache == nil {
+		return MutationContext{}, false
+	}
+	now := time.Now()
+	r.cache.mu.RLock()
+	defer r.cache.mu.RUnlock()
+	if now.After(r.cache.fastCreateContextExpires) {
+		return MutationContext{}, false
+	}
+	return cloneMutationContext(r.cache.fastCreateContext), true
+}
+
+func (r Repository) storeFastCreateMutationContext(ctxData MutationContext) {
+	if r.cache == nil {
+		return
+	}
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	r.cache.fastCreateContext = cloneMutationContext(ctxData)
+	r.cache.fastCreateContextExpires = time.Now().Add(500 * time.Millisecond)
+}
+
+func cloneMutationContext(src MutationContext) MutationContext {
+	dst := MutationContext{
+		ActiveUsers:        src.ActiveUsers,
+		ServiceActiveUsers: map[int64]int64{},
+		Services:           map[int64]ServiceInfo{},
+		Inbounds:           map[string]InboundInfo{},
+	}
+	for id, count := range src.ServiceActiveUsers {
+		dst.ServiceActiveUsers[id] = count
+	}
+	for id, service := range src.Services {
+		service.AdminIDs = append([]int64(nil), service.AdminIDs...)
+		dst.Services[id] = service
+	}
+	for tag, inbound := range src.Inbounds {
+		inbound.ServiceIDs = append([]int64(nil), inbound.ServiceIDs...)
+		dst.Inbounds[tag] = inbound
+	}
+	return dst
 }
 
 func uniqueStrings(values []string) []string {
@@ -216,7 +304,10 @@ type nextPlanRow struct {
 
 func (r Repository) ensureUsernameAvailableTx(ctx context.Context, tx *sql.Tx, username string) error {
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND status != ? LIMIT 1`, username, string(UserStatusDeleted)).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE username = ? AND status != ? LIMIT 1`, username, string(UserStatusDeleted)).Scan(&id)
+	if err == sql.ErrNoRows {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND status != ? LIMIT 1`, username, string(UserStatusDeleted)).Scan(&id)
+	}
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -224,6 +315,20 @@ func (r Repository) ensureUsernameAvailableTx(ctx context.Context, tx *sql.Tx, u
 		return err
 	}
 	return clientError(409, "User username already exists")
+}
+
+func isDuplicateUserInsertError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mysqlErr *mysql.MySQLError
+	if stderrors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "unique constraint failed") ||
+		strings.Contains(lower, "duplicate entry") ||
+		strings.Contains(lower, "constraint failed")
 }
 
 func (r Repository) existingUserTx(ctx context.Context, tx *sql.Tx, username string) (existingUserRow, error) {
@@ -483,9 +588,6 @@ func (r Repository) rawXrayConfigsTx(ctx context.Context, tx *sql.Tx) ([]map[str
 }
 
 func (r Repository) replaceProxiesTx(ctx context.Context, tx *sql.Tx, userID int64, proxies ProxyPayload, inbounds map[string][]string, serviceID *int64, catalog MutationContext) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM exclude_inbounds_association WHERE proxy_id IN (SELECT id FROM proxies WHERE user_id = ?)`, userID); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM proxies WHERE user_id = ?`, userID); err != nil {
 		return err
 	}
@@ -499,21 +601,31 @@ func (r Repository) replaceProxiesTx(ctx context.Context, tx *sql.Tx, userID int
 		if err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO proxies (user_id, type, settings) VALUES (?, ?, ?)`, userID, protocol, string(settingsJSON))
+		if _, err := tx.ExecContext(ctx, `INSERT INTO proxies (user_id, type, settings) VALUES (?, ?, ?)`, userID, protocol, string(settingsJSON)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r Repository) deleteProxiesTx(ctx context.Context, tx *sql.Tx, userID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM proxies WHERE user_id = ?`, userID)
+	return err
+}
+
+func (r Repository) insertProxiesForNewUserTx(ctx context.Context, tx *sql.Tx, userID int64, proxies ProxyPayload, inbounds map[string][]string, serviceID *int64, catalog MutationContext) error {
+	protocols := make([]string, 0, len(proxies))
+	for protocol := range proxies {
+		protocols = append(protocols, normalizeProtocol(protocol))
+	}
+	sort.Strings(protocols)
+	for _, protocol := range protocols {
+		settingsJSON, err := json.Marshal(proxies[protocol])
 		if err != nil {
 			return err
 		}
-		proxyID, _ := res.LastInsertId()
-		if proxyID == 0 {
-			if err := tx.QueryRowContext(ctx, `SELECT id FROM proxies WHERE user_id = ? AND type = ? ORDER BY id DESC LIMIT 1`, userID, protocol).Scan(&proxyID); err != nil {
-				return err
-			}
-		}
-		if serviceID == nil {
-			excluded := excludedTagsForProtocol(protocol, inbounds[protocol], catalog)
-			if err := r.replaceProxyExcludedTx(ctx, tx, proxyID, excluded); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO proxies (user_id, type, settings) VALUES (?, ?, ?)`, userID, protocol, string(settingsJSON)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -532,77 +644,44 @@ func (r Repository) replaceProxySettingsOnlyTx(ctx context.Context, tx *sql.Tx, 
 	return nil
 }
 
-func (r Repository) updateProxyInboundsTx(ctx context.Context, tx *sql.Tx, userID int64, inbounds map[string][]string, serviceID *int64, catalog MutationContext) error {
-	if serviceID != nil {
-		return nil
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, type FROM proxies WHERE user_id = ?`, userID)
+func (r Repository) insertNodeOperationTx(ctx context.Context, tx *sql.Tx, operationType string, nodeID int64, userID int64, payload any, now time.Time) error {
+	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	type proxyRow struct {
-		id       int64
-		protocol string
-	}
-	proxies := []proxyRow{}
-	for rows.Next() {
-		var item proxyRow
-		if err := rows.Scan(&item.id, &item.protocol); err != nil {
-			rows.Close()
-			return err
-		}
-		proxies = append(proxies, item)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, item := range proxies {
-		if err := r.replaceProxyExcludedTx(ctx, tx, item.id, excludedTagsForProtocol(item.protocol, inbounds[normalizeProtocol(item.protocol)], catalog)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r Repository) replaceProxyExcludedTx(ctx context.Context, tx *sql.Tx, proxyID int64, excluded []string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM exclude_inbounds_association WHERE proxy_id = ?`, proxyID); err != nil {
-		return err
-	}
-	for _, tag := range uniqueStrings(excluded) {
-		if err := r.ensureInboundTx(ctx, tx, tag); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO exclude_inbounds_association (proxy_id, inbound_tag) VALUES (?, ?)`, proxyID, tag); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r Repository) ensureInboundTx(ctx context.Context, tx *sql.Tx, tag string) error {
-	if strings.TrimSpace(tag) == "" {
-		return nil
-	}
-	stmt := `INSERT IGNORE INTO inbounds (tag) VALUES (?)`
-	if r.dialect == "sqlite" {
-		stmt = `INSERT OR IGNORE INTO inbounds (tag) VALUES (?)`
-	}
-	_, err := tx.ExecContext(ctx, stmt, tag)
+	keySource := fmt.Sprintf("%s:%d:%d:%s", operationType, nodeID, userID, string(payloadJSON))
+	sum := sha256.Sum256([]byte(keySource))
+	key := hex.EncodeToString(sum[:])
+	_, err = tx.ExecContext(
+		ctx,
+		`INSERT INTO node_operations (operation_type, node_id, user_id, payload, status, attempts, idempotency_key, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+		operationType,
+		nodeID,
+		userID,
+		string(payloadJSON),
+		key,
+		dbTime(now),
+		dbTime(now),
+	)
 	return err
 }
 
-func (r Repository) replaceNextPlansTx(ctx context.Context, tx *sql.Tx, userID int64, nextPlan *NextPlanPayload, nextPlans []NextPlanPayload) error {
+func (r Repository) replaceNextPlansTx(ctx context.Context, tx *sql.Tx, userID int64, nextPlans []NextPlanPayload) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM next_plans WHERE user_id = ?`, userID); err != nil {
 		return err
 	}
-	plans := nextPlans
-	if len(plans) == 0 && nextPlan != nil {
-		plans = []NextPlanPayload{*nextPlan}
+	return r.insertNextPlansTx(ctx, tx, userID, nextPlans)
+}
+
+func (r Repository) insertNextPlansForNewUserTx(ctx context.Context, tx *sql.Tx, userID int64, nextPlans []NextPlanPayload) error {
+	if len(nextPlans) == 0 {
+		return nil
 	}
+	return r.insertNextPlansTx(ctx, tx, userID, nextPlans)
+}
+
+func (r Repository) insertNextPlansTx(ctx context.Context, tx *sql.Tx, userID int64, nextPlans []NextPlanPayload) error {
+	plans := nextPlans
 	for idx, plan := range plans {
 		dataLimit := int64(0)
 		if plan.DataLimit != nil {
@@ -675,33 +754,68 @@ func (r Repository) compactNextPlansTx(ctx context.Context, tx *sql.Tx, userID i
 }
 
 func (r Repository) enqueueUserOperationForNodesTx(ctx context.Context, tx *sql.Tx, operationType string, userID int64, queuedAt time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE COALESCE(status, '') NOT IN ('disabled', 'limited') ORDER BY id`)
+	nodeIDs, err := r.activeNodeIDsTx(ctx, tx)
 	if err != nil {
 		return err
+	}
+	for _, nodeID := range nodeIDs {
+		payload := map[string]any{"queued_at": queuedAt.Format(time.RFC3339Nano)}
+		if err := r.insertNodeOperationTx(ctx, tx, operationType, nodeID, userID, payload, queuedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r Repository) activeNodeIDsTx(ctx context.Context, tx *sql.Tx) ([]int64, error) {
+	if cached, ok := r.cachedActiveNodeIDs(); ok {
+		return cached, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE COALESCE(status, '') NOT IN ('disabled', 'limited') ORDER BY id`)
+	if err != nil {
+		return nil, err
 	}
 	nodeIDs := []int64{}
 	for rows.Next() {
 		var nodeID int64
 		if err := rows.Scan(&nodeID); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		nodeIDs = append(nodeIDs, nodeID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	for _, nodeID := range nodeIDs {
-		payload := map[string]any{"queued_at": queuedAt.Format(time.RFC3339Nano)}
-		if err := r.enqueueNodeOperationTx(ctx, tx, operationType, nodeID, userID, payload, queuedAt); err != nil {
-			return err
-		}
+	r.storeActiveNodeIDs(nodeIDs)
+	return nodeIDs, nil
+}
+
+func (r Repository) cachedActiveNodeIDs() ([]int64, bool) {
+	if r.cache == nil {
+		return nil, false
 	}
-	return nil
+	now := time.Now()
+	r.cache.mu.RLock()
+	defer r.cache.mu.RUnlock()
+	if now.After(r.cache.activeNodeIDsExpires) {
+		return nil, false
+	}
+	return append([]int64(nil), r.cache.activeNodeIDs...), true
+}
+
+func (r Repository) storeActiveNodeIDs(nodeIDs []int64) {
+	if r.cache == nil {
+		return
+	}
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	r.cache.activeNodeIDs = append([]int64(nil), nodeIDs...)
+	r.cache.activeNodeIDsExpires = time.Now().Add(250 * time.Millisecond)
 }
 
 func (r Repository) enqueueNodeOperationTx(ctx context.Context, tx *sql.Tx, operationType string, nodeID int64, userID int64, payload any, now time.Time) error {

@@ -134,7 +134,6 @@ type UserDetail struct {
 	Proxies                map[string]map[string]any `json:"proxies"`
 	ExcludedInbounds       map[string][]string       `json:"excluded_inbounds"`
 	Inbounds               map[string][]string       `json:"inbounds"`
-	NextPlan               *NextPlan                 `json:"next_plan"`
 	NextPlans              []NextPlan                `json:"next_plans"`
 	Links                  []string                  `json:"links"`
 	SubscriptionURL        string                    `json:"subscription_url"`

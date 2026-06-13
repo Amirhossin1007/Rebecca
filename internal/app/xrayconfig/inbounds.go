@@ -867,9 +867,6 @@ func (r Repository) ensureInboundRecordTx(ctx context.Context, tx *sql.Tx, tag s
 }
 
 func (r Repository) deleteInboundRecordTx(ctx context.Context, tx *sql.Tx, tag string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM exclude_inbounds_association WHERE inbound_tag = ?`, tag); err != nil {
-		return err
-	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM inbounds WHERE tag = ?`, tag)
 	return err
 }

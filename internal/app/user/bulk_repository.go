@@ -157,8 +157,8 @@ func (r Repository) ensureBulkActionAllowedTx(ctx context.Context, tx *sql.Tx, r
 		}
 	}
 	if payload.Action == AdvancedUserActionChangeService {
-		if !requester.Role.IsGlobal() && payload.TargetServiceID == nil {
-			return clientError(403, "Standard admins must select a target service")
+		if payload.TargetServiceID == nil {
+			return clientError(400, "target_service_id is required. Users must be assigned to a service.")
 		}
 		if targetAdmin == nil {
 			return clientError(403, "Select one admin before changing service assignments.")
@@ -315,15 +315,7 @@ func (r Repository) updateBulkStatusTx(ctx context.Context, tx *sql.Tx, targetAd
 func (r Repository) changeBulkServiceTx(ctx context.Context, tx *sql.Tx, targetAdmin *adminapp.Admin, payload BulkUsersActionRequest) (int64, string, error) {
 	filter := r.bulkFilter(targetAdmin, payload)
 	if payload.TargetServiceID == nil {
-		if payload.ServiceIDIsNull == nil || !*payload.ServiceIDIsNull {
-			filter.where = append(filter.where, "service_id IS NOT NULL")
-		}
-		whereSQL, args := filter.sql()
-		res, err := tx.ExecContext(ctx, "UPDATE users SET service_id = NULL WHERE "+whereSQL, args...)
-		if err != nil {
-			return 0, "", err
-		}
-		return rowsAffected(res), "Users removed from service", nil
+		return 0, "", clientError(400, "target_service_id is required. Users must be assigned to a service.")
 	}
 	filter.where = append(filter.where, "(service_id IS NULL OR service_id != ?)")
 	filter.args = append(filter.args, *payload.TargetServiceID)

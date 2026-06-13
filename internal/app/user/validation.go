@@ -8,6 +8,9 @@ import (
 )
 
 const UsernameValidationMessage = "Username only can be 3 to 32 characters and contain a-z, 0-9, underscores, hyphens, dots, or @."
+const ManualInboundSelectionRemovedMessage = "Manual inbound selection was removed in v0.2.0. Assign a service to the user, or use the service inbound tag setservice-<id> for legacy clients."
+const ProxiesPayloadRemovedMessage = "proxies payload was removed in v0.2.0. Use credential_key to set a custom UUID or credential key."
+const NextPlanRemovedMessage = "next_plan was removed in v0.2.0; use next_plans instead."
 
 var (
 	usernameRegexp    = regexp.MustCompile(`^[a-zA-Z0-9._@-]+$`)
@@ -34,7 +37,10 @@ func ValidateUserCreate(payload *UserCreate, catalog MutationContext) error {
 	if payload.Status != "" && payload.Status != UserStatusCreateActive && payload.Status != UserStatusCreateOnHold {
 		return ValidationError{Detail: "invalid user status"}
 	}
-	if err := validateUserBase(&payload.UserPayloadBase, true, catalog); err != nil {
+	if hasManualInboundSelection(payload.Inbounds) {
+		return ValidationError{Detail: ManualInboundSelectionRemovedMessage}
+	}
+	if err := validateUserBase(&payload.UserPayloadBase, catalog); err != nil {
 		return err
 	}
 	return validateOnHoldCreate(payload.Status, payload.OnHoldExpireDuration, payload.Expire)
@@ -66,10 +72,9 @@ func ValidateUserServiceCreate(payload *UserServiceCreate, catalog MutationConte
 		OnHoldTimeout:          payload.OnHoldTimeout,
 		IPLimit:                payload.IPLimit,
 		AutoDeleteInDays:       payload.AutoDeleteInDays,
-		NextPlan:               payload.NextPlan,
 		NextPlans:              payload.NextPlans,
 	}
-	if err := validateUserBase(&base, false, catalog); err != nil {
+	if err := validateUserBase(&base, catalog); err != nil {
 		return err
 	}
 	return validateOnHoldCreate(payload.Status, payload.OnHoldExpireDuration, payload.Expire)
@@ -85,7 +90,10 @@ func ValidateUserModify(payload *UserModify, catalog MutationContext) error {
 	if payload.ServiceID != nil && *payload.ServiceID <= 0 {
 		return ValidationError{Detail: "service_id must be a positive integer"}
 	}
-	if err := validateUserBase(&payload.UserPayloadBase, false, catalog); err != nil {
+	if hasManualInboundSelection(payload.Inbounds) {
+		return ValidationError{Detail: ManualInboundSelectionRemovedMessage}
+	}
+	if err := validateUserBase(&payload.UserPayloadBase, catalog); err != nil {
 		return err
 	}
 	return validateOnHoldModify(payload.Status, payload.OnHoldExpireDuration, payload.Expire)
@@ -144,8 +152,13 @@ func ValidateBulkUsersAction(payload *BulkUsersActionRequest) error {
 	if payload.ServiceID != nil && *payload.ServiceID <= 0 {
 		return ValidationError{Detail: "service_id must be a positive integer"}
 	}
-	if payload.Action == AdvancedUserActionChangeService && payload.TargetServiceID != nil && *payload.TargetServiceID <= 0 {
-		return ValidationError{Detail: "target_service_id must be a positive integer when provided for change_service"}
+	if payload.Action == AdvancedUserActionChangeService {
+		if payload.TargetServiceID == nil {
+			return ValidationError{Detail: "target_service_id is required. Users must be assigned to a service."}
+		}
+		if *payload.TargetServiceID <= 0 {
+			return ValidationError{Detail: "target_service_id must be a positive integer when provided for change_service"}
+		}
 	}
 	if payload.ServiceIDIsNull != nil && *payload.ServiceIDIsNull && payload.ServiceID != nil {
 		return ValidationError{Detail: "service_id and service_id_is_null cannot both be set"}
@@ -153,7 +166,7 @@ func ValidateBulkUsersAction(payload *BulkUsersActionRequest) error {
 	return nil
 }
 
-func validateUserBase(payload *UserPayloadBase, requireProxies bool, catalog MutationContext) error {
+func validateUserBase(payload *UserPayloadBase, catalog MutationContext) error {
 	if payload == nil {
 		return nil
 	}
@@ -172,6 +185,18 @@ func validateUserBase(payload *UserPayloadBase, requireProxies bool, catalog Mut
 			return ValidationError{Detail: "User's note can be a maximum of 500 character"}
 		}
 		*payload.Note = note
+	}
+	if payload.CredentialKey != nil {
+		value := strings.TrimSpace(*payload.CredentialKey)
+		if value == "" {
+			payload.CredentialKey = nil
+		} else {
+			normalized, err := NormalizeCredentialKeyInput(value)
+			if err != nil {
+				return ValidationError{Detail: err.Error()}
+			}
+			*payload.CredentialKey = normalized
+		}
 	}
 	if payload.TelegramID != nil {
 		value := strings.TrimSpace(*payload.TelegramID)
@@ -214,10 +239,10 @@ func validateUserBase(payload *UserPayloadBase, requireProxies bool, catalog Mut
 	if payload.OnHoldTimeout != nil && strings.TrimSpace(*payload.OnHoldTimeout) == "" {
 		payload.OnHoldTimeout = nil
 	}
-	if err := validateNextPlans(payload.NextPlan, payload.NextPlans); err != nil {
+	if err := validateNextPlans(payload.NextPlans); err != nil {
 		return err
 	}
-	if err := validateProxiesAndInbounds(payload.Proxies, payload.Inbounds, requireProxies, catalog); err != nil {
+	if err := validateProxies(payload.Proxies); err != nil {
 		return err
 	}
 	return nil
@@ -267,12 +292,7 @@ func validateOnHold(duration *int64, expire *int64) error {
 	return nil
 }
 
-func validateNextPlans(nextPlan *NextPlanPayload, nextPlans []NextPlanPayload) error {
-	if nextPlan != nil {
-		if err := validateNextPlan(nextPlan); err != nil {
-			return err
-		}
-	}
+func validateNextPlans(nextPlans []NextPlanPayload) error {
 	for i := range nextPlans {
 		if err := validateNextPlan(&nextPlans[i]); err != nil {
 			return err
@@ -294,16 +314,10 @@ func validateNextPlan(plan *NextPlanPayload) error {
 	return nil
 }
 
-func validateProxiesAndInbounds(
-	proxies ProxyPayload,
-	inbounds map[string][]string,
-	requireProxies bool,
-	catalog MutationContext,
-) error {
-	if requireProxies && len(proxies) == 0 {
-		return ValidationError{Detail: "Each user needs at least one proxy"}
+func validateProxies(proxies ProxyPayload) error {
+	if len(proxies) > 0 {
+		return ValidationError{Detail: ProxiesPayloadRemovedMessage}
 	}
-	normalizedProxies := map[string]struct{}{}
 	for protocol, settings := range proxies {
 		protocol = normalizeProtocol(protocol)
 		if !validProxyProtocol(protocol) {
@@ -311,30 +325,6 @@ func validateProxiesAndInbounds(
 		}
 		if settings == nil {
 			return ValidationError{Detail: fmt.Sprintf("%s proxy settings must be an object", protocol)}
-		}
-		normalizedProxies[protocol] = struct{}{}
-	}
-	for protocol, tags := range inbounds {
-		protocol = normalizeProtocol(protocol)
-		if !validProxyProtocol(protocol) {
-			return ValidationError{Detail: fmt.Sprintf("Unsupported proxy type %s", protocol)}
-		}
-		if len(normalizedProxies) > 0 {
-			if _, ok := normalizedProxies[protocol]; !ok {
-				return ValidationError{Detail: fmt.Sprintf("%s inbounds cannot be set without proxy settings", protocol)}
-			}
-		}
-		for _, tag := range tags {
-			info, ok := catalog.Inbounds[tag]
-			if len(catalog.Inbounds) > 0 && !ok {
-				return ValidationError{Detail: fmt.Sprintf("Inbound %s doesn't exist", tag)}
-			}
-			if ok && normalizeProtocol(info.Protocol) != protocol {
-				return ValidationError{Detail: fmt.Sprintf("Inbound %s doesn't match %s protocol", tag, protocol)}
-			}
-			if ok && !info.HasEnabledHosts {
-				return ValidationError{Detail: fmt.Sprintf("Inbound %s has no enabled hosts", tag)}
-			}
 		}
 	}
 	return nil
@@ -398,6 +388,9 @@ func DetectAutoServiceFromInbounds(inbounds map[string][]string) (AutoServiceDet
 		return AutoServiceDetection{}, ValidationError{Detail: "Only one service inbound can be selected at a time."}
 	}
 	if len(tags) != 1 {
+		if hasManualInboundSelection(inbounds) {
+			return AutoServiceDetection{}, ValidationError{Detail: ManualInboundSelectionRemovedMessage}
+		}
 		return AutoServiceDetection{}, ValidationError{Detail: "Service inbound must be selected alone without any additional inbounds."}
 	}
 	match := autoServiceRegexp.FindStringSubmatch(autoTags[0])
@@ -409,6 +402,18 @@ func DetectAutoServiceFromInbounds(inbounds map[string][]string) (AutoServiceDet
 		return AutoServiceDetection{}, ValidationError{Detail: fmt.Sprintf(`Invalid service inbound tag "%s".`, autoTags[0])}
 	}
 	return AutoServiceDetection{ServiceID: serviceID, Tag: autoTags[0], Detected: true}, nil
+}
+
+func hasManualInboundSelection(inbounds map[string][]string) bool {
+	for _, values := range inbounds {
+		for _, tag := range values {
+			tag = strings.TrimSpace(tag)
+			if tag != "" && !autoServiceRegexp.MatchString(tag) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func parsePositiveInt64(value string) (int64, error) {

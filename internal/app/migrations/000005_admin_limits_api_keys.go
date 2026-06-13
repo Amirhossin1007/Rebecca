@@ -90,12 +90,6 @@ CREATE TABLE admin_api_keys (
 	if err := createIndex(ctx, tx, dialect, "admin_api_keys", "ix_admin_api_keys_admin_id", []string{"admin_id"}, false); err != nil {
 		return err
 	}
-	if _, err := DropIndexIfExists(ctx, tx, dialect, "admin_api_keys", "ix_admin_api_keys_key_hash"); err != nil {
-		return err
-	}
-	if err := createIndex(ctx, tx, dialect, "admin_api_keys", "ix_admin_api_keys_key_hash", []string{"key_hash"}, true); err != nil {
-		return err
-	}
 
 	if err := createTable(ctx, tx, dialect, "admin_usage_logs", `
 CREATE TABLE admin_usage_logs (

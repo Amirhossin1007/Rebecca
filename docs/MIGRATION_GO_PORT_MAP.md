@@ -54,6 +54,9 @@ an `alembic_version` table.
 | 14 | `000014_subscription_settings.go` | subscription settings, aliases, ports, domains, admin overrides |
 | 15 | `000015_backup_telegram_warp_legacy.go` | legacy backup, telegram, and WARP schemas |
 | 16 | `000016_removed_features_cleanup.go` | removed feature cleanup: user templates, access insights |
+| 17 | `000017_performance_indexes.go` | production read/write performance indexes and redundant index cleanup |
+| 18 | `000018_remove_user_inbound_selection.go` | removes legacy per-user inbound exclusion storage |
+| 19 | `000019_materialize_legacy_proxy_credentials.go` | stores legacy masked VMess/VLESS UUIDs in proxies and removes jwt mask columns |
 
 Legacy dialect repairs such as historical MySQL collation fixes are tracked as
 compatibility notes when the final Go schema already includes the corrected

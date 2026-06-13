@@ -24,7 +24,9 @@ func testUserMutationServer(t *testing.T) (*Server, *sql.DB, string) {
 		`ALTER TABLE admins_services ADD COLUMN updated_at DATETIME NULL`,
 		`CREATE TABLE IF NOT EXISTS inbounds (id INTEGER PRIMARY KEY, tag TEXT UNIQUE)`,
 		`INSERT INTO xray_config (id, data) VALUES (1, '{"inbounds":[{"tag":"vless-in","protocol":"vless","port":443,"settings":{"decryption":"none"},"streamSettings":{"network":"tcp","security":"none","tcpSettings":{"header":{"type":"none"}}}}]}')`,
+		`INSERT INTO services (id, name) VALUES (1, 'basic')`,
 		`INSERT INTO hosts (id, inbound_tag, remark, address, is_disabled) VALUES (1, 'vless-in', 'main', 'example.com', 0)`,
+		`INSERT INTO service_hosts (service_id, host_id, sort) VALUES (1, 1, 0)`,
 		`INSERT INTO inbounds (id, tag) VALUES (1, 'vless-in')`,
 		`INSERT INTO nodes (id, name, status) VALUES (1, 'node-1', 'connected')`,
 	}
@@ -42,15 +44,20 @@ func TestUserMutationCreateUpdateDeleteQueuesOperations(t *testing.T) {
 	server, db, token := testUserMutationServer(t)
 
 	rec := userReadRequest(t, server, http.MethodPost, "/api/user", token)
-	rec = adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"go_user","proxies":{"vless":{}},"inbounds":{"vless":["vless-in"]},"data_limit":1000}`)
+	rec = adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"go_user","service_id":1,"data_limit":1000}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	assertUserOperationCount(t, db, "add_user", "go_user", 1)
 
-	rec = adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"go_user","proxies":{"vless":{}},"inbounds":{"vless":["vless-in"]}}`)
+	rec = adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"go_user","service_id":1}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"proxy_payload","service_id":1,"proxies":{"vless":{"id":"11111111-1111-4111-8111-111111111111"}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), userapp.ProxiesPayloadRemovedMessage) {
+		t.Fatalf("proxies create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	rec = adminJSONRequest(t, server, http.MethodPut, "/api/user/go_user", token, `{"status":"disabled","data_limit":2000}`)
@@ -66,6 +73,11 @@ func TestUserMutationCreateUpdateDeleteQueuesOperations(t *testing.T) {
 	}
 	assertUserOperationCount(t, db, "enable_user", "go_user", 1)
 
+	rec = adminJSONRequest(t, server, http.MethodPut, "/api/user/go_user", token, `{"proxies":{"vless":{"id":"11111111-1111-4111-8111-111111111111"}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), userapp.ProxiesPayloadRemovedMessage) {
+		t.Fatalf("proxies update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
 	rec = adminJSONRequest(t, server, http.MethodDelete, "/api/user/go_user", token, `{}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete status = %d body=%s", rec.Code, rec.Body.String())
@@ -76,7 +88,7 @@ func TestUserMutationCreateUpdateDeleteQueuesOperations(t *testing.T) {
 
 func TestUserMutationResetRevokeAndActiveNext(t *testing.T) {
 	server, db, token := testUserMutationServer(t)
-	rec := adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"plan_user","proxies":{"vless":{}},"inbounds":{"vless":["vless-in"]},"data_limit":1000}`)
+	rec := adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"plan_user","service_id":1,"data_limit":1000}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -123,7 +135,7 @@ func TestUserMutationRollsBackWhenNodeOperationFails(t *testing.T) {
 	if _, err := db.Exec(`DROP TABLE node_operations`); err != nil {
 		t.Fatal(err)
 	}
-	rec := adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"rollback_user","proxies":{"vless":{}},"inbounds":{"vless":["vless-in"]},"data_limit":1000}`)
+	rec := adminJSONRequest(t, server, http.MethodPost, "/api/user", token, `{"username":"rollback_user","service_id":1,"data_limit":1000}`)
 	if rec.Code == http.StatusOK {
 		t.Fatalf("expected create to fail when operation enqueue fails")
 	}
@@ -132,7 +144,7 @@ func TestUserMutationRollsBackWhenNodeOperationFails(t *testing.T) {
 
 func TestUsersBulkActionsGoNative(t *testing.T) {
 	server, db, token := testUserMutationServer(t)
-	if _, err := db.Exec(`INSERT INTO services (id, name) VALUES (1, 'basic'), (2, 'premium')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO services (id, name) VALUES (2, 'premium')`); err != nil {
 		t.Fatal(err)
 	}
 	now := "2026-06-05 00:00:00"

@@ -7,15 +7,26 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type Repository struct {
 	db      *sql.DB
 	dialect string
+	cache   *repositoryCache
 }
 
 func NewRepository(db *sql.DB, dialect string) Repository {
-	return Repository{db: db, dialect: dialect}
+	return Repository{db: db, dialect: dialect, cache: &repositoryCache{}}
+}
+
+type repositoryCache struct {
+	mu                       sync.RWMutex
+	fastCreateContext        MutationContext
+	fastCreateContextExpires time.Time
+	activeNodeIDs            []int64
+	activeNodeIDsExpires     time.Time
 }
 
 func (r Repository) LinkPrerequisites(ctx context.Context, req LinkPrerequisitesRequest) (LinkPrerequisites, error) {
@@ -173,27 +184,7 @@ func (r Repository) subscriptionSecretKey(ctx context.Context) (string, error) {
 }
 
 func (r Repository) uuidMasks(ctx context.Context) (map[string][]byte, error) {
-	var vmessMask sql.NullString
-	var vlessMask sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT vmess_mask, vless_mask FROM jwt ORDER BY id LIMIT 1`).Scan(&vmessMask, &vlessMask)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return map[string][]byte{}, nil
-		}
-		return nil, err
-	}
-	result := map[string][]byte{}
-	for protocol, value := range map[string]sql.NullString{"vmess": vmessMask, "vless": vlessMask} {
-		if !value.Valid || strings.TrimSpace(value.String) == "" {
-			continue
-		}
-		decoded, err := hexToBytes(value.String)
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s mask: %w", protocol, err)
-		}
-		result[protocol] = decoded
-	}
-	return result, nil
+	return map[string][]byte{}, nil
 }
 
 func (r Repository) ConfigLinkUser(ctx context.Context, userID int64) (ConfigLinkUser, error) {
@@ -507,8 +498,6 @@ func (r Repository) proxiesByUser(ctx context.Context, userIDs []int64) (map[int
 	}
 	defer rows.Close()
 
-	proxies := make(map[int64]proxyIndex)
-	proxyIDs := make([]int64, 0)
 	for rows.Next() {
 		var item StoredProxy
 		var settings any
@@ -517,54 +506,11 @@ func (r Repository) proxiesByUser(ctx context.Context, userIDs []int64) (map[int
 		}
 		item.Settings = jsonMap(settings)
 		result[item.UserID] = append(result[item.UserID], item)
-		proxyIDs = append(proxyIDs, item.ID)
-		proxies[item.ID] = proxyIndex{userID: item.UserID, index: len(result[item.UserID]) - 1}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.attachExcludedInbounds(ctx, proxyIDs, result, proxies); err != nil {
-		return nil, err
-	}
 	return result, nil
-}
-
-type proxyIndex struct {
-	userID int64
-	index  int
-}
-
-func (r Repository) attachExcludedInbounds(ctx context.Context, proxyIDs []int64, result map[int64][]StoredProxy, proxies map[int64]proxyIndex) error {
-	proxyIDs = uniqueInt64(proxyIDs)
-	if len(proxyIDs) == 0 {
-		return nil
-	}
-
-	query := fmt.Sprintf(
-		`SELECT proxy_id, inbound_tag FROM exclude_inbounds_association WHERE proxy_id IN (%s) ORDER BY proxy_id, inbound_tag`,
-		placeholders(len(proxyIDs)),
-	)
-	rows, err := r.db.QueryContext(ctx, query, int64Args(proxyIDs)...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var proxyID int64
-		var tag string
-		if err := rows.Scan(&proxyID, &tag); err != nil {
-			return err
-		}
-		if ref, ok := proxies[proxyID]; ok {
-			items := result[ref.userID]
-			if ref.index >= 0 && ref.index < len(items) {
-				items[ref.index].ExcludedInbounds = append(items[ref.index].ExcludedInbounds, tag)
-				result[ref.userID] = items
-			}
-		}
-	}
-	return rows.Err()
 }
 
 func (r Repository) nextPlansByUser(ctx context.Context, userIDs []int64) (map[int64][]NextPlan, error) {

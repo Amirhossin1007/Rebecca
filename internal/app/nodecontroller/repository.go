@@ -127,26 +127,7 @@ func (r Repository) NodeRawConfig(ctx context.Context, node NodeRow) (map[string
 }
 
 func (r Repository) UUIDMasks(ctx context.Context) (map[string][]byte, error) {
-	var vmessMask, vlessMask sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT vmess_mask, vless_mask FROM jwt ORDER BY id LIMIT 1`).Scan(&vmessMask, &vlessMask)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return map[string][]byte{}, nil
-		}
-		return nil, err
-	}
-	result := map[string][]byte{}
-	for protocol, value := range map[string]sql.NullString{"vmess": vmessMask, "vless": vlessMask} {
-		if !value.Valid || strings.TrimSpace(value.String) == "" {
-			continue
-		}
-		decoded, err := hex.DecodeString(value.String)
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s mask: %w", protocol, err)
-		}
-		result[protocol] = decoded
-	}
-	return result, nil
+	return map[string][]byte{}, nil
 }
 
 func (r Repository) RuntimeUsers(ctx context.Context) ([]runtimeUserRow, error) {
@@ -157,15 +138,19 @@ SELECT
 	COALESCE(u.credential_key, ''),
 	COALESCE(u.flow, ''),
 	u.service_id,
-	LOWER(p.type),
-	p.settings,
-	GROUP_CONCAT(e.inbound_tag)
+	protocols.type,
+	COALESCE(p.settings, '{}')
 FROM users u
-JOIN proxies p ON u.id = p.user_id
-LEFT JOIN exclude_inbounds_association e ON p.id = e.proxy_id
-WHERE u.status IN ('active', 'on_hold')
-GROUP BY u.id, u.username, u.credential_key, u.flow, u.service_id, LOWER(p.type), p.settings
-ORDER BY u.id, MIN(p.id)`)
+JOIN (
+	SELECT 'vmess' AS type
+	UNION ALL SELECT 'vless'
+	UNION ALL SELECT 'trojan'
+	UNION ALL SELECT 'shadowsocks'
+) protocols
+LEFT JOIN proxies p ON u.id = p.user_id AND LOWER(p.type) = protocols.type
+WHERE u.status IN ('active', 'on_hold') AND u.service_id IS NOT NULL AND u.service_id > 0
+  AND (p.id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM proxies existing WHERE existing.user_id = u.id))
+ORDER BY u.id, COALESCE(p.id, 0), protocols.type`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +161,6 @@ ORDER BY u.id, MIN(p.id)`)
 		var row runtimeUserRow
 		var credentialKey, flow sql.NullString
 		var settings any
-		var excluded sql.NullString
 		if err := rows.Scan(
 			&row.ID,
 			&row.Username,
@@ -185,7 +169,6 @@ ORDER BY u.id, MIN(p.id)`)
 			&row.ServiceID,
 			&row.Protocol,
 			&settings,
-			&excluded,
 		); err != nil {
 			return nil, err
 		}
@@ -197,9 +180,6 @@ ORDER BY u.id, MIN(p.id)`)
 		}
 		row.Protocol = strings.ToLower(row.Protocol)
 		row.Settings = jsonMap(settings)
-		if excluded.Valid && excluded.String != "" {
-			row.ExcludedTags = splitComma(excluded.String)
-		}
 		result = append(result, row)
 	}
 	return result, rows.Err()
@@ -428,15 +408,4 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
-}
-
-func splitComma(value string) []string {
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
 }

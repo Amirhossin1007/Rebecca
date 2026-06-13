@@ -49,7 +49,7 @@ const scopeStatusOptions: AdvancedUserActionScopeStatus[] = [
 	"disabled",
 ];
 type ServiceScopePayload = Partial<
-	Pick<AdvancedUserActionPayload, "service_id" | "service_id_is_null">
+	Pick<AdvancedUserActionPayload, "service_id">
 >;
 
 type OwnerSelection = "my_users" | "all_users" | `admin:${string}`;
@@ -148,9 +148,6 @@ const AdvancedUserActions = () => {
 	};
 
 	const buildServiceScopePayload = (): ServiceScopePayload => {
-		if (selectedServiceValue === "no_service") {
-			return { service_id_is_null: true };
-		}
 		if (!selectedServiceValue) {
 			return {};
 		}
@@ -316,8 +313,17 @@ const AdvancedUserActions = () => {
 			);
 			return;
 		}
-		const resolvedTargetServiceId =
-			targetServiceValue === "no_service" ? null : Number(targetServiceValue);
+		const resolvedTargetServiceId = Number(targetServiceValue);
+		if (!Number.isFinite(resolvedTargetServiceId) || resolvedTargetServiceId <= 0) {
+			showToast(
+				t(
+					"filters.advancedActions.error.targetServiceRequired",
+					"Select a target service first",
+				),
+				"warning",
+			);
+			return;
+		}
 		setIsChangingService(true);
 		try {
 			const payload: AdvancedUserActionPayload = {
@@ -464,12 +470,6 @@ const AdvancedUserActions = () => {
 													"All services",
 												)}
 											</option>
-											<option value="no_service">
-												{t(
-													"filters.advancedActions.serviceChange.noService",
-													"No service",
-												)}
-											</option>
 											{servicesStore.serviceOptions.map((service) => (
 												<option key={service.id} value={String(service.id)}>
 													{service.name}
@@ -510,12 +510,6 @@ const AdvancedUserActions = () => {
 												}
 												size="sm"
 											>
-												<option value="no_service">
-													{t(
-														"filters.advancedActions.serviceChange.noService",
-														"No service",
-													)}
-												</option>
 												{servicesStore.serviceOptions.map((service) => (
 													<option key={service.id} value={String(service.id)}>
 														{service.name}

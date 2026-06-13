@@ -123,7 +123,7 @@ CREATE TABLE admins_services (
 	if err := createIndex(ctx, tx, dialect, "admins_services", "ix_admins_services_service_id", []string{"service_id"}, false); err != nil {
 		return err
 	}
-	return createIndex(ctx, tx, dialect, "admins_services", "ix_admins_services_admin_id", []string{"admin_id"}, false)
+	return nil
 }
 
 func createServiceHosts(ctx context.Context, tx *sql.Tx, dialect string) error {

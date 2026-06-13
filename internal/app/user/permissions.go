@@ -62,10 +62,10 @@ func ValidateUserCreatePermissions(admin adminapp.Admin, payload UserCreate, ctx
 		return err
 	}
 	if err := EnsureUserConstraints(admin, UserConstraintInput{
-		Status:   string(payload.Status),
-		Data:     payload.DataLimit,
-		Expire:   payload.Expire,
-		NextPlan: payload.NextPlan,
+		Status:    string(payload.Status),
+		Data:      payload.DataLimit,
+		Expire:    payload.Expire,
+		NextPlans: payload.NextPlans,
 	}); err != nil {
 		return err
 	}
@@ -102,10 +102,10 @@ func ValidateUserServiceCreatePermissions(admin adminapp.Admin, payload UserServ
 		return err
 	}
 	if err := EnsureUserConstraints(admin, UserConstraintInput{
-		Status:   string(payload.Status),
-		Data:     payload.DataLimit,
-		Expire:   payload.Expire,
-		NextPlan: payload.NextPlan,
+		Status:    string(payload.Status),
+		Data:      payload.DataLimit,
+		Expire:    payload.Expire,
+		NextPlans: payload.NextPlans,
 	}); err != nil {
 		return err
 	}
@@ -124,10 +124,10 @@ func ValidateUserModifyPermissions(admin adminapp.Admin, payload UserModify, ctx
 		return err
 	}
 	if err := EnsureUserConstraints(admin, UserConstraintInput{
-		Status:   string(payload.Status),
-		Data:     payload.DataLimit,
-		Expire:   payload.Expire,
-		NextPlan: payload.NextPlan,
+		Status:    string(payload.Status),
+		Data:      payload.DataLimit,
+		Expire:    payload.Expire,
+		NextPlans: payload.NextPlans,
 	}); err != nil {
 		return err
 	}
@@ -135,10 +135,10 @@ func ValidateUserModifyPermissions(admin adminapp.Admin, payload UserModify, ctx
 }
 
 type UserConstraintInput struct {
-	Status   string
-	Data     *int64
-	Expire   *int64
-	NextPlan *NextPlanPayload
+	Status    string
+	Data      *int64
+	Expire    *int64
+	NextPlans []NextPlanPayload
 }
 
 func EnsureUserConstraints(admin adminapp.Admin, input UserConstraintInput) error {
@@ -159,16 +159,19 @@ func EnsureUserConstraints(admin adminapp.Admin, input UserConstraintInput) erro
 			return err
 		}
 	}
-	if input.NextPlan != nil {
+	if len(input.NextPlans) > 0 {
 		if !perms.AllowNextPlan {
 			return PermissionError{Detail: "You are not allowed to configure next plans."}
 		}
-		if input.NextPlan.Expire != nil && *input.NextPlan.Expire == 0 && !perms.AllowUnlimitedExpire {
-			return PermissionError{Detail: "Next plan with unlimited duration is not allowed for your role."}
-		}
-		if input.NextPlan.DataLimit != nil {
-			if err := EnsureDataLimitPermission(admin, *input.NextPlan.DataLimit); err != nil {
-				return err
+		for i := range input.NextPlans {
+			plan := input.NextPlans[i]
+			if plan.Expire != nil && *plan.Expire == 0 && !perms.AllowUnlimitedExpire {
+				return PermissionError{Detail: "Next plan with unlimited duration is not allowed for your role."}
+			}
+			if plan.DataLimit != nil {
+				if err := EnsureDataLimitPermission(admin, *plan.DataLimit); err != nil {
+					return err
+				}
 			}
 		}
 	}

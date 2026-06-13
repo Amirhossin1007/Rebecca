@@ -44,6 +44,9 @@ func BuildConfigLinks(
 	if username == "" {
 		return ConfigLinksResponse{}, fmt.Errorf("username is required")
 	}
+	if item.ServiceID == nil || *item.ServiceID <= 0 {
+		return ConfigLinksResponse{Links: []string{}}, nil
+	}
 
 	inboundIndex := make(map[string]int, len(inboundOrder))
 	for i, tag := range inboundOrder {
@@ -68,8 +71,13 @@ func BuildConfigLinks(
 	}
 
 	formatVariables := configFormatVariables(item)
+	proxies := item.Proxies
+	if len(proxies) == 0 {
+		proxies = virtualServiceProxies(item.ServiceID, inbounds, inboundOrder, hostsByTag)
+	}
+
 	links := make([]string, 0)
-	for _, proxy := range item.Proxies {
+	for _, proxy := range proxies {
 		protocol := normalizeProxyProtocol(proxy.Type)
 		if _, ok := proxyProtocols[protocol]; !ok {
 			continue
@@ -132,6 +140,42 @@ func hostHasService(host Host, serviceID int64) bool {
 		}
 	}
 	return false
+}
+
+func virtualServiceProxies(serviceID *int64, inbounds map[string]ResolvedInbound, inboundOrder []string, hostsByTag map[string][]configHost) []StoredProxy {
+	if serviceID == nil || *serviceID <= 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	addProtocol := func(tag string) {
+		if len(hostsByTag[tag]) == 0 {
+			return
+		}
+		inbound, ok := inbounds[tag]
+		if !ok {
+			return
+		}
+		protocol := normalizeProxyProtocol(stringValue(inbound["protocol"]))
+		if _, ok := proxyProtocols[protocol]; ok {
+			seen[protocol] = struct{}{}
+		}
+	}
+	for _, tag := range inboundOrder {
+		addProtocol(tag)
+	}
+	for tag := range hostsByTag {
+		addProtocol(tag)
+	}
+	protocols := make([]string, 0, len(seen))
+	for protocol := range seen {
+		protocols = append(protocols, protocol)
+	}
+	sort.Strings(protocols)
+	result := make([]StoredProxy, 0, len(protocols))
+	for _, protocol := range protocols {
+		result = append(result, StoredProxy{Type: protocol, Settings: map[string]any{}})
+	}
+	return result
 }
 
 func sortConfigHosts(hosts []configHost, serviceOrders map[int64]int64, inboundIndex map[string]int) {
@@ -372,7 +416,7 @@ func runtimeProxySettings(settings map[string]any, protocol string, credentialKe
 		if id, ok := sanitizeUUID(firstNonEmptyString(data["id"], data["uuid"])); ok {
 			data["id"] = id
 		} else if normalizedKey != "" {
-			id, err := keyToUUID(normalizedKey, masks[protocol])
+			id, err := keyToUUID(normalizedKey, nil)
 			if err != nil {
 				return nil, err
 			}

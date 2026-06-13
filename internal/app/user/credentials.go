@@ -33,6 +33,17 @@ func generatePassword() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+func NormalizeCredentialKeyInput(value string) (string, error) {
+	cleaned := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "-", "")))
+	if len(cleaned) != 32 {
+		return "", fmt.Errorf("credential_key must be a 32 character hex key or UUID")
+	}
+	if _, err := hex.DecodeString(cleaned); err != nil {
+		return "", fmt.Errorf("credential_key must be a 32 character hex key or UUID")
+	}
+	return cleaned, nil
+}
+
 func normalizeProxyPayload(proxies ProxyPayload, credentialKey string, preserveExisting bool, existing map[string]map[string]any) (ProxyPayload, error) {
 	result := ProxyPayload{}
 	for protocol, settings := range proxies {

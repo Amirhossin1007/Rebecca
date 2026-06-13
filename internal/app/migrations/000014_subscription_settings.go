@@ -317,9 +317,6 @@ CREATE TABLE subscription_domains (
 	if _, err := tx.ExecContext(ctx, `UPDATE subscription_domains SET alt_names = '[]' WHERE alt_names IS NULL OR TRIM(alt_names) = ''`); err != nil {
 		return err
 	}
-	if err := createIndex(ctx, tx, dialect, "subscription_domains", "ix_subscription_domains_domain", []string{"domain"}, false); err != nil {
-		return err
-	}
 	if err := createIndex(ctx, tx, dialect, "subscription_domains", "ix_subscription_domains_admin_id", []string{"admin_id"}, false); err != nil {
 		return err
 	}

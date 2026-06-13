@@ -79,7 +79,6 @@ type UserPayloadBase struct {
 	OnHoldTimeout          *string                    `json:"on_hold_timeout,omitempty"`
 	IPLimit                *int64                     `json:"ip_limit,omitempty"`
 	AutoDeleteInDays       *int64                     `json:"auto_delete_in_days,omitempty"`
-	NextPlan               *NextPlanPayload           `json:"next_plan,omitempty"`
 	NextPlans              []NextPlanPayload          `json:"next_plans,omitempty"`
 }
 
@@ -100,7 +99,6 @@ type UserServiceCreate struct {
 	OnHoldTimeout          *string                    `json:"on_hold_timeout,omitempty"`
 	OnHoldExpireDuration   *int64                     `json:"on_hold_expire_duration,omitempty"`
 	AutoDeleteInDays       *int64                     `json:"auto_delete_in_days,omitempty"`
-	NextPlan               *NextPlanPayload           `json:"next_plan,omitempty"`
 	NextPlans              []NextPlanPayload          `json:"next_plans,omitempty"`
 	IPLimit                *int64                     `json:"ip_limit,omitempty"`
 	Flow                   *string                    `json:"flow,omitempty"`
@@ -169,27 +167,21 @@ type MutationContext struct {
 }
 
 func (p UserServiceCreate) ToUserCreate(service ServiceInfo) UserCreate {
-	proxies := ProxyPayload{}
-	inbounds := map[string][]string{}
-	for protocol, tags := range service.AllowedInbounds {
-		proxies[protocol] = map[string]any{}
-		inbounds[protocol] = append([]string{}, tags...)
-	}
+	_ = service
 	return UserCreate{
 		UserPayloadBase: UserPayloadBase{
 			CredentialKey:          p.CredentialKey,
-			Proxies:                proxies,
+			Proxies:                ProxyPayload{},
 			Flow:                   p.Flow,
 			Expire:                 p.Expire,
 			DataLimit:              p.DataLimit,
 			DataLimitResetStrategy: p.DataLimitResetStrategy,
-			Inbounds:               inbounds,
+			Inbounds:               map[string][]string{},
 			Note:                   p.Note,
 			OnHoldExpireDuration:   p.OnHoldExpireDuration,
 			OnHoldTimeout:          p.OnHoldTimeout,
 			IPLimit:                p.IPLimit,
 			AutoDeleteInDays:       p.AutoDeleteInDays,
-			NextPlan:               p.NextPlan,
 			NextPlans:              p.NextPlans,
 		},
 		Username: p.Username,

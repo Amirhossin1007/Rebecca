@@ -52,8 +52,8 @@ func Open(databaseURL string) (Pool, error) {
 		sqlDB.SetMaxOpenConns(1)
 		sqlDB.SetMaxIdleConns(1)
 	} else {
-		sqlDB.SetMaxOpenConns(10)
-		sqlDB.SetMaxIdleConns(5)
+		sqlDB.SetMaxOpenConns(64)
+		sqlDB.SetMaxIdleConns(16)
 		sqlDB.SetConnMaxLifetime(time.Hour)
 	}
 
@@ -151,6 +151,7 @@ func parseMySQLURL(databaseURL string) (driver string, dsn string, dialect strin
 		ReadTimeout:          30 * time.Second,
 		WriteTimeout:         30 * time.Second,
 		AllowNativePasswords: true,
+		InterpolateParams:    true,
 		Params: map[string]string{
 			"charset":   "utf8mb4",
 			"collation": "utf8mb4_unicode_ci",
