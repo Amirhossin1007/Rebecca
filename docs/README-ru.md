@@ -47,12 +47,6 @@
  </a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/rebeccapanel/Rebecca" target="_blank" rel="noopener noreferrer" >
-    <img src="https://github.com/rebeccapanel/Rebecca-docs/raw/master/screenshots/preview.png" alt="Rebecca screenshots" width="600" height="auto">
-  </a>
-</p>
-
 ## Оглавление
 
 - [Введение](#введение)
@@ -60,12 +54,7 @@
     - [Функции](#функции)
 - [Руководство по установке](#руководство-по-установке)
 - [Конфигурация](#конфигурация)
-- [документация](#документация)
-- [API](#api)
-- [Backup](#backup)
 - [Telegram Bot](#telegram-bot)
-- [Rebecca CLI](#rebecca-cli)
-- [Rebecca Node](#rebecca-node)
 - [Webhook уведомления](#webhook-уведомления)
 - [Поддержка](#поддержка)
 - [Лицензия](#лицензия)
@@ -102,22 +91,19 @@ Rebecca удобен в использовании, многофункциона
 
 # Руководство по установке
 
-Установка Rebecca с базой данных SQLite (по умолчанию):
+Установите Rebecca master через бинарный установщик:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
 ```
 
-Установка Rebecca с базой данных MySQL:
+Установите Rebecca-node на каждом node-сервере через бинарный установщик node:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mysql
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
 ```
 
-Установка Rebecca с базой данных MariaDB:
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mariadb
-```
+Бинарные установщики создают native systemd-сервисы и автоматически скачивают подходящий Linux binary для архитектуры сервера. Master поддерживает SQLite, MySQL и MariaDB через параметры установки; node-установщик устанавливает только runtime ноды и подключается к Master через certificate/token flow из панели.
 
 Когда установка будет завершена:
 - Вы увидите логи, которые можно остановить, нажав `Ctrl+C` или закрыв терминал.
@@ -328,23 +314,6 @@ server {
 | GEO_TEMPLATES_INDEX_URL                  | Опциональный URL разрешённого Geo template index.                                                             |
 | REBECCA_WARP_API_BASE                    | Override для Cloudflare WARP API base URL.                                                                    |
 
-# документация
-
-[Документация Rebecca](https://rebeccapanel.github.io/rebecca/ru/) предоставляет все необходимые руководства для начала работы и доступна на трех языках: фарси, английском и русском. Для полного охвата всех аспектов проекта требуется значительное количество усилий. Мы приветствуем и ценим ваш вклад в улучшение документации. Вы можете внести свой вклад в этот [репозиторий на GitHub](https://github.com/rebeccapanel/Rebeccapanel.github.io).
-
-# API
-
-Rebecca предоставляет REST API, позволяющий разработчикам программно взаимодействовать с сервисами Rebecca.
-
-# Backup
-
-Всегда полезно регулярно создавать резервные копии файлов Rebecca, чтобы предотвратить потерю данных в случае системных сбоев или случайного удаления. Ниже приведены шаги для создания резервной копии Rebecca:
-
-1. По умолчанию все важные файлы Rebecca сохраняются в папке `/var/lib/rebecca` (в версиях Docker). Скопируйте весь каталог `/var/lib/rebecca` в выбранное вами место резервного копирования, например на внешний жесткий диск или в облачное хранилище.
-2. Кроме того, не забудьте сделать резервную копию файла env, содержащего переменные конфигурации, а также файла конфигурации Xray. При стандартной установке env и другие конфигурации находятся в каталоге `/opt/rebecca/`.
-
-Выполнив эти действия, вы сможете обеспечить резервное копирование всех файлов и данных Rebecca, а также переменных конфигурации и конфигурации Xray на случай, если в будущем потребуется их восстановить. Не забывайте регулярно обновлять резервные копии, чтобы поддерживать их в актуальном состоянии.
-
 # Telegram Bot
 
 Rebecca поставляется с встроенным ботом Telegram, который может управлять сервером, создавать и удалять пользователей, а также отправлять уведомления. Этот бот можно легко включить, выполнив несколько простых шагов, и он предоставляет удобный способ взаимодействия с Rebecca без необходимости каждый раз заходить на сервер.
@@ -354,43 +323,7 @@ Rebecca поставляется с встроенным ботом Telegram, к
 1. установите `TELEGRAM_API_TOKEN` в качестве API-токена вашего бота.
 2. установите `TELEGRAM_ADMIN_ID` в качестве цифрового ID вашего Telegram-аккаунта, который вы можете получить от [@userinfobot](https://t.me/userinfobot)
 
-Сервис резервного копирования Rebecca эффективно архивирует все необходимые файлы и отправляет их вашему указанному Telegram-боту. Он поддерживает базы данных SQLite, MySQL и MariaDB. Одной из ключевых особенностей является автоматизация, позволяющая настроить расписание резервного копирования, например, каждый час. При этом ограничений на размер файлов для загрузки в Telegram через бота нет: если файл превышает лимит, он будет автоматически разделен и отправлен частями. Также можно запустить резервное копирование вручную в любой момент.
-
-Установка последней версии Rebecca:
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install-script
-```
-
-Настройка сервиса резервного копирования:
-
-```bash
-rebecca backup-service
-```
-
-Мгновенное резервное копирование:
-
-```bash
-rebecca backup
-```
-
-# Rebecca CLI
-
-Rebecca поставляется с встроенным CLI под названием `rebecca-cli`, который позволяет администраторам напрямую взаимодействовать с ним.
-
-Если вы установили Rebecca с помощью скрипта установки, то доступ к командам cli можно получить, выполнив команду:
-
-```bash
-rebecca cli [OPTIONS] COMMAND [ARGS]...
-```
-
-Для получения дополнительной информации можно ознакомиться с [документацией по Rebecca CLI](./cli/README.md).
-
-# Rebecca Node
-
-Проект Rebecca представляет [Rebecca-node](https://github.com/rebeccapanel/Rebecca-node), который помогает Вам в распределении инфраструктуры. С помощью Rebecca-node можно распределить инфраструктуру по нескольким узлам, получив такие преимущества, как высокая доступность, масштабируемость и гибкость. Rebecca-node позволяет пользователям подключаться к различным серверам, предоставляя им гибкость в выборе, а не ограничиваться только одним сервером.
-Более подробная информация и инструкции по установке приведены в [официальной документации Rebecca-node](https://github.com/rebeccapanel/Rebecca-node).
-
+Telegram bot commands, reports, and backup delivery are temporarily disabled while Rebecca is migrated to native Go services. The rebuild plan is tracked in `docs/TODO_GO_TELEGRAM.md`.
 
 # Webhook уведомления
 

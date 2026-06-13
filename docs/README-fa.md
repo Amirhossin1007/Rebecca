@@ -47,24 +47,13 @@
  </a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/rebeccapanel/Rebecca" target="_blank" rel="noopener noreferrer" >
-    <img src="https://github.com/rebeccapanel/Rebecca-docs/raw/master/screenshots/preview.png" alt="Rebecca screenshots" width="600" height="auto">
-  </a>
-</p>
-
-
 ## فهرست مطالب
 - [بررسی اجمالی](#بررسی-اجمالی)
   - [چرا رِبِکا؟](#چرا-رِبِکا)
     - [امکانات](#امکانات)
 - [راهنمای نصب](#راهنمای-نصب)
 - [تنظیمات](#تنظیمات)
-- [داکیومنت](#داکیومنت)
-- [استفاده از API](#استفاده-از-api)
-- [پشتیبان گیری از رِبِکا](#پشتیبان-گیری-از-رِبِکا)
 - [ربات تلگرام](#ربات-تلگرام)
-- [رابط خط فرمان (CLI) رِبِکا](#رابط-خط-فرمان-cli-رِبِکا)
 - [ارسال اعلان‌ها به آدرس وبهوک](#ارسال-اعلانها-به-آدرس-وبهوک)
 - [کمک مالی](#کمک-مالی)
 - [لایسنس](#لایسنس)
@@ -100,37 +89,19 @@
 
 # راهنمای نصب
 
-برای نصب داکر رِبِکا از این اسکریپت استفاده کنید:
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install
-```
-
-برای نصب باینری رِبِکا از این اسکریپت جدا استفاده کنید:
+برای نصب باینری Master رِبِکا:
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
 ```
 
-این دو اسکریپت عمدا جدا هستند. اسکریپت داکر فقط نصب docker-compose را مدیریت می‌کند و اسکریپت باینری، asset منتشرشده را به صورت سرویس native systemd نصب می‌کند.
-
-حالت داکرایز از SQLite، MySQL و MariaDB پشتیبانی می‌کند. با دستور زیر رِبِکا را با دیتابیس MySQL نصب کنید:
+برای نصب باینری Rebecca-node روی هر سرور نود:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mysql
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
 ```
 
-با دستور زیر رِبِکا را با دیتابیس MariaDB نصب کنید:
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mariadb
-```
-
-حالت باینری به صورت سرویس native systemd نصب می‌شود. بیلدهای ریلیز برای لینوکس روی معماری‌های `386`، `amd64`، `arm64`، `armv5`، `armv6`، `armv7` و `s390x` ساخته می‌شوند و نصاب asset مناسب را خودکار انتخاب می‌کند:
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
-```
+نصاب‌های باینری سرویس native systemd می‌سازند و asset مناسب معماری سرور را خودکار دانلود می‌کنند. Master دیتابیس‌های SQLite، MySQL و MariaDB را از طریق گزینه‌های نصب پشتیبانی می‌کند؛ نصاب نود فقط runtime نود را نصب می‌کند و اتصال آن به Master از طریق certificate/token داخل پنل انجام می‌شود.
 
 وقتی نصب تمام شد:
 
@@ -317,39 +288,6 @@ server {
 | override برای Cloudflare WARP API base URL | REBECCA_WARP_API_BASE |
 
 
-# داکیومنت
-مستندات رِبِکا در حال تکمیل است. از مشارکت شما برای بهبود مستندات استقبال می‌کنیم. لطفاً در همین مخزن Issue یا Pull Request ثبت کنید.
-
-# استفاده از API
-رِبِکا به توسعه‌دهندگان API به صورت REST ارائه می‌دهد.
-
-
-# پشتیبان‌گیری از رِبِکا
-بهتر است همیشه از فایل‌های رِبِکا نسخه پشتیبان تهیه کنید تا در صورت خرابی سیستم یا حذف تصادفی، اطلاعات از دست نروند. مراحل تهیه نسخه پشتیبان به شرح زیر است:
-
-1. به‌طور پیش‌فرض، تمام فایل‌های مهم رِبِکا در `/var/lib/rebecca` ذخیره می‌شوند (در نسخه داکر). کل پوشه `/var/lib/rebecca` را به مکان پشتیبان مورد نظر خود، مانند هارد دیسک خارجی یا فضای ابری کپی کنید.
-2. علاوه بر این، مطمئن شوید از فایل env خود که حاوی متغیرهای تنظیمات شماست و همچنین فایل پیکربندی Xray نسخه پشتیبان تهیه کنید.
-
-سرویس پشتیبان‌گیری رِبِکا به‌طور کارآمد تمام فایل‌های ضروری را فشرده کرده و آن‌ها را به ربات تلگرام مشخص‌شده شما ارسال می‌کند. این سرویس از پایگاه‌های داده SQLite، MySQL و MariaDB پشتیبانی می‌کند. یکی از ویژگی‌های اصلی آن، خودکار بودن است که به شما اجازه می‌دهد پشتیبان‌گیری‌ها را به‌صورت زمان‌بندی‌شده انجام دهید. محدودیتی بابت اندازه فایل وجود ندارد؛ در صورت بزرگ بودن، فایل‌ها به چند بخش تقسیم و ارسال می‌شوند. همچنین می‌توانید هر زمان پشتیبان‌گیری فوری انجام دهید.
-
-نصب آخرین نسخه اسکریپت رِبِکا:
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install-script
-```
-
-راه‌اندازی سرویس پشتیبان‌گیری:
-```bash
-rebecca backup-service
-```
-
-پشتیبان‌گیری فوری:
-```bash
-rebecca backup
-```
-
-با انجام این مراحل، می توانید اطمینان حاصل کنید که از تمام فایل ها و داده های رِبِکا خود یک نسخه پشتیبان تهیه کرده اید. به خاطر داشته باشید که نسخه های پشتیبان خود را به طور مرتب به روز کنید تا آنها را به روز نگه دارید.
-
-
 # ربات تلگرام
 رِبِکا دارای یک ربات تلگرام داخلی است که می‌تواند مدیریت سرور، ایجاد و حذف کاربر و ارسال اعلان‌ها را انجام دهد. این ربات را می‌توان با چند مرحله ساده فعال کرد.
 
@@ -357,22 +295,6 @@ rebecca backup
 
 1. در تنظیمات، متغیر`TELEGRAM_API_TOKEN` را به API TOKEN ربات تلگرام خود تنظیم کنید.
 2. همینطور، متغیر`TELEGRAM_ADMIN_ID` را به شناسه عددی حساب تلگرام خود تنظیم کنید. شما می‌توانید شناسه خود را از [@userinfobot](https://t.me/userinfobot) دریافت کنید.
-
-
-# رابط خط فرمان (CLI)
-رِبِکا دارای یک رابط خط فرمان (Command Line Interface / CLI) داخلی است که به مدیران اجازه می‌دهد با سیستم ارتباط مستقیم داشته باشند.
-
-اگر از Docker برای رِبِکا استفاده می کنید، بهتر است از دستور های `docker exec` یا `docker-compose exec` استفاده کنید تا به پوسته (shell) تعاملی کانتینر رِبِکا دسترسی پیدا کنید.
-
-برای مثال، به پوشه `docker-compose.yml` رِبِکا بروید و دستور زیر را اجرا کنید:
-
-```bash
-$ sudo docker-compose exec -it rebecca bash
-```
-
-رابط خط فرمان (CLI) رِبِکا از طریق دستور `rebecca-cli` در دسترس خواهد بود.
-
-برای کسب اطلاعات بیشتر می توانید [مستندات CLI رِبِکا](./cli/README.md) را مطالعه کنید.
 
 
 # ارسال اعلان‌ها به آدرس وبهوک

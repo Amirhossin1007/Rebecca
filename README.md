@@ -47,12 +47,6 @@
  </a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/rebeccapanel/Rebecca" target="_blank" rel="noopener noreferrer" >
-    <img src="https://github.com/xmohammad1/Rebecca-docs/raw/master/screenshots/preview.png" alt="Rebecca screenshots" width="600" height="auto">
-  </a>
-</p>
-
 ## Table of Contents
 
 - [Overview](#overview)
@@ -60,12 +54,6 @@
     - [Features](#features)
 - [Installation guide](#installation-guide)
 - [Configuration](#configuration)
-- [Documentation](#documentation)
-- [API](#api)
-- [Backup](#backup)
-- [Community](#community)
-- [Rebecca CLI](#rebecca-cli)
-- [Rebecca Node](#rebecca-node)
 - [Donation](#donation)
 - [License](#license)
 - [Contributors](#contributors)
@@ -82,7 +70,7 @@ Rebecca is user-friendly, feature-rich and reliable. It lets you create differen
 
 - Built-in **Web UI**
 - Fully **REST API** backend
-- [**Multiple Nodes**](#rebecca-node) support (for infrastructure distribution & scalability)
+- **Multiple Nodes** support (for infrastructure distribution & scalability)
 - Supports protocols **Vmess**, **VLESS**, **Trojan** and **Shadowsocks**
 - **Multi-protocol** for a single user
 - **Multi-user** on a single inbound
@@ -100,30 +88,19 @@ Rebecca is user-friendly, feature-rich and reliable. It lets you create differen
 
 # Installation guide
 
-Run the Docker installer with:
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install
-```
-
-Run the binary installer with:
+Install Rebecca master with the binary installer:
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
 ```
 
-The two installers are intentionally separate. The Docker script manages docker-compose installs, while the binary script installs the published native systemd release artifact. Release builds publish Linux binaries for `386`, `amd64`, `arm64`, `armv5`, `armv6`, `armv7`, and `s390x`; the binary installer picks the matching asset automatically. The `--dev` channel downloads the latest successful binary artifact from the `dev` branch workflow.
-
-Dockerized mode supports SQLite, MySQL, and MariaDB. Run the following command to install Rebecca with MySQL database:
+Install Rebecca-node on each node server with the binary node installer:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mysql
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
 ```
 
-Run the following command to install Rebecca with MariaDB database:
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mariadb
-```
+The binary installers create native systemd services and automatically download the matching Linux release asset for the server architecture. The master installer supports SQLite, MySQL, and MariaDB through its install options; the node installer installs only the node runtime and connects it to the master through the certificate/token flow in the panel.
 
 Once the installation is complete:
 
@@ -341,64 +318,9 @@ By default the app will be run on `http://localhost:8000/dashboard`. You can con
 | GEO_TEMPLATES_INDEX_URL                  | Optional allowed Geo template index URL.                                                                                  |
 | REBECCA_WARP_API_BASE                    | Cloudflare WARP API base URL override.                                                                                    |
 
-
-# Documentation
-
-Rebecca documentation is a work in progress. We welcome and appreciate your contributions to help us improve it. Please open issues or PRs in the main repository.
-
-
-# API
-
-Rebecca provides a REST API that enables developers to interact with its services programmatically.
-
-
-# Backup
-
-It's always a good idea to back up your Rebecca files regularly to prevent data loss in case of system failures or accidental deletion. Here are the steps to back up Rebecca:
-
-1. By default, all Rebecca important files are saved in `/var/lib/rebecca` (Docker versions). Copy the entire `/var/lib/rebecca` directory to a backup location of your choice, such as an external hard drive or cloud storage.
-2. Additionally, make sure to back up your env file, which contains your configuration variables, and also your Xray config file. With the standard installer, the env and other configurations are inside the `/opt/rebecca/` directory.
-
-Telegram-delivered backup automation is temporarily disabled during the Go migration. The future Go implementation is tracked in `docs/TODO_GO_TELEGRAM.md`.
-
-Install the Latest Version of Rebecca Command:
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install-script
-```
-
-Get an Immediate Backup:
-```bash
-rebecca backup
-```
-
-By following these steps, you can ensure that you have a backup of all your Rebecca files and data, as well as your configuration variables and Xray configuration, in case you need to restore them in the future. Remember to update your backups regularly to keep them up-to-date.
-
-# Community
-
-Join the Telegram channel for project updates and community discussion:
-
-https://t.me/rebeccapanel_rebecca
-
 # Telegram integration
 
 Telegram bot commands, Telegram reports, Telegram settings, and Telegram backup delivery are temporarily disabled while Rebecca is migrated to native Go services. The rebuild plan and legacy behavior notes are documented in `docs/TODO_GO_TELEGRAM.md`.
-
-# Rebecca CLI
-
-Rebecca comes with an integrated CLI which allows administrators to have direct interaction with it.
-
-If you've installed Rebecca using the easy install script, you can access the CLI commands by running
-
-```bash
-rebecca cli [OPTIONS] COMMAND [ARGS]...
-```
-
-For more information, you can read the CLI documentation in `./docs/cli/README.md`.
-
-# Rebecca Node
-
-The Rebecca project introduces the [Rebecca-node](https://github.com/rebeccapanel/Rebecca-node), which enables infrastructure distribution. With Rebecca-node, you can distribute your infrastructure across multiple locations, unlocking benefits such as redundancy, high availability, scalability, and flexibility. Rebecca-node empowers users to connect to different servers, offering them the flexibility to choose and connect to multiple servers instead of being limited to only one server.
-For more detailed information and installation instructions, please refer to the [Rebecca-node repository](https://github.com/rebeccapanel/Rebecca-node).
 
 # Webhook notifications
 

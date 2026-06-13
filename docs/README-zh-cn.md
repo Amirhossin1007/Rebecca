@@ -47,22 +47,12 @@
  </a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/rebeccapanel/Rebecca" target="_blank" rel="noopener noreferrer" >
-    <img src="https://github.com/rebeccapanel/Rebecca-docs/raw/master/screenshots/preview.png" alt="Rebecca screenshots" width="600" height="auto">
-  </a>
-</p>
-
-
 ## 目录
 - [概览](#概览)
   - [为什么要使用 Rebecca?](#为什么要使用-rebecca)
     - [特性](#特性)
 - [安装指南](#安装指南)
 - [配置](#配置)
-- [文档](#文档)
-- [如何使用 API](#如何使用-api)
-- [如何备份 Rebecca](#如何备份-rebecca)
 - [Telegram bot](#telegram-bot)
 - [捐赠](#捐赠)
 - [许可](#许可)
@@ -99,22 +89,19 @@ Rebecca 是一个用户友好、功能丰富且可靠的工具。它让您可以
 
 
 # 安装指南
-运行以下命令以使用 SQLite 数据库安装 Rebecca。
+使用二进制安装脚本安装 Rebecca master：
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
 ```
 
-运行以下命令以使用 MySQL 数据库安装 Rebecca。
+在每台 node 服务器上使用二进制 node 安装脚本安装 Rebecca-node：
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mysql
+sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
 ```
 
-运行以下命令以使用 MariaDB 数据库安装 Rebecca。
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install --database mariadb
-```
+二进制安装脚本会创建 native systemd 服务，并自动下载适合服务器架构的 Linux binary。Master 通过安装参数支持 SQLite、MySQL 和 MariaDB；node 安装脚本只安装 node runtime，并通过面板中的 certificate/token flow 连接到 Master。
 
 Once the installation is complete:
 
@@ -314,41 +301,6 @@ server {
 | REBECCA_CONFIG_DIR                       | full backup 中包含的配置根目录。                                                                                          |
 | GEO_TEMPLATES_INDEX_URL                  | 可选的 Geo template index URL。                                                                                           |
 | REBECCA_WARP_API_BASE                    | Cloudflare WARP API base URL 覆盖值。                                                                                     |
-
-
-# 文档
-[Rebecca 文档](https://rebeccapanel.github.io/rebecca) 提供了所有必要的入门指南，支持三种语言：波斯语、英语和俄语。要全面覆盖项目的各个方面，这些文档需要大量的工作。我们欢迎并感谢您的贡献，以帮助我们改进文档。您可以在这个 [GitHub 仓库](https://github.com/rebeccapanel/Rebeccapanel.github.io) 中进行贡献。
-
-
-# 如何使用 API
-Rebecca 提供了 REST API，使开发人员能够以编程方式与 Rebecca 服务进行交互。
-
-
-# 如何备份 Rebecca
-
-定期备份 Rebecca 文件是预防系统故障或意外删除导致数据丢失的好习惯。以下是备份 Rebecca 的步骤：
-
-1. 默认情况下，所有重要的 Rebecca 文件都保存在 `/var/lib/rebecca` ( Docker 版本)中。将整个 `/var/lib/rebecca` 目录复制到您选择的备份位置，比如外部硬盘或云存储。
-2. 此外，请确保备份您的 `env` 文件，其中包含您的配置变量，以及您的 `Xray` 配置文件。
-
-Rebecca 的备份服务会高效地压缩所有必要文件并将它们发送到您指定的 Telegram 机器人。它支持 SQLite、MySQL 和 MariaDB 数据库。其一个主要功能是自动化，允许您每小时安排一次备份。对于 Telegram 机器人的上传限制没有限制；如果文件超过限制，它会被拆分并以多个部分发送。此外，您可以在任何时间启动即时备份。
-
-安装最新版 Rebecca 命令：
-```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca.sh)" @ install-script
-```
-
-设置备份服务：
-```bash
-rebecca backup-service
-```
-
-获取即时备份：
-```bash
-rebecca backup
-```
-
-按照这些步骤，您可以确保有备份所有 Rebecca 文件和数据，以及您的配置变量和 Xray 配置，以备将来恢复使用。请记得定期更新备份，以保持它们的最新性。
 
 
 # Telegram bot
