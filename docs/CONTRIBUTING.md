@@ -29,38 +29,28 @@ Keep pull requests focused. Avoid mixing formatting, documentation moves, and be
 
 ```text
 .
-|-- app/                 # Python FastAPI code that is still active or transitional
-|-- go/                  # Go gateway, master API, node controller, usage, admin, user flows
+|-- cmd/                 # Rebecca server and CLI entrypoints
+|-- internal/            # Go gateway, Master API, migrations, node controller, and domain packages
+|-- proto/               # Source protobuf contracts
 |-- dashboard/           # React dashboard. npm package files live here.
-|-- cli/                 # Python CLI entrypoints still used by packaged commands
-|-- docs/                # Project docs, translated READMEs, CLI docs, contributor docs
+|-- templates/           # Built-in subscription and home templates used by Go
+|-- docs/                # Project docs, translated READMEs, contributor docs
 |-- scripts/             # Install/build/deployment scripts
-|-- tests/               # Python tests for active Python or transitional behavior
 ```
 
 ## Architecture Notes
 
-Rebecca is being migrated from Python runtime paths to Go-owned services in phases.
+Rebecca's runtime is Go-owned.
 
-- Go owns the gateway, Go Master API sidecar, node communication, admin/auth, and the Go-native user/subscription paths that have already been migrated.
-- Python still owns parts that have not been migrated yet and may also expose transitional wrappers while a feature is moving to Go.
-- New node, admin, user, and subscription runtime behavior should be implemented in Go unless there is an explicit reason to keep it transitional.
-- If a Python route has been intentionally retired because a Go route owns it, tests should target the Go package or the gateway path rather than re-enabling Python behavior.
+- Go owns the gateway, Master API, migrations, node communication, admin/auth, users, subscriptions, services, settings, system, runtime helpers, and jobs.
+- The gateway does not fall back to a Python backend.
+- New backend behavior should be implemented in Go.
 
 ## Backend Development
-
-Python backend:
-
-```bash
-python -m compileall -q app tests
-ruff check app tests
-python -m pytest
-```
 
 Go backend:
 
 ```bash
-cd go
 go test ./...
 ```
 
@@ -82,15 +72,9 @@ The root repository does not keep a `package.json` or `package-lock.json`. Dashb
 
 The root `README.md` is the main project README. Other README files and contributor documentation live under `docs/`.
 
-CLI docs can be regenerated from the repository root with:
-
-```bash
-PYTHONPATH=$(pwd) typer rebecca-cli.py utils docs --name "" --output ./docs/cli/README.md
-```
+CLI documentation should be updated manually alongside Go CLI changes.
 
 ## Debug Mode
-
-For local Python development, set `DEBUG=true` and run `main.py`.
 
 For dashboard development, run the Vite dev server from `dashboard/` and set `VITE_BASE_API` in `dashboard/.env` if the API address is not the default.
 
@@ -98,6 +82,6 @@ For dashboard development, run the Vite dev server from `dashboard/` and set `VI
 
 - Keep the change scoped to one concern.
 - Update docs when paths, commands, or runtime ownership changes.
-- Run the relevant Python, Go, and dashboard checks.
+- Run the relevant Go and dashboard checks.
 - Do not commit generated build output unless the repository already tracks that exact artifact for a release flow.
 - Do not include secrets, real server credentials, database dumps, or local test databases.

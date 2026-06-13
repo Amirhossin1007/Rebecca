@@ -73,7 +73,7 @@
 
 # Введение
 
-Rebecca — это инструмент управления прокси-серверами, который предоставляет простой и удобный пользовательский интерфейс для управления сотнями учетных записей прокси на базе [Xray-core](https://github.com/XTLS/Xray-core) и созданный с использованием Python и ReactJS.
+Rebecca — это инструмент управления прокси-серверами, который предоставляет простой и удобный пользовательский интерфейс для управления сотнями учетных записей прокси на базе [Xray-core](https://github.com/XTLS/Xray-core) и созданный на Go и ReactJS.
 
 ## Почему Rebecca?
 
@@ -163,16 +163,18 @@ rebecca --help
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 ```
 
-Клонируйте этот проект и установите зависимости (Вам нужен Python >= 3.8):
+Клонируйте проект и соберите dashboard и Go-бинарники:
 
 ```bash
 git clone https://github.com/rebeccapanel/Rebecca.git
 cd Rebecca
-wget -qO- https://bootstrap.pypa.io/get-pip.py | python3 -
-python3 -m pip install -r requirements.txt
+cd dashboard
+npm ci
+VITE_BASE_API=/api/ npm run build -- --outDir=build --assetsDir=statics
+cp ./build/index.html ./build/404.html
+cd ..
+bash scripts/build_binary.sh
 ```
-
-В качестве альтернативы для создания виртуальной среды можно использовать [Python Virtualenv](https://pypi.org/project/virtualenv/).
 
 Затем выполните следующую команду для запуска Go-миграций базы данных:
 
@@ -183,9 +185,9 @@ rebecca migrate up
 Если Вы хотите использовать `rebecca-cli`, необходимо связать его с файлом в `$PATH`, сделать его исполняемым и установить:
 
 ```bash
-sudo ln -s $(pwd)/rebecca-cli.py /usr/bin/rebecca-cli
-sudo chmod +x /usr/bin/rebecca-cli
-rebecca-cli completion install
+sudo install -m 755 ./dist/rebecca-cli /usr/local/bin/rebecca
+rebecca cli --help
+
 ```
 
 Теперь настало время настройки.
@@ -204,14 +206,33 @@ nano .env
 В завершение запустите приложение с помощью следующей команды:
 
 ```bash
-python3 main.py
+./dist/rebecca-server
 ```
 
-Для запуска с помощью linux systemctl (скопируйте файл rebecca.service в `/var/lib/rebecca/rebecca.service`):
+Для ручной установки через systemd создайте unit для Go-бинарника:
 
+```ini
+[Unit]
+Description=Rebecca
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rebecca
+EnvironmentFile=/opt/rebecca/.env
+ExecStart=/opt/rebecca/dist/rebecca-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
-systemctl enable /var/lib/rebecca/rebecca.service
-systemctl start rebecca
+
+Затем включите сервис:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now rebecca
 ```
 
 Для использования с nginx:
@@ -279,44 +300,33 @@ server {
 
 > Ниже приведены настройки, которые можно задать с помощью переменных окружения поместив их в файл `.env`.
 
-| Перменная                                | Описание                                                                                                                       |
-| ---------------------------------------- |--------------------------------------------------------------------------------------------------------------------------------|
-| SUDO_USERNAME                            | Имя пользователя главного администратора                                                                                       |
-| SUDO_PASSWORD                            | Пароль главного администратора                                                                                                 |
-| SQLALCHEMY_DATABASE_URL                  | Путь к файлу БД ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls))                       |
-| UVICORN_HOST                             | Привязка приложения к хосту (по умолчанию: `0.0.0.0`)                                                                          |
-| UVICORN_PORT                             | Привязка приложения к порту (по умолчанию: `8000`)                                                                             |
-| UVICORN_UDS                              | Привязка приложения к UNIX domain socket                                                                                       |
-| UVICORN_SSL_CERTFILE                     | Адрес файла сертификата SSL                                                                                                    |
-| UVICORN_SSL_KEYFILE                      | Адрес файла ключа SSL                                                                                                          |
-| UVICORN_SSL_CA_TYPE                      | Тип центра сертификации ключа SSL. Используйте `private` для тестирования самоподписанных CA (по умолчанию: `public`)          |
-| XRAY_EXECUTABLE_PATH                     | Путь к бинарникам Xray  (по умолчанию: `/usr/local/bin/xray`)                                                                  |
-| XRAY_ASSETS_PATH                         | Путь к папке с рессурсными файлами для Xray (файлы geoip.dat и geosite.dat) (по умолчанию: `/usr/local/share/xray`)            |
-| XRAY_SUBSCRIPTION_URL_PREFIX             | Префикс адреса подписки                                                                                                        |
-| XRAY_FALLBACKS_INBOUND_TAG               | Если вы используете входящее соединение с несколькими резервными вариантами, укажите здесь его тег                             |
-| XRAY_EXCLUDE_INBOUND_TAGS                | Теги входящих соединений, которые не требуют управления и не должны быть включены в список прокси                              |
-| CUSTOM_TEMPLATES_DIRECTORY               | Путь к папке с пользовательскими шаблонами (по умолчанию: `app/templates`)                                                     |
-| CLASH_SUBSCRIPTION_TEMPLATE              | Шаблон для создания конфигурации Clash (по умолчанию: `clash/default.yml`)                                                     |
-| SUBSCRIPTION_PAGE_TEMPLATE               | Шаблон для страницы подписки (по умолчанию: `subscription/index.html`)                                                         |
-| HOME_PAGE_TEMPLATE                       | Шаблон главной страницы (по умолчанию: `home/index.html`)                                                                      |
-| TELEGRAM_API_TOKEN                       | Токен Telegram-бота  (полученный от [@botfather](https://t.me/botfather))                                                      |
-| TELEGRAM_ADMIN_ID                        | Числовой идентификатор администратора в Telegram (полученный от [@userinfobot](https://t.me/userinfobot))                      |
-| TELEGRAM_PROXY_URL                       | URL прокси для запуска Telegram-бота (если серверы Telegram заблокированы на вашем сервере).                                   |
-| JWT_ACCESS_TOKEN_EXPIRE_MINUTES          | Время истечения срока действия доступного токена в минутах, `0` означает "без истечения срока действия" (по умолчанию: `1440`) |
-| DOCS                                     | Активация документации API по адресам `/docs` и `/redoc`. (по умолчанию: `False`)                                              |
-| DEBUG                                    | Активация режима разработки (development) (по умолчанию: `False`)                                                              |
-| WEBHOOK_ADDRESS                          | Адрес Webhook для отправки уведомлений. Уведомления Webhook будут отправляться, если это значение было установлено             |
-| WEBHOOK_SECRET                           | Webhook secret будет передаваться с каждым запросом в виде `x-webhook-secret` в заголовке (по умолчанию: `None`)               |
-| NUMBER_OF_RECURRENT_NOTIFICATIONS        | Сколько раз повторять попытку отправки уведомления при обнаружении ошибки  (по умолчанию: `3`)                                 |
-| RECURRENT_NOTIFICATIONS_TIMEOUT          | Тайм-аут между каждым повторным запросом при обнаружении ошибки в секундах (по умолчанию: `180`)                               |
-| NOTIFY_REACHED_USAGE_PERCENT             | При каком проценте использования отправлять предупреждение (по умолчанию: `80`)                                                |
-| NOTIFY_DAYS_LEFT                         | Когда отправлять предупреждение об истечении срока действия (по умолчанию: `3`)                                                |
-| USERS_AUTODELETE_DAYS                    | Delete expired (and optionally limited users) after this many days (Negative values disable this feature, default: `-1`)       |
-| USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS | Weather to include limited accounts in the auto-delete feature (default: `False`)                                              |
-| USE_CUSTOM_JSON_DEFAULT                  | Enable custom JSON config for ALL supported clients (default: `False`)                                                         |
-| USE_CUSTOM_JSON_FOR_V2RAYNG              | Enable custom JSON config only for V2rayNG (default: `False`)                                                                  |
-| USE_CUSTOM_JSON_FOR_STREISAND            | Enable custom JSON config only for Streisand (default: `False`)                                                                |
-| USE_CUSTOM_JSON_FOR_V2RAYN               | Enable custom JSON config only for V2rayN (default: `False`)                                                                   |
+| Переменная                               | Описание                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| SUDO_USERNAME                            | Имя bootstrap-администратора.                                                                                 |
+| SUDO_PASSWORD                            | Пароль bootstrap-администратора.                                                                              |
+| SQLALCHEMY_DATABASE_URL                  | URL базы данных; legacy-имя сохранено для совместимости с Go runtime.                                         |
+| UVICORN_HOST                             | Хост публичного Go gateway (по умолчанию: `0.0.0.0`).                                                        |
+| UVICORN_PORT                             | Порт публичного Go gateway (по умолчанию: `8000`).                                                           |
+| UVICORN_SSL_CERTFILE                     | TLS-сертификат для Go gateway.                                                                                |
+| UVICORN_SSL_KEYFILE                      | TLS-ключ для Go gateway.                                                                                      |
+| UVICORN_SSL_CA_TYPE                      | Тип CA для install scripts: `public` или `private`.                                                          |
+| REBECCA_GATEWAY_ADDR                     | Полный адрес gateway; переопределяет `UVICORN_HOST`/`UVICORN_PORT`.                                          |
+| REBECCA_NODE_OPERATIONS_POLL_INTERVAL    | Интервал обработки очереди node operations.                                                                   |
+| REBECCA_USER_LIFECYCLE_INTERVAL          | Интервал проверки lifecycle пользователей.                                                                    |
+| REBECCA_USER_USAGE_RESET_INTERVAL        | Интервал периодического reset usage пользователей.                                                            |
+| USERS_AUTODELETE_DAYS                    | Удалять expired пользователей через это число дней; отрицательное значение отключает функцию.                 |
+| USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS | Включать limited пользователей в auto-delete.                                                                 |
+| JWT_ACCESS_TOKEN_EXPIRE_MINUTES          | Время жизни JWT access token в минутах.                                                                       |
+| USERS_LIST_TIMEOUT_SECONDS               | Таймаут больших user list запросов; `0` отключает таймаут.                                                    |
+| SUBSCRIPTION_READ_ONLY                   | Не обновлять metadata при чтении subscription.                                                                |
+| XRAY_SUBSCRIPTION_URL_PREFIX             | Prefix для CLI subscription-link helpers.                                                                     |
+| XRAY_FALLBACKS_INBOUND_TAG               | Inbound tag, содержащий fallbacks.                                                                            |
+| XRAY_EXCLUDE_INBOUND_TAGS                | Inbound tags, исключённые из генерации ссылок/config.                                                         |
+| REBECCA_APP_TEMPLATE_BASE                | Базовый путь встроенных templates.                                                                            |
+| REBECCA_CERT_BASE                        | Базовый путь управляемых сертификатов.                                                                        |
+| REBECCA_CONFIG_DIR                       | Корень конфигурации, включаемый в full backup.                                                                |
+| GEO_TEMPLATES_INDEX_URL                  | Опциональный URL разрешённого Geo template index.                                                             |
+| REBECCA_WARP_API_BASE                    | Override для Cloudflare WARP API base URL.                                                                    |
 
 # документация
 
@@ -324,7 +334,7 @@ server {
 
 # API
 
-Rebecca предоставляет REST API, позволяющий разработчикам программно взаимодействовать с сервисами Rebecca. Для просмотра документации по API в Swagger UI или ReDoc установите  переменную `DOCS=True` и перейдите по ссылкам `/docs` и `/redoc`.
+Rebecca предоставляет REST API, позволяющий разработчикам программно взаимодействовать с сервисами Rebecca.
 
 # Backup
 

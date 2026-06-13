@@ -25,7 +25,7 @@ If applicable, add screenshots to help explain your problem.
 
 **Machine details (please complete the following information):**
  - OS: [e.g. ubuntu 20]
-- Python version: [e.g 3.8]
+- Rebecca install mode: [binary/docker/source]
 - Nodejs version: [e.g 16.17]
 - Browser [e.g. chrome, safari]
 

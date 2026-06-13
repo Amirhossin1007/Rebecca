@@ -1902,31 +1902,9 @@ get_current_xray_core_version() {
     echo "Not installed"
 }
 
-# Function to update the Rebecca Main core
+# Function kept for legacy CLI compatibility. Xray core is managed by nodes now.
 update_core_command() {
-    check_running_as_root
-    get_xray_core
-    # Change the Rebecca core
-    xray_executable_path="XRAY_EXECUTABLE_PATH=\"/var/lib/rebecca/xray-core/xray\""
-    
-    echo "Changing the Rebecca core..."
-    # Check if the XRAY_EXECUTABLE_PATH string already exists in the .env file
-    if ! grep -q "^XRAY_EXECUTABLE_PATH=" "$ENV_FILE"; then
-        # If the string does not exist, add it
-        echo "${xray_executable_path}" >> "$ENV_FILE"
-    else
-        # Update the existing XRAY_EXECUTABLE_PATH line
-        sed -i "s~^XRAY_EXECUTABLE_PATH=.*~${xray_executable_path}~" "$ENV_FILE"
-    fi
-    
-    # Restart Rebecca
-    colorized_echo red "Restarting Rebecca..."
-    if restart_command -n >/dev/null 2>&1; then
-        colorized_echo green "Rebecca successfully restarted!"
-    else
-        colorized_echo red "Rebecca restart failed!"
-    fi
-    colorized_echo blue "Installation of Xray-core version $selected_version completed."
+    colorized_echo yellow "Master no longer runs a local Xray core. Update Xray from the Nodes page or the rebecca-node installer."
 }
 
 install_rebecca() {
@@ -2488,8 +2466,6 @@ Environment=REBECCA_ENV_FILE=$ENV_FILE
 Environment=REBECCA_INSTALL_MODE=binary
 Environment=REBECCA_BINARY_METADATA_FILE=$BINARY_METADATA_FILE
 Environment=REBECCA_DATA_DIR=$DATA_DIR
-Environment=XRAY_EXECUTABLE_PATH=$DATA_DIR/xray-core/xray
-Environment=XRAY_ASSETS_PATH=$DATA_DIR/xray-core
 ExecStart=$BINARY_SERVER
 Restart=always
 RestartSec=5
@@ -2581,8 +2557,6 @@ install_binary_rebecca() {
 
     upsert_env_assignment "REBECCA_DATA_DIR" "$DATA_DIR"
     upsert_env_assignment "XRAY_JSON" "$DATA_DIR/xray_config.json"
-    upsert_env_assignment "XRAY_EXECUTABLE_PATH" "$DATA_DIR/xray-core/xray"
-    upsert_env_assignment "XRAY_ASSETS_PATH" "$DATA_DIR/xray-core"
     if [ "$configure_database" = "1" ]; then
         configure_binary_database "$database_type"
     fi
@@ -2593,16 +2567,6 @@ install_binary_rebecca() {
             rm -f "$DATA_DIR/xray_config.json"
             colorized_echo yellow "No bundled xray_config.json found; Rebecca will use its built-in default."
         }
-    fi
-
-    if curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$REBECCA_SCRIPT_BASE_URL/install_latest_xray.sh" -o "$APP_DIR/scripts/install_latest_xray.sh"; then
-        chmod +x "$APP_DIR/scripts/install_latest_xray.sh"
-        if [ ! -x "$DATA_DIR/xray-core/xray" ]; then
-            REBECCA_DATA_DIR="$DATA_DIR" XRAY_INSTALL_DIR="$DATA_DIR/xray-core" XRAY_ASSETS_DIR="$DATA_DIR/xray-core" bash "$APP_DIR/scripts/install_latest_xray.sh"
-        fi
-    else
-        rm -f "$APP_DIR/scripts/install_latest_xray.sh"
-        colorized_echo yellow "Could not fetch Xray installer script; Rebecca will start and Xray can be installed later with core-update."
     fi
 
     write_binary_release_metadata "${resolved_version:-$rebecca_version}" "$binary_arch" "${artifact_url:-${server_asset_url:-}}"
@@ -3802,7 +3766,7 @@ print_menu() {
         "script-uninstall:Uninstall Rebecca script"
         "backup:Manual backup launch"
         "backup-service:Backup service (Telegram + cron job)"
-        "core-update:Update/Change Xray core"
+        "core-update:Deprecated; Xray is managed by nodes"
         "enable-phpmyadmin:Add phpMyAdmin to docker-compose and restart services"
         "edit:Edit docker-compose.yml"
         "edit-env:Edit environment file"
@@ -3864,7 +3828,7 @@ usage() {
     colorized_echo yellow "  script-uninstall  $(tput sgr0)- Uninstall Rebecca script"
     colorized_echo yellow "  backup          $(tput sgr0)- Manual backup launch"
     colorized_echo yellow "  backup-service  $(tput sgr0)- Rebecca Backupservice to backup to TG, and a new job in crontab"
-    colorized_echo yellow "  core-update     $(tput sgr0)- Update/Change Xray core"
+    colorized_echo yellow "  core-update     $(tput sgr0)- Deprecated; Xray is managed by nodes"
     colorized_echo yellow "  enable-phpmyadmin $(tput sgr0)- Add phpMyAdmin to docker-compose.yml and restart services"
     colorized_echo yellow "  edit            $(tput sgr0)- Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)- Edit environment file (via nano or vi editor)"

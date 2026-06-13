@@ -73,7 +73,7 @@
 
 # بررسی اجمالی
 
-رِبِکا یک نرم‌افزار (وب‌اپلیکیشن) مدیریت پروکسی است که امکان مدیریت چندصد حساب پروکسی را با سادگی و قدرت بالا فراهم می‌کند. رِبِکا از [Xray-core](https://github.com/XTLS/Xray-core) قدرت گرفته و با Python و React پیاده‌سازی شده است.
+رِبِکا یک نرم‌افزار (وب‌اپلیکیشن) مدیریت پروکسی است که امکان مدیریت چندصد حساب پروکسی را با سادگی و قدرت بالا فراهم می‌کند. رِبِکا از [Xray-core](https://github.com/XTLS/Xray-core) قدرت گرفته و با بک‌اند Go و داشبورد React پیاده‌سازی شده است.
 
 ## چرا رِبِکا؟
 
@@ -165,7 +165,7 @@ rebecca cli admin create --sudo
 rebecca --help
 ```
 
-اگر مشتاق هستید که رِبِکا را با پایتون و به صورت دستی اجرا کنید، مراحل زیر را مشاهده کنید
+اگر مشتاق هستید که رِبِکا را از سورس و به صورت دستی اجرا کنید، مراحل زیر را مشاهده کنید
 <details markdown="1">
 <summary><h3>نصب به صورت دستی (پیچیده)</h3></summary>
 
@@ -176,16 +176,18 @@ rebecca --help
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 ```
 
-پروژه را clone کنید و dependency ها را نصب کنید. دقت کنید که نسخه پایتون شما Python>=3.8 باشد.
+پروژه را clone کنید و داشبورد و باینری‌های Go را بسازید.
 
 ```bash
 git clone https://github.com/rebeccapanel/Rebecca.git
 cd Rebecca
-wget -qO- https://bootstrap.pypa.io/get-pip.py | python3 -
-python3 -m pip install -r requirements.txt
+cd dashboard
+npm ci
+VITE_BASE_API=/api/ npm run build -- --outDir=build --assetsDir=statics
+cp ./build/index.html ./build/404.html
+cd ..
+bash scripts/build_binary.sh
 ```
-
-همچنین میتواند از , [Python Virtualenv](https://pypi.org/project/virtualenv/) هم استفاده کنید.
 
 سپس کامند زیر را اجرا کنید تا migrationهای Go دیتابیس اجرا شوند.
 
@@ -193,12 +195,12 @@ python3 -m pip install -r requirements.txt
 rebecca migrate up
 ```
 
-اگر می‌خواهید از CLI استفاده کنید، می‌توانید فایل `rebecca-cli.py` موجود را به نام اجرایی جدید لینک کنید و تکمیل خودکار آن را نصب کنید:
+اگر می‌خواهید از CLI استفاده کنید، می‌توانید فایل `Go CLI` موجود را به نام اجرایی جدید لینک کنید و تکمیل خودکار آن را نصب کنید:
 
 ```bash
-sudo ln -s $(pwd)/rebecca-cli.py /usr/bin/rebecca-cli
-sudo chmod +x /usr/bin/rebecca-cli
-rebecca-cli completion install
+sudo install -m 755 ./dist/rebecca-cli /usr/local/bin/rebecca
+rebecca cli --help
+
 ```
 
 حالا یک کپی از `.env.example` با نام `.env` بسازید و با یک ادیتور آن را باز کنید و تنظیمات دلخواه خود را انجام دهید. یه عنوان مثال نام کاربری و رمز عبور را می توانید در این فایل تغییر دهید.
@@ -213,13 +215,33 @@ nano .env
 در انتها، رِبِکا را به کمک دستور زیر اجرا کنید.
 
 ```bash
-python3 main.py
+./dist/rebecca-server
 ```
 
-اجرا با استفاده از systemctl در لینوکس
+برای نصب دستی با systemd، یک unit برای باینری Go بسازید:
+
+```ini
+[Unit]
+Description=Rebecca
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rebecca
+EnvironmentFile=/opt/rebecca/.env
+ExecStart=/opt/rebecca/dist/rebecca-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
-systemctl enable /var/lib/rebecca/rebecca.service
-systemctl start rebecca
+
+سپس آن را فعال کنید:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now rebecca
 ```
 
 اجرا با nginx
@@ -266,51 +288,40 @@ server {
 
 > متغیر های زیر در فایل ‍`env` یا `.env` استفاده میشوند. شما می توانید با تعریف و تغییر آن ها، تنظیمات رِبِکا را تغییر دهید.
 
-|                                                                                                                                                  توضیحات |                                                        متغیر                                                         |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------:| :------------------------------------------------------------------------------------------------------------------: |
-|                                                                                                                                       نام کاربری مدیر کل |                                                    SUDO_USERNAME                                                     |
-|                                                                                                                                         رمز عبور مدیر کل |                                                    SUDO_PASSWORD                                                     |
-|                                           آدرس دیتابیس ([بر اساس مستندات SQLAlchemy](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls)) |                                               SQLALCHEMY_DATABASE_URL                                                |
-|                                                                                               آدرس هاستی که رِبِکا روی آن اجرا میشود (پیشفرض: `0.0.0.0`) |                                                     UVICORN_HOST                                                     |
-|                                                                                                       پورتی که رِبِکا روی آن اجرا میشود (پیشفرض: `8000`) |                                                     UVICORN_PORT                                                     |
-|                                                                                                                اجرای رِبِکا بر روی یک Unix domain socket |                                                     UVICORN_UDS                                                      |
-|                                                                                                               آدرس گواهی SSL به جهت ایمن کردن پنل رِبِکا |                                                 UVICORN_SSL_CERTFILE                                                 |
-|                                                                                                                                      آدرس کلید گواهی SSL |                                                 UVICORN_SSL_KEYFILE                                                  |
-|                                                          نوع گواهینامه مرجع SSL. از «خصوصی» برای آزمایش CA با امضای خود استفاده کنید (پیش‌فرض: `public`) |                                                 UVICORN_SSL_CA_TYPE                                                  |
-|                                                                                                         مسیر باینری xray (پیشفرض: `/usr/local/bin/xray`) |                                                 XRAY_EXECUTABLE_PATH                                                 |
-|                                                                                                    مسیر asset های xray (پیشفرض: `/usr/local/share/xray`) |                                                   XRAY_ASSETS_PATH                                                   |
-|                                  پیشوند (یا هاست) آدرس های اشتراکی (زمانی کاربرد دارد که نیاز دارید دامنه subscription link ها با دامنه پنل متفاوت باشد) |                                             XRAY_SUBSCRIPTION_URL_PREFIX                                             |
-|                                                                                                         تگ inboundای که به عنوان fallback استفاده میشود. |                                              XRAY_FALLBACKS_INBOUND_TAG                                              |
-|                                                                                 تگ های inbound ای که لازم نیست در کانفیگ های ساخته شده وجود داشته باشند. |                                              XRAY_EXCLUDE_INBOUND_TAGS                                               |
-|                                                                                                                آدرس محل template های شخصی سازی شده کاربر |                                              CUSTOM_TEMPLATES_DIRECTORY                                              |
-|                                                                            تمپلیت مورد استفاده برای تولید کانفیگ های Clash (پیشفرض: `clash/default.yml`) |                                             CLASH_SUBSCRIPTION_TEMPLATE                                              |
-|                                                                                      تمپلیت صفحه اطلاعات اشتراک کاربر (پیشفرض `subscription/index.html`) |                                              SUBSCRIPTION_PAGE_TEMPLATE                                              |
-|                                                                                                              تمپلیت صفحه اول (پیشفرض: `home/index.html`) |                                                  HOME_PAGE_TEMPLATE                                                  |
-|                                                                                        توکن ربات تلگرام (دریافت از [@botfather](https://t.me/botfather)) |                                                  TELEGRAM_API_TOKEN                                                  |
-|                                                                           آیدی عددی ادمین در تلگرام (دریافت از [@userinfobot](https://t.me/userinfobot)) |                                                  TELEGRAM_ADMIN_ID                                                   |
-|                                                                                                                                اجرای ربات از طریق پروکسی |                                                  TELEGRAM_PROXY_URL                                                  |
-|                                                             مدت زمان انقضا توکن دسترسی به پنل رِبِکا, `0` به معنای بدون تاریخ انقضا است (پیشفرض: `1440`) |                                           JWT_ACCESS_TOKEN_EXPIRE_MINUTES                                            |
-|                                                                                        فعال سازی داکیومنتیشن به آدرس `/docs` و `/redoc`(پیشفرض: `False`) |                                                         DOCS                                                         |
-|                                                                                                      فعالسازی حالت توسعه (development) (پیشفرض: `False`) |                                                        DEBUG                                                         |
-|                                  آدرس webhook که تغییرات حالت یک کاربر به آن ارسال می‌شوند. اگر این متغیر مقدار داشته باشد، ارسال پیام‌ها انجام می‌شوند. |                                                    WEBHOOK_ADDRESS                                                   |
-|                                                                           متغیری که به عنوان `x-webhook-secret` در header ارسال می‌شود. (پیشفرض: `None`) |                                                    WEBHOOK_SECRET                                                    |
-|                                                              تعداد دفعاتی که برای ارسال یک پیام، در صورت تشخیص خطا در ارسال تلاش دوباره شود (پیشفرض `3`) |                                          NUMBER_OF_RECURRENT_NOTIFICATIONS                                           |
-|                                                                    مدت زمان بین هر ارسال دوباره پیام در صورت تشخیص خطا در ارسال به ثانیه (پیشفرض: `180`) |                                           RECURRENT_NOTIFICATIONS_TIMEOUT                                            |
-|                                                                     هنگام رسیدن مصرف کاربر به چه درصدی پیام اخطار به آدرس وبهوک ارسال شود (پیشفرض: `80`) |                                             NOTIFY_REACHED_USAGE_PERCENT                                             |
-|                                                                           چند روز مانده به انتهای سرویس پیام اخطار به آدرس وبهوک ارسال شود (پیشفرض: `3`) |                                                   NOTIFY_DAYS_LEFT                                                   |
- حذف خودکار کاربران منقضی شده (و بطور اختیاری محدود شده) پس از گذشت این تعداد روز (مقادیر منفی این قابلیت را به طور پیشفرض غیرفعال می کنند. پیشفرض: `-1`) |                                                   USERS_AUTODELETE_DAYS                                                   |
-                                                                                                 تعیین اینکه کاربران محدودشده شامل حذف خودکار بشوند یا نه |                                                   USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS                                 |
-|                                                           فعال کردن کانفیگ سفارشی JSON برای همه برنامه‌هایی که از آن پشتیبانی می‌کنند (پیش‌فرض: `False`) | USE_CUSTOM_JSON_DEFAULT |
-|                                                                                فعال کردن کانفیگ سفارشی JSON فقط برای برنامه‌ی V2rayNG (پیش‌فرض: `False`) | USE_CUSTOM_JSON_FOR_V2RAYNG |
-|                                                                              فعال کردن کانفیگ سفارشی JSON فقط برای برنامه‌ی Streisand (پیش‌فرض: `False`) | USE_CUSTOM_JSON_FOR_STREISAND |
-|                                                                                 فعال کردن کانفیگ سفارشی JSON فقط برای برنامه‌ی V2rayN (پیش‌فرض: `False`) | USE_CUSTOM_JSON_FOR_V2RAYN |
+| توضیحات | متغیر |
+| ---: | :---: |
+| نام کاربری ادمین اولیه | SUDO_USERNAME |
+| رمز عبور ادمین اولیه | SUDO_PASSWORD |
+| آدرس دیتابیس؛ این نام legacy برای سازگاری با runtime جدید Go حفظ شده است | SQLALCHEMY_DATABASE_URL |
+| هاست gateway گو (پیش‌فرض: `0.0.0.0`) | UVICORN_HOST |
+| پورت gateway گو (پیش‌فرض: `8000`) | UVICORN_PORT |
+| مسیر گواهی TLS برای gateway گو | UVICORN_SSL_CERTFILE |
+| مسیر کلید TLS برای gateway گو | UVICORN_SSL_KEYFILE |
+| نوع CA برای اسکریپت‌های نصب: `public` یا `private` | UVICORN_SSL_CA_TYPE |
+| آدرس کامل gateway؛ مقدار `UVICORN_HOST` و `UVICORN_PORT` را override می‌کند | REBECCA_GATEWAY_ADDR |
+| فاصله پردازش صف node operations | REBECCA_NODE_OPERATIONS_POLL_INTERVAL |
+| فاصله بررسی lifecycle کاربران | REBECCA_USER_LIFECYCLE_INTERVAL |
+| فاصله reset دوره‌ای مصرف کاربران | REBECCA_USER_USAGE_RESET_INTERVAL |
+| حذف خودکار کاربران منقضی پس از این تعداد روز؛ مقدار منفی یعنی غیرفعال | USERS_AUTODELETE_DAYS |
+| شامل کردن کاربران limited در حذف خودکار | USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS |
+| زمان انقضای JWT access token بر حسب دقیقه | JWT_ACCESS_TOKEN_EXPIRE_MINUTES |
+| timeout لیست بزرگ کاربران؛ مقدار `0` یعنی غیرفعال | USERS_LIST_TIMEOUT_SECONDS |
+| خواندن subscription بدون آپدیت metadata آخرین استفاده | SUBSCRIPTION_READ_ONLY |
+| پیشوند لینک subscription برای helperهای CLI | XRAY_SUBSCRIPTION_URL_PREFIX |
+| تگ inboundای که شامل fallback است | XRAY_FALLBACKS_INBOUND_TAG |
+| تگ inboundهایی که از ساخت لینک و config حذف می‌شوند | XRAY_EXCLUDE_INBOUND_TAGS |
+| مسیر پایه templateهای داخلی | REBECCA_APP_TEMPLATE_BASE |
+| مسیر پایه certificateهای مدیریت‌شده | REBECCA_CERT_BASE |
+| ریشه configهایی که در full backup قرار می‌گیرند | REBECCA_CONFIG_DIR |
+| آدرس اختیاری index برای Geo templates | GEO_TEMPLATES_INDEX_URL |
+| override برای Cloudflare WARP API base URL | REBECCA_WARP_API_BASE |
 
 
 # داکیومنت
 مستندات رِبِکا در حال تکمیل است. از مشارکت شما برای بهبود مستندات استقبال می‌کنیم. لطفاً در همین مخزن Issue یا Pull Request ثبت کنید.
 
 # استفاده از API
-رِبِکا به توسعه‌دهندگان API به صورت REST ارائه می‌دهد. برای مشاهده مستندات API در قالب Swagger UI یا ReDoc، متغیر `DOCS=True` را در تنظیمات ست کنید و در مرورگر به مسیرهای `/docs` و `/redoc` بروید.
+رِبِکا به توسعه‌دهندگان API به صورت REST ارائه می‌دهد.
 
 
 # پشتیبان‌گیری از رِبِکا
@@ -423,4 +434,3 @@ Body:
 <p align="center">
   ساخته شده با <a rel="noopener noreferrer" target="_blank" href="https://contrib.rocks">contrib.rocks</a>
 </p>
-

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GO_DIR="$ROOT_DIR/go"
+GO_DIR="$ROOT_DIR"
 
 if [ "${REBECCA_SKIP_GO_CLI:-0}" = "1" ]; then
     echo "Skipping Rebecca Go CLI build."

@@ -25,7 +25,6 @@ import {
 	UsersIcon,
 } from "@heroicons/react/24/outline";
 import logoUrl from "assets/logo.svg";
-import useAds from "hooks/useAds";
 import useGetUser from "hooks/useGetUser";
 import {
 	type ElementType,
@@ -38,14 +37,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { AdminRole, AdminSection } from "types/Admin";
-import { pickLocalizedAd } from "utils/ads";
 import {
 	getTutorialAssetUrl,
 	normalizeTutorialLang,
 	syncTutorialUpdateStorage,
 	TUTORIALS_UPDATED_EVENT,
 } from "utils/tutorialUpdates";
-import { AdvertisementCard } from "./AdvertisementCard";
 
 const iconProps = {
 	baseStyle: {
@@ -204,12 +201,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const navigate = useNavigate();
 	const { colorMode } = useColorMode();
 	const { userData, getUserIsSuccess } = useGetUser();
-	const shouldShowAds = getUserIsSuccess;
-	const { data: adsData } = useAds(shouldShowAds);
 	const currentLanguage = i18n.language || "en";
-	const sidebarAd = shouldShowAds
-		? pickLocalizedAd(adsData, "sidebar", currentLanguage)
-		: undefined;
 	const sectionAccess = userData.permissions?.sections;
 	const isFullAccess = userData.role === AdminRole.FullAccess;
 	const sidebarBg = useColorModeValue("white", "surface.dark");
@@ -712,23 +704,6 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 						);
 					})}
 				</Box>
-				{sidebarAd && !collapsed && (
-					<Box
-						px={collapsed ? 2 : 2.5}
-						py={2.5}
-						mt={4}
-						w="full"
-						sx={{
-							"&:empty": {
-								display: "none",
-								marginTop: 0,
-								padding: 0,
-							},
-						}}
-					>
-						<AdvertisementCard ad={sidebarAd} maxSize={440} />
-					</Box>
-				)}
 			</VStack>
 		</Box>
 	);

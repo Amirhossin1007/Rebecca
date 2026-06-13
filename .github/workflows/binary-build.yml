@@ -75,25 +75,25 @@ jobs:
         include:
           - asset_arch: "386"
             platform: linux/386
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: amd64
             platform: linux/amd64
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: arm64
             platform: linux/arm64
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: armv5
             platform: linux/arm/v7
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: armv6
             platform: linux/arm/v7
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: armv7
             platform: linux/arm/v7
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
           - asset_arch: s390x
             platform: linux/s390x
-            image: python:3.13-trixie
+            image: golang:1.25-trixie
 
     steps:
       - name: Checkout
@@ -109,6 +109,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.full_matrix == true && matrix.asset_arch != 'amd64'
         uses: docker/setup-qemu-action@v3
 
+      - name: Set up Go for native Linux build
+        if: matrix.asset_arch == 'amd64'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
       - name: Build Linux binary package
         if: matrix.asset_arch == 'amd64' || (github.event_name == 'workflow_dispatch' && inputs.full_matrix == true)
         shell: bash
@@ -119,6 +125,20 @@ jobs:
           BUILD_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
+
+          if [ "${ASSET_ARCH}" = "amd64" ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              bash \
+              build-essential \
+              ca-certificates \
+              git \
+              pkg-config
+            bash scripts/build_binary.sh
+            tar -C dist -czf "dist/${ASSET_NAME}" rebecca-server rebecca-cli
+            sha256sum "dist/${ASSET_NAME}"
+            exit 0
+          fi
 
           docker pull --platform "${BUILD_PLATFORM}" "${BUILD_IMAGE}"
 
@@ -139,31 +159,10 @@ jobs:
                 bash \
                 build-essential \
                 ca-certificates \
-                curl \
-                gcc \
                 git \
-                golang-go \
-                libffi-dev \
-                libssl-dev \
-                pkg-config \
-                zlib1g-dev
-              case "${ASSET_ARCH}" in
-                386|s390x)
-                  apt-get install -y --no-install-recommends cargo rustc
-                  ;;
-                *)
-                  curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-                  export PATH="${HOME}/.cargo/bin:${PATH}"
-                  ;;
-              esac
-              rustc --version
-              cargo --version
-              export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=1
-              export GRPC_PYTHON_BUILD_SYSTEM_ZLIB=1
-              python -m pip install --disable-pip-version-check --upgrade pip wheel
-              python -m pip install --disable-pip-version-check . pyinstaller==6.20.0
-              REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false bash scripts/build_binary.sh
-              tar -C dist -czf "dist/${ASSET_NAME}" rebecca-server rebecca-python-server rebecca-cli
+                pkg-config
+              bash scripts/build_binary.sh
+              tar -C dist -czf "dist/${ASSET_NAME}" rebecca-server rebecca-cli
               sha256sum "dist/${ASSET_NAME}"
             ' 2>&1 | tee "build-${ASSET_ARCH}.log"
           status="${PIPESTATUS[0]}"
@@ -193,8 +192,6 @@ jobs:
     needs: dashboard
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      PYTHON_VERSION: "3.13"
 
     steps:
       - name: Checkout
@@ -206,15 +203,10 @@ jobs:
           name: dashboard-build
           path: dashboard/build
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: "go/go.mod"
+          go-version-file: "go.mod"
 
       - name: Set up Windows C toolchain
         uses: msys2/setup-msys2@v2
@@ -232,22 +224,17 @@ jobs:
           echo "${toolchain_path}" >> "${GITHUB_PATH}"
           gcc --version
 
-      - name: Install Python build dependencies
-        run: |
-          python -m pip install --disable-pip-version-check --upgrade pip wheel
-          python -m pip install --disable-pip-version-check . pyinstaller==6.20.0
-
       - name: Build Windows binaries
         shell: bash
         run: |
           set -euo pipefail
-          REBECCA_SKIP_RUNTIME_INIT=1 DEBUG=false DOCS=false bash scripts/build_binary.sh
+          bash scripts/build_binary.sh
 
       - name: Package Windows binaries
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path dist/rebecca-server.exe, dist/rebecca-python-server.exe, dist/rebecca-cli.exe `
+            -Path dist/rebecca-server.exe, dist/rebecca-cli.exe `
             -DestinationPath dist/rebecca-windows-amd64.zip `
             -Force
 
@@ -306,43 +293,7 @@ jobs:
           gh release view "${release_tag}" >/dev/null 2>&1 || \
             gh release create "${release_tag}" --title "${release_tag}" --notes-file release-body.md
 
-          assets=(
-            rebecca-linux-386.tar.gz
-            rebecca-linux-amd64.tar.gz
-            rebecca-linux-arm64.tar.gz
-            rebecca-linux-armv5.tar.gz
-            rebecca-linux-armv6.tar.gz
-            rebecca-linux-armv7.tar.gz
-            rebecca-linux-s390x.tar.gz
-            rebecca-windows-amd64.zip
-            rebecca-os
-            "rebecca-server-${release_tag}-linux-amd64"
-            "rebecca-cli-${release_tag}-linux-amd64"
-          )
-
-          for asset in "${assets[@]}"; do
-            gh release delete-asset "${release_tag}" "${asset}" -y >/dev/null 2>&1 || true
-          done
-
           gh release upload "${release_tag}" release-assets/rebecca-* --clobber
-
-      - name: Update release downloads report
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_tag="${{ steps.meta.outputs.release_tag }}"
-          notes_file=".github/release-notes/${release_tag}.md"
-          if [ -f "${notes_file}" ]; then
-            cp "${notes_file}" release-body.md
-          else
-            gh release view "${release_tag}" --json body --jq .body > release-body.md
-          fi
-          python scripts/render_release_assets.py \
-            --repo "${GITHUB_REPOSITORY}" \
-            --tag "${release_tag}" \
-            --existing-body-file release-body.md \
-            > release-body-updated.md
-          gh release edit "${release_tag}" --notes-file release-body-updated.md
 
   publish-dev-manifest:
     needs:
@@ -426,19 +377,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/update_dev_build_manifest.py \
-            --manifest "dev-manifest/${DEV_MANIFEST_PATH}" \
-            --assets-dir dev-upload-assets \
-            --repo "${GITHUB_REPOSITORY}" \
-            --release-tag "${DEV_RELEASE_TAG}" \
-            --project "Rebecca" \
-            --build-tag "${{ steps.meta.outputs.build_tag }}" \
-            --sha "${GITHUB_SHA}" \
-            --branch "${GITHUB_REF_NAME}" \
-            --workflow "${GITHUB_WORKFLOW}" \
-            --run-id "${GITHUB_RUN_ID}" \
-            --run-number "${GITHUB_RUN_NUMBER}" \
-            --max-builds 50
+          mkdir -p "$(dirname "dev-manifest/${DEV_MANIFEST_PATH}")"
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg project "Rebecca" \
+            --arg build_tag "${{ steps.meta.outputs.build_tag }}" \
+            --arg sha "${GITHUB_SHA}" \
+            --arg branch "${GITHUB_REF_NAME}" \
+            --arg workflow "${GITHUB_WORKFLOW}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_number "${GITHUB_RUN_NUMBER}" \
+            --arg generated_at "${generated_at}" \
+            --argjson assets "$(find dev-upload-assets -maxdepth 1 -type f -printf '%f\n' | jq -R . | jq -s .)" \
+            '{project:$project, latest:{build_tag:$build_tag, sha:$sha, branch:$branch, workflow:$workflow, run_id:$run_id, run_number:$run_number, generated_at:$generated_at, assets:$assets}}' \
+            > "dev-manifest/${DEV_MANIFEST_PATH}"
 
       - name: Commit dev build manifest
         shell: bash

@@ -1,0 +1,443 @@
+package nodecontroller
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/rebeccapanel/rebecca/internal/app/nodeclient"
+	nodev1 "github.com/rebeccapanel/rebecca/internal/proto/node/v1"
+	"google.golang.org/grpc"
+)
+
+type Controller struct {
+	repo Repository
+}
+
+func NewController(repo Repository) Controller {
+	return Controller{repo: repo}
+}
+
+func (c Controller) Connect(ctx context.Context, req Request) (RuntimeResult, error) {
+	if err := c.repo.SetConnecting(ctx, req.NodeID); err != nil {
+		return RuntimeResult{}, err
+	}
+	client, node, err := c.dial(ctx, req.NodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("connect", req.NodeID, err)
+	}
+	defer client.Close()
+
+	connect, err := client.Control().Connect(ctx, &nodev1.ConnectRequest{MasterId: "rebecca-master"})
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("connect", req.NodeID, err)
+	}
+	state := connect.GetRuntime()
+	if strings.TrimSpace(req.ConfigJSON) != "" {
+		syncRes, err := client.Runtime().SyncConfig(ctx, &nodev1.RuntimeConfigRequest{
+			OperationId: "sync-" + strconv.FormatInt(req.NodeID, 10),
+			ConfigJson:  req.ConfigJSON,
+		})
+		if err != nil {
+			_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+			return RuntimeResult{}, friendlyNodeError("sync", req.NodeID, err)
+		}
+		state = syncRes.GetRuntime()
+	}
+	result, err := c.finishRuntime(ctx, node, state, "connected")
+	if err != nil {
+		return RuntimeResult{}, err
+	}
+	_, _ = c.ProcessQueue(ctx, ProcessOperationsRequest{NodeID: node.ID, Limit: 50})
+	return result, nil
+}
+
+func (c Controller) Reconnect(ctx context.Context, req Request) (RuntimeResult, error) {
+	return c.Connect(ctx, req)
+}
+
+func (c Controller) Restart(ctx context.Context, req Request) (RuntimeResult, error) {
+	client, node, err := c.dial(ctx, req.NodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("restart", req.NodeID, err)
+	}
+	defer client.Close()
+
+	configJSON := strings.TrimSpace(req.ConfigJSON)
+	if configJSON == "" {
+		configJSON, err = c.buildRuntimeConfig(ctx, node)
+		if err != nil {
+			return RuntimeResult{}, err
+		}
+	}
+	res, err := client.Runtime().RestartRuntime(ctx, &nodev1.RuntimeConfigRequest{
+		OperationId: "restart-" + strconv.FormatInt(req.NodeID, 10),
+		ConfigJson:  configJSON,
+	})
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("restart", req.NodeID, err)
+	}
+	return c.finishRuntime(ctx, node, res.GetRuntime(), res.GetMessage())
+}
+
+func (c Controller) Health(ctx context.Context, req Request) (RuntimeResult, error) {
+	client, node, err := c.dial(ctx, req.NodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("health", req.NodeID, err)
+	}
+	defer client.Close()
+
+	res, err := client.Control().Health(ctx, &nodev1.HealthRequest{IncludeMetrics: true})
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("health", req.NodeID, err)
+	}
+	result := runtimeResult(node, res.GetRuntime(), res.GetMetrics())
+	if err := c.repo.SetConnected(ctx, node.ID, result.XrayVersion, result.Message); err != nil {
+		return RuntimeResult{}, err
+	}
+	result.Status = "connected"
+	return result, nil
+}
+
+func (c Controller) Metrics(ctx context.Context, req Request) (RuntimeResult, error) {
+	client, node, err := c.dial(ctx, req.NodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("metrics", req.NodeID, err)
+	}
+	defer client.Close()
+
+	res, err := client.Runtime().Metrics(ctx, &nodev1.MetricsRequest{IncludeRuntime: true})
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("metrics", req.NodeID, err)
+	}
+	result := runtimeResult(node, res.GetRuntime(), res)
+	if err := c.repo.SetConnected(ctx, node.ID, result.XrayVersion, result.Message); err != nil {
+		return RuntimeResult{}, err
+	}
+	result.Status = "connected"
+	return result, nil
+}
+
+func (c Controller) Logs(ctx context.Context, req Request) (RuntimeResult, error) {
+	client, node, err := c.dial(ctx, req.NodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
+		return RuntimeResult{}, friendlyNodeError("logs", req.NodeID, err)
+	}
+	defer client.Close()
+
+	maxLines := req.MaxLines
+	if maxLines <= 0 {
+		maxLines = 200
+	}
+	stream, err := client.Logs().StreamLogs(ctx, &nodev1.StreamLogsRequest{
+		StreamId: strconv.FormatInt(req.NodeID, 10),
+		MaxLines: uint32(maxLines),
+	})
+	if err != nil {
+		return RuntimeResult{}, friendlyNodeError("logs", req.NodeID, err)
+	}
+	result := RuntimeResult{NodeID: node.ID, Name: node.Name, Status: node.Status}
+	for len(result.Logs) < maxLines {
+		line, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if len(result.Logs) > 0 {
+				break
+			}
+			return RuntimeResult{}, err
+		}
+		result.Logs = append(result.Logs, line.GetLine())
+	}
+	return result, nil
+}
+
+func (c Controller) StreamLogs(ctx context.Context, req StreamLogsRequest, send func(string) error) error {
+	if send == nil {
+		return fmt.Errorf("log sender is required")
+	}
+	nodeID := req.NodeID
+	var node NodeRow
+	var err error
+	if nodeID <= 0 {
+		node, err = c.repo.FirstConnectedNode(ctx)
+		if err != nil {
+			return err
+		}
+		nodeID = node.ID
+	}
+	client, dialedNode, err := c.dial(ctx, nodeID)
+	if err != nil {
+		_ = c.repo.SetError(ctx, nodeID, err.Error())
+		return friendlyNodeError("logs", nodeID, err)
+	}
+	defer client.Close()
+	if node.ID == 0 {
+		node = dialedNode
+	}
+	maxLines := req.MaxLines
+	if maxLines <= 0 {
+		maxLines = 200
+	}
+	stream, err := client.Logs().StreamLogs(ctx, &nodev1.StreamLogsRequest{
+		StreamId: strconv.FormatInt(node.ID, 10),
+		MaxLines: uint32(maxLines),
+	})
+	if err != nil {
+		return friendlyNodeError("logs", node.ID, err)
+	}
+	for {
+		line, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := send(line.GetLine()); err != nil {
+			return err
+		}
+	}
+}
+
+func (c Controller) ProcessQueue(ctx context.Context, req ProcessOperationsRequest) (ProcessOperationsResult, error) {
+	if err := c.repo.RecoverStaleOperations(ctx, 2*time.Minute); err != nil {
+		return ProcessOperationsResult{}, err
+	}
+	operations, err := c.repo.PendingOperations(ctx, req.NodeID, req.Limit)
+	if err != nil {
+		return ProcessOperationsResult{}, err
+	}
+	result := ProcessOperationsResult{}
+	blockedNodes := map[int64]bool{}
+	for _, operation := range operations {
+		if operation.NodeID.Valid && blockedNodes[operation.NodeID.Int64] {
+			continue
+		}
+		claimed, err := c.repo.MarkOperationRunning(ctx, operation.ID)
+		if err != nil {
+			return result, err
+		}
+		if !claimed {
+			continue
+		}
+		result.Processed++
+		opCtx, cancel := WithDefaultTimeout(ctx)
+		err = c.applyOperation(opCtx, operation)
+		cancel()
+		if err != nil {
+			if isPermanentOperationError(err) {
+				_ = c.repo.MarkOperationFailed(ctx, operation.ID, err.Error())
+				result.Failed++
+				continue
+			}
+			_ = c.repo.MarkOperationRetrying(ctx, operation.ID, err.Error())
+			result.Retrying++
+			if operation.NodeID.Valid {
+				blockedNodes[operation.NodeID.Int64] = true
+			}
+			continue
+		}
+		if err := c.repo.MarkOperationDone(ctx, operation.ID); err != nil {
+			return result, err
+		}
+		result.Done++
+	}
+	return result, nil
+}
+
+type operationPayload struct {
+	ConfigJSON string `json:"config_json"`
+}
+
+func (c Controller) applyOperation(ctx context.Context, operation OperationRow) error {
+	var payload operationPayload
+	if len(operation.Payload) > 0 {
+		if err := json.Unmarshal(operation.Payload, &payload); err != nil {
+			return err
+		}
+	}
+	if !operation.NodeID.Valid {
+		switch operation.OperationType {
+		case "sync_config", "add_user", "update_user", "remove_user", "disable_user", "enable_user", "restart_node":
+		default:
+			return fmt.Errorf("unsupported node operation: %s", operation.OperationType)
+		}
+		nodes, err := c.repo.UsageNodes(ctx, 0, 0)
+		if err != nil {
+			return err
+		}
+		if len(nodes) == 0 && operation.OperationType != "sync_config" {
+			return fmt.Errorf("no active nodes available")
+		}
+		for _, node := range nodes {
+			nodeOperation := operation
+			nodeOperation.NodeID = sql.NullInt64{Int64: node.ID, Valid: true}
+			if err := c.applyOperation(ctx, nodeOperation); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	switch operation.OperationType {
+	case "sync_config", "add_user", "update_user", "remove_user", "disable_user", "enable_user":
+		client, node, err := c.dial(ctx, operation.NodeID.Int64)
+		if err != nil {
+			_ = c.repo.SetError(ctx, operation.NodeID.Int64, err.Error())
+			return err
+		}
+		defer client.Close()
+		configJSON := strings.TrimSpace(payload.ConfigJSON)
+		if configJSON == "" {
+			configJSON, err = c.buildRuntimeConfig(ctx, node)
+			if err != nil {
+				return err
+			}
+		}
+		res, err := client.Runtime().SyncConfig(ctx, &nodev1.RuntimeConfigRequest{
+			OperationId: fmt.Sprintf("%s-%d", operation.OperationType, operation.ID),
+			ConfigJson:  configJSON,
+		})
+		if err != nil {
+			_ = c.repo.SetError(ctx, operation.NodeID.Int64, err.Error())
+			return err
+		}
+		_, err = c.finishRuntime(ctx, node, res.GetRuntime(), res.GetMessage())
+		return err
+	case "restart_node":
+		configJSON := strings.TrimSpace(payload.ConfigJSON)
+		if configJSON == "" {
+			node, err := c.repo.Node(ctx, operation.NodeID.Int64)
+			if err != nil {
+				return err
+			}
+			configJSON, err = c.buildRuntimeConfig(ctx, node)
+			if err != nil {
+				return err
+			}
+		}
+		_, err := c.Restart(ctx, Request{NodeID: operation.NodeID.Int64, ConfigJSON: configJSON})
+		return err
+	default:
+		return fmt.Errorf("unsupported node operation: %s", operation.OperationType)
+	}
+}
+
+func isPermanentOperationError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unsupported node operation") ||
+		strings.Contains(message, "config_json is required") ||
+		strings.Contains(message, "invalid character")
+}
+
+func (c Controller) dial(ctx context.Context, nodeID int64) (*nodeclient.Client, NodeRow, error) {
+	node, err := c.repo.Node(ctx, nodeID)
+	if err != nil {
+		return nil, NodeRow{}, err
+	}
+	if node.Status == "disabled" || node.Status == "limited" {
+		return nil, NodeRow{}, fmt.Errorf("node is %s", node.Status)
+	}
+	tlsRow, err := c.repo.TLS(ctx)
+	if err != nil {
+		return nil, NodeRow{}, err
+	}
+	cert := firstNonEmpty(node.Certificate, tlsRow.Certificate)
+	key := firstNonEmpty(node.CertificateKey, tlsRow.Key)
+	tlsConfig, err := nodeclient.LoadClientTLSFromPEM(nodeclient.PEMTLSConfig{
+		ClientCertPEM: cert,
+		ClientKeyPEM:  key,
+		ServerCertPEM: cert,
+	})
+	if err != nil {
+		return nil, NodeRow{}, err
+	}
+	grpcPort := node.APIPort + 1
+	if grpcPort <= 1 {
+		grpcPort = node.Port + 2
+	}
+	address := net.JoinHostPort(node.Address, strconv.Itoa(grpcPort))
+	client, err := nodeclient.Dial(ctx, address, tlsConfig, grpc.WithBlock())
+	if err != nil {
+		return nil, NodeRow{}, err
+	}
+	return client, node, nil
+}
+
+func (c Controller) finishRuntime(ctx context.Context, node NodeRow, state *nodev1.RuntimeState, message string) (RuntimeResult, error) {
+	result := runtimeResult(node, state, nil)
+	if strings.TrimSpace(message) != "" {
+		result.Message = message
+	}
+	if err := c.repo.SetConnected(ctx, node.ID, result.XrayVersion, result.Message); err != nil {
+		return RuntimeResult{}, err
+	}
+	result.Status = "connected"
+	return result, nil
+}
+
+func runtimeResult(node NodeRow, state *nodev1.RuntimeState, metrics *nodev1.MetricsResponse) RuntimeResult {
+	result := RuntimeResult{
+		NodeID:      node.ID,
+		Name:        node.Name,
+		Status:      node.Status,
+		XrayVersion: node.XrayVersion,
+	}
+	if state != nil {
+		result.Connected = state.GetConnected()
+		result.Started = state.GetStarted()
+		result.XrayVersion = firstNonEmpty(state.GetCoreVersion(), result.XrayVersion)
+		result.NodeServiceVersion = state.GetNodeVersion()
+		result.InstallMode = state.GetInstallMode()
+		result.UpdateChannel = state.GetUpdateChannel()
+		result.Message = state.GetMessage()
+	}
+	if metrics != nil {
+		system := metrics.GetSystem()
+		transfer := metrics.GetTransfer()
+		result.CPU = CPUInfo{
+			Cores:        system.GetCpuCores(),
+			FrequencyHz:  system.GetCpuFrequencyHz(),
+			UsagePercent: system.GetCpuUsagePercent(),
+		}
+		result.Memory = MemInfo{
+			UsedBytes:    system.GetMemoryUsed(),
+			TotalBytes:   system.GetMemoryTotal(),
+			UsagePercent: system.GetMemoryUsagePercent(),
+		}
+		result.Transfer = NetInfo{
+			UploadSpeed:   transfer.GetUploadSpeed(),
+			DownloadSpeed: transfer.GetDownloadSpeed(),
+		}
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func WithDefaultTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 30*time.Second)
+}

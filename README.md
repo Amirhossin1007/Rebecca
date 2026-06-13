@@ -72,7 +72,7 @@
 
 # Overview
 
-Rebecca is a proxy management tool that provides a simple and easy-to-use user interface for managing hundreds of proxy accounts powered by [Xray-core](https://github.com/XTLS/Xray-core) and built using Python and React.
+Rebecca is a proxy management tool that provides a simple and easy-to-use user interface for managing hundreds of proxy accounts powered by [Xray-core](https://github.com/XTLS/Xray-core) and built with a Go backend and React dashboard.
 
 ## Why use Rebecca?
 
@@ -174,32 +174,33 @@ You can install it using [Xray-install](https://github.com/XTLS/Xray-install)
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 ```
 
-Clone this project and install the dependencies (you need Python >= 3.8)
+Clone this project and build the dashboard and Go binaries:
 
 ```bash
 git clone https://github.com/rebeccapanel/Rebecca.git
 cd Rebecca
-wget -qO- https://bootstrap.pypa.io/get-pip.py | python3 -
-python3 -m pip install -r requirements.txt
+cd dashboard
+npm ci
+VITE_BASE_API=/api/ npm run build -- --outDir=build --assetsDir=statics
+cp ./build/index.html ./build/404.html
+cd ..
+bash scripts/build_binary.sh
 ```
-
-Alternatively, to have an isolated environment you can use [Python Virtualenv](https://pypi.org/project/virtualenv/)
 
 Then run the following command to run the Go database migrations:
 
 ```bash
-rebecca migrate up
+./dist/rebecca-cli migrate up
 ```
 
 Downgrade migrations are not supported. For troubleshooting legacy databases,
 see `docs/MIGRATION_GO_ONLY.md`.
 
-If you want to use the CLI, you can link the bundled `rebecca-cli.py` to a new executable name and install the auto-completion:
+If you want to use the CLI globally, install the built Go CLI:
 
 ```bash
-sudo ln -s $(pwd)/rebecca-cli.py /usr/bin/rebecca-cli
-sudo chmod +x /usr/bin/rebecca-cli
-rebecca-cli completion install
+sudo install -m 755 ./dist/rebecca-cli /usr/local/bin/rebecca
+rebecca cli --help
 ```
 
 Now it's time to configuration
@@ -215,17 +216,36 @@ nano .env
 
 > Check [configurations](#configuration) section for more information
 
-Eventually, launch the application using command below
+Eventually, launch the application using command below:
 
 ```bash
-python3 main.py
+./dist/rebecca-server
 ```
 
-To launch with linux systemctl (copy rebecca.service file to `/var/lib/rebecca/rebecca.service`)
+For source/manual installs, create a systemd unit that runs the Go server binary:
 
+```ini
+[Unit]
+Description=Rebecca
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rebecca
+EnvironmentFile=/opt/rebecca/.env
+ExecStart=/opt/rebecca/dist/rebecca-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
-systemctl enable /var/lib/rebecca/rebecca.service
-systemctl start rebecca
+
+Then enable it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now rebecca
 ```
 
 To use with nginx
@@ -294,34 +314,32 @@ By default the app will be run on `http://localhost:8000/dashboard`. You can con
 > You can set settings below using environment variables or placing them in `.env` file.
 
 | Variable                                 | Description                                                                                                              |
-| ---------------------------------------- |--------------------------------------------------------------------------------------------------------------------------|
-| SUDO_USERNAME                            | Superuser's username                                                                                                     |
-| SUDO_PASSWORD                            | Superuser's password                                                                                                     |
-| SQLALCHEMY_DATABASE_URL                  | Database URL ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls))                    |
-| UVICORN_HOST                             | Bind application to this host (default: `0.0.0.0`)                                                                       |
-| UVICORN_PORT                             | Bind application to this port (default: `8000`)                                                                          |
-| UVICORN_UDS                              | Bind application to a UNIX domain socket                                                                                 |
-| UVICORN_SSL_CERTFILE                     | SSL certificate file to have application on https                                                                        |
-| UVICORN_SSL_KEYFILE                      | SSL key file to have application on https                                                                                |
-| UVICORN_SSL_CA_TYPE                      | Type of authority SSL certificate. Use `private` for testing self-signed CA (default: `public`)                          |
-| XRAY_EXECUTABLE_PATH                     | Path of Xray binary (default: `/usr/local/bin/xray`)                                                                     |
-| XRAY_ASSETS_PATH                         | Path of Xray assets (default: `/usr/local/share/xray`)                                                                   |
-| XRAY_SUBSCRIPTION_URL_PREFIX             | Prefix of subscription URLs                                                                                              |
-| XRAY_FALLBACKS_INBOUND_TAG               | Tag of the inbound that includes fallbacks, needed in the case you're using fallbacks                                    |
-| XRAY_EXCLUDE_INBOUND_TAGS                | Tags of the inbounds that shouldn't be managed and included in links by application                                      |
-| CUSTOM_TEMPLATES_DIRECTORY               | Customized templates directory (default: `app/templates`)                                                                |
-| CLASH_SUBSCRIPTION_TEMPLATE              | The template that will be used for generating clash configs (default: `clash/default.yml`)                               |
-| SUBSCRIPTION_PAGE_TEMPLATE               | The template used for generating subscription info page (default: `subscription/index.html`)                             |
-| HOME_PAGE_TEMPLATE                       | Decoy page template (default: `home/index.html`)                                                                         |
-| JWT_ACCESS_TOKEN_EXPIRE_MINUTES          | Expire time for the Access Tokens in minutes, `0` considered as infinite (default: `1440`)                               |
-| DOCS                                     | Whether API documents should be available on `/docs` and `/redoc` or not (default: `False`)                              |
-| DEBUG                                    | Debug mode for development (default: `False`)                                                                            |
-| USERS_AUTODELETE_DAYS                    | Delete expired (and optionally limited users) after this many days (Negative values disable this feature, default: `-1`) |
-| USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS | Whether to include limited accounts in the auto-delete feature (default: `False`)                                        |
-| USE_CUSTOM_JSON_DEFAULT                  | Enable custom JSON config for ALL supported clients (default: `False`)                                                   |
-| USE_CUSTOM_JSON_FOR_V2RAYNG              | Enable custom JSON config only for V2rayNG (default: `False`)                                                            |
-| USE_CUSTOM_JSON_FOR_STREISAND            | Enable custom JSON config only for Streisand (default: `False`)                                                          |
-| USE_CUSTOM_JSON_FOR_V2RAYN               | Enable custom JSON config only for V2rayN (default: `False`)                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| SUDO_USERNAME                            | Bootstrap superuser username.                                                                                            |
+| SUDO_PASSWORD                            | Bootstrap superuser password.                                                                                            |
+| SQLALCHEMY_DATABASE_URL                  | Database URL. The legacy name is still used by the Go runtime for compatibility.                                         |
+| UVICORN_HOST                             | Public gateway bind host (default: `0.0.0.0`).                                                                           |
+| UVICORN_PORT                             | Public gateway bind port (default: `8000`).                                                                              |
+| UVICORN_SSL_CERTFILE                     | TLS certificate path for the Go gateway.                                                                                |
+| UVICORN_SSL_KEYFILE                      | TLS private key path for the Go gateway.                                                                                |
+| UVICORN_SSL_CA_TYPE                      | Certificate authority type used by install scripts (`public` or `private`).                                             |
+| REBECCA_GATEWAY_ADDR                     | Optional full gateway listen address. Overrides `UVICORN_HOST`/`UVICORN_PORT`.                                          |
+| REBECCA_NODE_OPERATIONS_POLL_INTERVAL    | Node operation queue polling interval.                                                                                   |
+| REBECCA_USER_LIFECYCLE_INTERVAL          | User lifecycle review interval.                                                                                          |
+| REBECCA_USER_USAGE_RESET_INTERVAL        | Periodic user usage reset interval.                                                                                      |
+| REBECCA_USER_AUTODELETE_INTERVAL         | Expired/limited user auto-delete job interval.                                                                            |
+| USERS_AUTODELETE_DAYS                    | Delete expired users after this many days. Negative values disable this feature.                                         |
+| USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS | Whether auto-delete includes limited accounts.                                                                            |
+| USERS_LIST_TIMEOUT_SECONDS               | Optional timeout for large user list queries. `0` disables the timeout.                                                  |
+| SUBSCRIPTION_READ_ONLY                   | If true, subscription reads do not update last-used metadata.                                                            |
+| XRAY_SUBSCRIPTION_URL_PREFIX             | Prefix used by CLI subscription-link helpers.                                                                             |
+| XRAY_FALLBACKS_INBOUND_TAG               | Inbound tag that includes fallbacks.                                                                                      |
+| XRAY_EXCLUDE_INBOUND_TAGS                | Inbound tags excluded from config/link generation.                                                                        |
+| REBECCA_APP_TEMPLATE_BASE                | Default bundled template base path.                                                                                       |
+| REBECCA_CERT_BASE                        | Base directory for managed certificates.                                                                                  |
+| REBECCA_CONFIG_DIR                       | Configuration root included in full backup export/import.                                                                |
+| GEO_TEMPLATES_INDEX_URL                  | Optional allowed Geo template index URL.                                                                                  |
+| REBECCA_WARP_API_BASE                    | Cloudflare WARP API base URL override.                                                                                    |
 
 
 # Documentation
@@ -331,7 +349,7 @@ Rebecca documentation is a work in progress. We welcome and appreciate your cont
 
 # API
 
-Rebecca provides a REST API that enables developers to interact with its services programmatically. To view the API documentation in Swagger UI or ReDoc, set the configuration variable `DOCS=True` and navigate to `/docs` and `/redoc`.
+Rebecca provides a REST API that enables developers to interact with its services programmatically.
 
 
 # Backup
