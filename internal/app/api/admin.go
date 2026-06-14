@@ -534,7 +534,7 @@ func (s *Server) handleEnableAdmin(w http.ResponseWriter, r *http.Request, usern
 		}
 		if _, err := tx.ExecContext(
 			r.Context(),
-			`UPDATE users SET status = CASE WHEN on_hold_timeout IS NOT NULL AND on_hold_timeout > ? THEN ? ELSE ? END, last_status_change = ?, admin_disabled_at = NULL WHERE admin_id = ? AND status = ? AND admin_disabled_at IS NOT NULL`,
+			`UPDATE users SET status = CASE WHEN (on_hold_timeout IS NOT NULL AND on_hold_timeout > ?) OR COALESCE(on_hold_expire_duration, 0) > 0 THEN ? ELSE ? END, last_status_change = ?, admin_disabled_at = NULL WHERE admin_id = ? AND status = ? AND admin_disabled_at IS NOT NULL`,
 			now,
 			"on_hold",
 			"active",
@@ -625,7 +625,7 @@ func (s *Server) bulkUpdateAdminUsers(ctx context.Context, actor adminapp.Admin,
 			}
 			if _, err := tx.ExecContext(
 				ctx,
-				`UPDATE users SET status = CASE WHEN on_hold_timeout IS NOT NULL AND on_hold_timeout > ? THEN ? ELSE ? END, last_status_change = ?, admin_disabled_at = NULL WHERE admin_id = ? AND status = ?`,
+				`UPDATE users SET status = CASE WHEN (on_hold_timeout IS NOT NULL AND on_hold_timeout > ?) OR COALESCE(on_hold_expire_duration, 0) > 0 THEN ? ELSE ? END, last_status_change = ?, admin_disabled_at = NULL WHERE admin_id = ? AND status = ?`,
 				now,
 				"on_hold",
 				"active",

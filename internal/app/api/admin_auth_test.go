@@ -749,10 +749,11 @@ func TestAdminManagementDisableEnableUsersAndNodeOperations(t *testing.T) {
 	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
 	insertMasterAPIAdmin(t, db, 2, "seller", "pass123", adminapp.RoleStandard, adminapp.StatusActive)
 	futureHold := time.Now().UTC().Add(time.Hour).Format("2006-01-02 15:04:05.000000")
-	_, err := db.Exec(`INSERT INTO users (id, username, admin_id, status, on_hold_timeout) VALUES
-		(20, 'active-user', 2, 'active', NULL),
-		(21, 'hold-user', 2, 'on_hold', ?),
-		(22, 'disabled-user', 2, 'disabled', NULL)`, futureHold)
+	_, err := db.Exec(`INSERT INTO users (id, username, admin_id, status, on_hold_timeout, on_hold_expire_duration) VALUES
+		(20, 'active-user', 2, 'active', NULL, NULL),
+		(21, 'hold-user', 2, 'on_hold', ?, NULL),
+		(22, 'disabled-user', 2, 'disabled', NULL, NULL),
+		(23, 'hold-duration-user', 2, 'on_hold', NULL, 3600)`, futureHold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,14 +774,14 @@ func TestAdminManagementDisableEnableUsersAndNodeOperations(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM node_operations WHERE operation_type = 'disable_user'`).Scan(&disabledOps); err != nil {
 		t.Fatal(err)
 	}
-	if disabledOps != 2 {
+	if disabledOps != 3 {
 		t.Fatalf("expected disable_user for active and on-hold admin-disable users, got %d", disabledOps)
 	}
 	var disabledByAdmin int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE admin_id = 2 AND status = 'disabled' AND admin_disabled_at IS NOT NULL`).Scan(&disabledByAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if disabledByAdmin != 2 {
+	if disabledByAdmin != 3 {
 		t.Fatalf("expected active and on-hold users marked admin-disabled, got %d", disabledByAdmin)
 	}
 
@@ -792,11 +793,12 @@ func TestAdminManagementDisableEnableUsersAndNodeOperations(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM node_operations WHERE operation_type = 'enable_user'`).Scan(&enableOps); err != nil {
 		t.Fatal(err)
 	}
-	if enableOps != 2 {
+	if enableOps != 3 {
 		t.Fatalf("expected enable_user for restored active and on-hold users, got %d", enableOps)
 	}
 	assertDBString(t, db, `SELECT status FROM users WHERE username = 'active-user'`, "active")
 	assertDBString(t, db, `SELECT status FROM users WHERE username = 'hold-user'`, "on_hold")
+	assertDBString(t, db, `SELECT status FROM users WHERE username = 'hold-duration-user'`, "on_hold")
 	var stillDisabledByAdmin int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE admin_id = 2 AND admin_disabled_at IS NOT NULL`).Scan(&stillDisabledByAdmin); err != nil {
 		t.Fatal(err)
@@ -813,7 +815,7 @@ func TestAdminManagementDisableEnableUsersAndNodeOperations(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE admin_id = 2 AND status = 'disabled'`).Scan(&disabledUsers); err != nil {
 		t.Fatal(err)
 	}
-	if disabledUsers != 3 {
+	if disabledUsers != 4 {
 		t.Fatalf("expected all users disabled, got %d", disabledUsers)
 	}
 
@@ -821,13 +823,10 @@ func TestAdminManagementDisableEnableUsersAndNodeOperations(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("activate users status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var activeUsers int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE admin_id = 2 AND status = 'active'`).Scan(&activeUsers); err != nil {
-		t.Fatal(err)
-	}
-	if activeUsers != 3 {
-		t.Fatalf("expected all users active, got %d", activeUsers)
-	}
+	assertDBString(t, db, `SELECT status FROM users WHERE username = 'active-user'`, "active")
+	assertDBString(t, db, `SELECT status FROM users WHERE username = 'disabled-user'`, "active")
+	assertDBString(t, db, `SELECT status FROM users WHERE username = 'hold-user'`, "on_hold")
+	assertDBString(t, db, `SELECT status FROM users WHERE username = 'hold-duration-user'`, "on_hold")
 }
 
 func TestAdminManagementUsageResets(t *testing.T) {
