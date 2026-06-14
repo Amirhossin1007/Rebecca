@@ -10,6 +10,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
+	"strings"
 	"time"
 )
 
@@ -51,6 +53,7 @@ func GenerateCertificate(cn string) (certificate string, key string, err error) 
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 	}
+	template.DNSNames, template.IPAddresses = certificateSubjectAltNames(cn)
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
 		return "", "", err
@@ -83,4 +86,37 @@ func certificateFingerprint(value string) ([sha512.Size]byte, error) {
 		return [sha512.Size]byte{}, fmt.Errorf("certificate is empty or invalid")
 	}
 	return sha512.Sum512(block.Bytes), nil
+}
+
+func certificateSubjectAltNames(cn string) ([]string, []net.IP) {
+	name := strings.TrimSpace(cn)
+	if name == "" {
+		return nil, nil
+	}
+	if ip := net.ParseIP(name); ip != nil {
+		return nil, []net.IP{ip}
+	}
+	if !isCertificateDNSName(name) {
+		return nil, nil
+	}
+	return []string{name}, nil
+}
+
+func isCertificateDNSName(name string) bool {
+	if len(name) > 253 {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, ch := range label {
+			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
