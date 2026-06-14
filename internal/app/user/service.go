@@ -90,6 +90,9 @@ func (s Service) ConfigLinks(ctx context.Context, req ConfigLinksRequest) (Confi
 	if err != nil {
 		return ConfigLinksResponse{}, err
 	}
+	if strings.TrimSpace(item.ServerIP) == "" {
+		item.ServerIP = s.repo.configServerIP(ctx)
+	}
 	return BuildConfigLinks(item, item.XrayInboundsByTag, inboundOrder, item.Hosts, masks, req.Reverse)
 }
 

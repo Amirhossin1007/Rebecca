@@ -70,6 +70,7 @@ type ConfigLinkUser struct {
 	XrayInboundsByTag    map[string]ResolvedInbound `json:"xray_inbounds_by_tag,omitempty"`
 	XrayInboundOrder     []string                   `json:"xray_inbound_order,omitempty"`
 	Hosts                []Host                     `json:"hosts,omitempty"`
+	ServerIP             string                     `json:"server_ip,omitempty"`
 }
 
 type UserListItem struct {

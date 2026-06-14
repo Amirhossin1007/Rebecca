@@ -21,6 +21,19 @@ func NewRepository(db *sql.DB, dialect string) Repository {
 	return Repository{db: db, dialect: dialect, cache: &repositoryCache{}}
 }
 
+func (r Repository) configServerIP(ctx context.Context) string {
+	for _, query := range []string{
+		`SELECT address FROM nodes WHERE TRIM(COALESCE(address, '')) != '' AND LOWER(COALESCE(status, '')) = 'connected' ORDER BY id LIMIT 1`,
+		`SELECT address FROM nodes WHERE TRIM(COALESCE(address, '')) != '' ORDER BY id LIMIT 1`,
+	} {
+		var address sql.NullString
+		if err := r.db.QueryRowContext(ctx, query).Scan(&address); err == nil && address.Valid {
+			return strings.TrimSpace(address.String)
+		}
+	}
+	return ""
+}
+
 type repositoryCache struct {
 	mu                       sync.RWMutex
 	fastCreateContext        MutationContext

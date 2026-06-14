@@ -265,7 +265,7 @@ func selectProxyInboundTags(
 }
 
 func effectiveInboundForHost(username string, variables map[string]string, inbound ResolvedInbound, host Host) (string, string, ResolvedInbound, bool) {
-	address := applyWildcard(firstCSV(host.Address), username)
+	address := applyWildcard(applyFormat(firstCSV(host.Address), variables), username)
 	if address == "" {
 		return "", "", nil, false
 	}
@@ -275,8 +275,8 @@ func effectiveInboundForHost(username string, variables map[string]string, inbou
 		remark = address
 	}
 
-	sni := applyWildcard(firstHostOverride(host.SNI, firstStringList(inbound["sni"])), username)
-	requestHost := applyWildcard(firstHostOverride(host.Host, firstStringList(inbound["host"])), username)
+	sni := applyWildcard(applyFormat(firstHostOverride(host.SNI, firstStringList(inbound["sni"])), variables), username)
+	requestHost := applyWildcard(applyFormat(firstHostOverride(host.Host, firstStringList(inbound["host"])), variables), username)
 	if host.UseSNIAsHost && sni != "" {
 		requestHost = sni
 	}
@@ -352,6 +352,10 @@ func configFormatVariables(item ConfigLinkUser) map[string]string {
 		"username":     item.Username,
 		"status":       item.Status,
 		"used_traffic": strconv.FormatInt(item.UsedTraffic, 10),
+	}
+	if strings.TrimSpace(item.ServerIP) != "" {
+		values["server_ip"] = strings.TrimSpace(item.ServerIP)
+		values["SERVER_IP"] = strings.TrimSpace(item.ServerIP)
 	}
 	if item.DataLimit != nil {
 		values["data_limit"] = strconv.FormatInt(*item.DataLimit, 10)
