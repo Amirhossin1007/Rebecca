@@ -54,6 +54,7 @@ set_app_context() {
     BRANCH_FILE="$APP_DIR/.branch"
     INSTALL_MODE_FILE="$APP_DIR/.install-mode"
     CERT_FILE="$DATA_DIR/cert.pem"
+    CERT_KEY_FILE="$DATA_DIR/cert.key"
     ENV_FILE="$APP_DIR/.env"
 
     BINARY_BIN_DIR="$APP_DIR/bin"
@@ -1053,6 +1054,34 @@ configure_binary_node_env() {
         colorized_echo green "Certificate saved to $CERT_FILE"
     fi
 
+    if [ ! -s "$CERT_KEY_FILE" ]; then
+        : > "$CERT_KEY_FILE"
+        echo -e "Please paste the content of the Client Private Key, press ENTER on a new line when finished: "
+        local key_started=0
+        local key_completed=0
+        while IFS= read -r line; do
+            if [[ -z $line ]]; then
+                if [ "$key_started" -eq 0 ]; then
+                    break
+                fi
+                continue
+            fi
+            key_started=1
+            echo "$line" >>"$CERT_KEY_FILE"
+            if [[ "$line" =~ ^-----END\ .+PRIVATE\ KEY-----$ ]]; then
+                key_completed=1
+                break
+            fi
+        done
+        if [ "$key_completed" -ne 1 ]; then
+            colorized_echo red "Client private key is incomplete. Please paste a full PEM private key ending with -----END PRIVATE KEY-----."
+            rm -f "$CERT_KEY_FILE"
+            exit 1
+        fi
+        chmod 600 "$CERT_KEY_FILE"
+        colorized_echo green "Private key saved to $CERT_KEY_FILE"
+    fi
+
     get_occupied_ports
 
     if ! grep -qE '^[[:space:]]*SERVICE_PORT[[:space:]]*=' "$ENV_FILE" 2>/dev/null; then
@@ -1103,8 +1132,8 @@ configure_binary_node_env() {
 
     set_env_value "REBECCA_DATA_DIR" "$DATA_DIR"
     set_env_value "SSL_CLIENT_CERT_FILE" "$CERT_FILE"
-    set_env_value "SSL_CERT_FILE" "$DATA_DIR/ssl_cert.pem"
-    set_env_value "SSL_KEY_FILE" "$DATA_DIR/ssl_key.pem"
+    set_env_value "SSL_CERT_FILE" "$CERT_FILE"
+    set_env_value "SSL_KEY_FILE" "$CERT_KEY_FILE"
     set_env_value "XRAY_EXECUTABLE_PATH" "$DATA_DIR/xray-core/xray"
     set_env_value "XRAY_ASSETS_PATH" "$DATA_DIR/xray-core"
     set_env_value "SERVICE_PROTOCOL" "rest"

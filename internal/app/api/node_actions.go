@@ -54,6 +54,7 @@ func (s *Server) handleNodeCertificateNew(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"certificate":       pending.Certificate,
+		"certificate_key":   pending.CertificateKey,
 		"certificate_token": pending.Token,
 	})
 }

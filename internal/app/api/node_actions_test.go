@@ -23,12 +23,13 @@ func TestNodeMutationHandlersCreateUpdateResetRegenerateDelete(t *testing.T) {
 	}
 	var certResponse struct {
 		Certificate      string `json:"certificate"`
+		CertificateKey   string `json:"certificate_key"`
 		CertificateToken string `json:"certificate_token"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &certResponse); err != nil {
 		t.Fatal(err)
 	}
-	if certResponse.Certificate == "" || certResponse.CertificateToken == "" {
+	if certResponse.Certificate == "" || certResponse.CertificateKey == "" || certResponse.CertificateToken == "" {
 		t.Fatalf("missing pending certificate fields: %#v", certResponse)
 	}
 
