@@ -161,14 +161,14 @@ func (r Repository) PersistCollectedUsage(ctx context.Context, node NodeRow, use
 
 	filteredUsers, operations, err := r.persistUserUsage(ctx, tx, node, userDeltas, bucket, now)
 	if err != nil {
-		return err
+		return fmt.Errorf("persist user usage: %w", err)
 	}
 	if err := r.persistOutboundUsage(ctx, tx, node, outboundDeltas, bucket, now); err != nil {
-		return err
+		return fmt.Errorf("persist outbound usage: %w", err)
 	}
 	if len(operations) > 0 {
 		if err := r.enqueueUsageOperations(ctx, tx, operations, now); err != nil {
-			return err
+			return fmt.Errorf("enqueue usage operations: %w", err)
 		}
 	}
 	_ = filteredUsers
@@ -194,7 +194,7 @@ func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeR
 
 	mapping, err := r.loadUsageUserMapping(ctx, tx, keysInt64(aggregated))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load user mapping: %w", err)
 	}
 	if len(mapping) == 0 {
 		return map[int64]int64{}, nil, nil
@@ -220,7 +220,7 @@ WHERE id = ?`,
 			r.timeArg(now),
 			userID,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("update user %d: %w", userID, err)
 		}
 		if row.AdminID.Valid {
 			adminUsage[row.AdminID.Int64] += value
@@ -232,7 +232,7 @@ WHERE id = ?`,
 			}
 		}
 		if err := r.upsertNodeUserUsage(ctx, tx, bucket, userID, node.ID, value); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("upsert node user usage user=%d node=%d: %w", userID, node.ID, err)
 		}
 	}
 
@@ -247,7 +247,7 @@ WHERE id = ?`,
 			value,
 			adminID,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("update admin %d usage: %w", adminID, err)
 		}
 	}
 
@@ -266,7 +266,7 @@ WHERE id = ?`,
 			r.timeArg(now),
 			serviceID,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("update service %d usage: %w", serviceID, err)
 		}
 	}
 
@@ -284,13 +284,13 @@ WHERE admin_id = ? AND service_id = ?`,
 			key[0],
 			key[1],
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("update admin-service admin=%d service=%d usage: %w", key[0], key[1], err)
 		}
 	}
 
 	operations, err := r.enforceUsageLifecycle(ctx, tx, keysInt64(aggregated), now)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("enforce lifecycle: %w", err)
 	}
 	return aggregated, operations, nil
 }
@@ -340,7 +340,7 @@ WHERE id IN (` + placeholders(len(userIDs)) + `)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	lifecycleRows := make([]usageLifecycleRow, 0, len(userIDs))
 	var operations []usageQueuedOperation
 	for rows.Next() {
 		var row usageLifecycleRow
@@ -357,8 +357,19 @@ WHERE id IN (` + placeholders(len(userIDs)) + `)
 			&row.CreatedAt,
 			&row.LastStatusChange,
 		); err != nil {
+			rows.Close()
 			return nil, err
 		}
+		lifecycleRows = append(lifecycleRows, row)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, row := range lifecycleRows {
 
 		activatedFromHold := false
 		if row.Status == "on_hold" && usageShouldActivateOnHold(row, now) {
@@ -423,7 +434,7 @@ WHERE id = ?`,
 		}
 		operations = append(operations, usageQueuedOperation{OperationType: "disable_user", UserID: row.ID})
 	}
-	return operations, rows.Err()
+	return operations, nil
 }
 
 func (r Repository) persistOutboundUsage(ctx context.Context, tx *sql.Tx, node NodeRow, deltas []OutboundUsageDelta, bucket time.Time, now time.Time) error {
@@ -448,15 +459,15 @@ func (r Repository) persistOutboundUsage(ctx context.Context, tx *sql.Tx, node N
 		totalUp += delta.Up
 		totalDown += delta.Down
 		if err := r.upsertOutboundTraffic(ctx, tx, node.ID, delta, now); err != nil {
-			return err
+			return fmt.Errorf("upsert outbound traffic tag=%s node=%d: %w", delta.Tag, node.ID, err)
 		}
 	}
 	if totalUp != 0 || totalDown != 0 {
 		if err := r.upsertNodeUsage(ctx, tx, bucket, node.ID, totalUp, totalDown); err != nil {
-			return err
+			return fmt.Errorf("upsert node usage node=%d: %w", node.ID, err)
 		}
 		if err := r.incrementSystemUsage(ctx, tx, totalUp, totalDown); err != nil {
-			return err
+			return fmt.Errorf("increment system usage: %w", err)
 		}
 		if _, err := tx.ExecContext(
 			ctx,
@@ -468,7 +479,7 @@ WHERE id = ?`,
 			totalDown,
 			node.ID,
 		); err != nil {
-			return err
+			return fmt.Errorf("update node %d totals: %w", node.ID, err)
 		}
 		if _, err := tx.ExecContext(
 			ctx,
@@ -483,7 +494,7 @@ WHERE id = ?
 			r.timeArg(now),
 			node.ID,
 		); err != nil {
-			return err
+			return fmt.Errorf("limit node %d by data limit: %w", node.ID, err)
 		}
 	}
 	return nil
@@ -611,8 +622,8 @@ SET uplink = COALESCE(system.uplink, 0) + excluded.uplink,
 	}
 	_, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO system (id, uplink, downlink)
-VALUES (1, ?, ?)
+		"INSERT INTO `system` (id, uplink, downlink)\n"+
+			`VALUES (1, ?, ?)
 ON DUPLICATE KEY UPDATE
     uplink = COALESCE(uplink, 0) + VALUES(uplink),
     downlink = COALESCE(downlink, 0) + VALUES(downlink)`,

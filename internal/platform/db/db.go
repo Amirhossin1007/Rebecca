@@ -53,7 +53,8 @@ func Open(databaseURL string) (Pool, error) {
 	} else {
 		sqlDB.SetMaxOpenConns(64)
 		sqlDB.SetMaxIdleConns(16)
-		sqlDB.SetConnMaxLifetime(time.Hour)
+		sqlDB.SetConnMaxIdleTime(30 * time.Second)
+		sqlDB.SetConnMaxLifetime(5 * time.Minute)
 	}
 
 	pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

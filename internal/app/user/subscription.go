@@ -1,6 +1,7 @@
 package user
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -75,10 +77,15 @@ func (s Service) RenderSubscription(ctx context.Context, req SubscriptionRenderR
 		return SubscriptionHTTPResponse{}, err
 	}
 	if strings.Contains(req.Accept, "text/html") && req.ClientType == "" {
+		settings := s.effectiveSettings(ctx, user.AdminID)
+		html, err := s.renderSubscriptionHTML(ctx, user, req, settings)
+		if err != nil {
+			return SubscriptionHTTPResponse{}, err
+		}
 		return SubscriptionHTTPResponse{
 			Status:    200,
 			MediaType: "text/html; charset=utf-8",
-			Body:      []byte(subscriptionHTML(user, req)),
+			Body:      []byte(html),
 		}, nil
 	}
 	if !req.ReadOnly {
@@ -639,39 +646,547 @@ func subscriptionHeaders(user UserDetail, req SubscriptionRenderRequest, setting
 	}
 }
 
-func subscriptionHTML(user UserDetail, req SubscriptionRenderRequest) string {
+func (s Service) renderSubscriptionHTML(ctx context.Context, user UserDetail, req SubscriptionRenderRequest, settings SubscriptionSettings) (string, error) {
+	links, err := s.ConfigLinks(ctx, ConfigLinksRequest{UserID: user.ID})
+	if err != nil {
+		return "", err
+	}
 	path := req.URL
 	if parsed, err := url.Parse(req.URL); err == nil {
 		path = strings.TrimRight(parsed.Path, "/")
 	}
-	usage := path + "/usage"
-	return "<!doctype html><html><head><meta charset=\"utf-8\"><title>" + htmlEscape(user.Username) + "</title></head><body><h1>" + htmlEscape(user.Username) + "</h1><p><a href=\"" + htmlEscape(usage) + "\">Usage</a></p></body></html>"
+	data := subscriptionHTMLData{
+		Username:       user.Username,
+		Status:         user.Status,
+		StatusClass:    subscriptionStatusClass(user.Status),
+		DataLimit:      subscriptionBytes(user.DataLimit),
+		DataUsed:       formatBytes(user.UsedTraffic),
+		ResetStrategy:  user.DataLimitResetStrategy,
+		Expire:         subscriptionExpire(user.Expire),
+		RemainingDays:  subscriptionRemainingDays(user.Expire),
+		Links:          links.Links,
+		UsageURL:       path + "/usage",
+		SupportURL:     strings.TrimSpace(settings.SubscriptionSupportURL),
+		HasActiveLinks: user.Status == "active" && len(links.Links) > 0,
+	}
+	var out bytes.Buffer
+	if err := subscriptionPageTemplate.Execute(&out, data); err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
 func renderClashLikeYAML(username string, links []string, meta bool) string {
 	var b strings.Builder
+	proxyNames := make([]string, 0, len(links))
 	b.WriteString("proxies:\n")
 	for i, link := range links {
-		b.WriteString("  - name: ")
-		b.WriteString(strconv.Quote(fmt.Sprintf("%s-%d", username, i+1)))
-		b.WriteString("\n    type: url-test\n    url: ")
-		b.WriteString(strconv.Quote(link))
-		b.WriteString("\n")
+		name := fmt.Sprintf("%s-%d", username, i+1)
+		proxy, ok := clashProxyFromShareLink(name, link)
+		if !ok {
+			continue
+		}
+		proxyNames = append(proxyNames, name)
+		writeClashProxy(&b, proxy)
 	}
 	b.WriteString("proxy-groups:\n  - name: ")
-	b.WriteString(strconv.Quote(username))
+	b.WriteString(yamlQuote("♻️ Automatic"))
+	b.WriteString("\n    type: url-test\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n")
+	b.WriteString("    proxies:\n")
+	for _, name := range proxyNames {
+		b.WriteString("      - ")
+		b.WriteString(yamlQuote(name))
+		b.WriteString("\n")
+	}
+	b.WriteString("  - name: ")
+	b.WriteString(yamlQuote(username))
 	if meta {
 		b.WriteString("\n    type: select\n")
 	} else {
-		b.WriteString("\n    type: url-test\n")
+		b.WriteString("\n    type: url-test\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n")
 	}
-	b.WriteString("    proxies:\n")
-	for i := range links {
+	b.WriteString("    proxies:\n      - ")
+	b.WriteString(yamlQuote("♻️ Automatic"))
+	b.WriteString("\n")
+	for _, name := range proxyNames {
 		b.WriteString("      - ")
-		b.WriteString(strconv.Quote(fmt.Sprintf("%s-%d", username, i+1)))
+		b.WriteString(yamlQuote(name))
 		b.WriteString("\n")
 	}
+	b.WriteString("rules:\n  - MATCH,")
+	b.WriteString(yamlQuote(username))
+	b.WriteString("\n")
 	return b.String()
+}
+
+type subscriptionHTMLData struct {
+	Username       string
+	Status         string
+	StatusClass    string
+	DataLimit      string
+	DataUsed       string
+	ResetStrategy  string
+	Expire         string
+	RemainingDays  string
+	Links          []string
+	UsageURL       string
+	SupportURL     string
+	HasActiveLinks bool
+}
+
+var subscriptionPageTemplate = template.Must(template.New("subscription_page").Parse(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Subscription Information</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { margin-top: 0; }
+        .link-input { margin-bottom: 10px; }
+        .copy-button { margin-left: 10px; }
+        .status { display: inline-block; padding: 3px 8px; border-radius: 3px; font-weight: bold; font-size: 16px; line-height: 1; }
+        .active { background-color: #4CAF50; color: white; }
+        .limited { background-color: #F44336; color: white; }
+        .expired { background-color: #FF9800; color: white; }
+        .disabled { background-color: #9E9E9E; color: white; }
+        .qr-popup { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: white; padding: 10px 25px 25px 25px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.1); display: none; z-index: 9999; }
+        .qr-close-button { text-align: right; margin-bottom: 5px; margin-right: -15px; }
+        input[type=text] { width: min(900px, 80vw); }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+    <h1>User Information</h1>
+    <p>Username: {{ .Username }}</p>
+    <p>Status: <span class="status {{ .StatusClass }}">{{ .Status }}</span></p>
+    <p>Data Limit: {{ .DataLimit }}</p>
+    <p>Data Used: {{ .DataUsed }}{{ if and .ResetStrategy (ne .ResetStrategy "no_reset") }} (resets every {{ .ResetStrategy }}){{ end }}</p>
+    <p>Expiration Date: {{ .Expire }}{{ if .RemainingDays }} ({{ .RemainingDays }} days remaining){{ end }}</p>
+    <p><a href="{{ .UsageURL }}">Usage</a>{{ if .SupportURL }} · <a href="{{ .SupportURL }}">Support</a>{{ end }}</p>
+    {{ if .HasActiveLinks }}
+    <h2>Links:</h2>
+    <ul>
+        {{ range .Links }}
+        <li class="link-input">
+            <input type="text" value="{{ . }}" readonly>
+            <button class="copy-button" onclick="copyLink(this.previousElementSibling.value, this)">Copy</button>
+            <button class="qr-button" data-link="{{ . }}">QR Code</button>
+        </li>
+        {{ end }}
+    </ul>
+    <div class="qr-popup" id="qrPopup">
+        <div class="qr-close-button"><button onclick="closeQrPopup()">X</button></div>
+        <div id="qrCodeContainer"></div>
+    </div>
+    {{ end }}
+    <script>
+        function copyLink(link, button) {
+            const tempInput = document.createElement('input');
+            tempInput.setAttribute('value', link);
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            button.textContent = 'Copied!';
+            setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+        }
+        const qrButtons = document.querySelectorAll('.qr-button');
+        const qrPopup = document.getElementById('qrPopup');
+        const qrCodeContainer = document.getElementById('qrCodeContainer');
+        qrButtons.forEach((qrButton) => {
+            qrButton.addEventListener('click', () => {
+                const link = qrButton.dataset.link;
+                while (qrCodeContainer.firstChild) qrCodeContainer.removeChild(qrCodeContainer.firstChild);
+                new QRCode(qrCodeContainer, { text: link, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.L });
+                qrPopup.style.display = 'block';
+            });
+        });
+        function closeQrPopup() { document.getElementById('qrPopup').style.display = 'none'; }
+    </script>
+</body>
+</html>`))
+
+func subscriptionStatusClass(status string) string {
+	switch status {
+	case "active", "limited", "expired", "disabled":
+		return status
+	default:
+		return "disabled"
+	}
+}
+
+func subscriptionBytes(value *int64) string {
+	if value == nil || *value <= 0 {
+		return "∞"
+	}
+	return formatBytes(*value)
+}
+
+func subscriptionExpire(value *int64) string {
+	if value == nil || *value <= 0 {
+		return "∞"
+	}
+	return time.Unix(*value, 0).UTC().Format("2006-01-02 15:04:05")
+}
+
+func subscriptionRemainingDays(value *int64) string {
+	if value == nil || *value <= 0 {
+		return ""
+	}
+	days := int64(time.Until(time.Unix(*value, 0).UTC()).Hours() / 24)
+	return strconv.FormatInt(days, 10)
+}
+
+func formatBytes(value int64) string {
+	if value < 0 {
+		value = 0
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	size := float64(value)
+	unit := 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return strconv.FormatInt(value, 10) + " " + units[unit]
+	}
+	return strconv.FormatFloat(size, 'f', 2, 64) + " " + units[unit]
+}
+
+func clashProxyFromShareLink(name string, link string) (map[string]any, bool) {
+	parsed, err := url.Parse(link)
+	if err != nil {
+		return nil, false
+	}
+	switch parsed.Scheme {
+	case "ss":
+		return clashShadowsocksProxy(name, parsed)
+	case "vless":
+		return clashVLESSProxy(name, parsed)
+	case "trojan":
+		return clashTrojanProxy(name, parsed)
+	case "vmess":
+		return clashVMessProxy(name, parsed)
+	default:
+		return nil, false
+	}
+}
+
+func clashShadowsocksProxy(name string, parsed *url.URL) (map[string]any, bool) {
+	user := parsed.User.Username()
+	if decoded, err := decodeFlexibleBase64(user); err == nil {
+		user = string(decoded)
+	}
+	method, password, ok := strings.Cut(user, ":")
+	if !ok || strings.TrimSpace(method) == "" || strings.TrimSpace(password) == "" {
+		return nil, false
+	}
+	port, ok := parseURLPort(parsed)
+	if !ok {
+		return nil, false
+	}
+	return map[string]any{
+		"name":     name,
+		"type":     "ss",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"cipher":   method,
+		"password": password,
+		"udp":      true,
+	}, true
+}
+
+func clashVLESSProxy(name string, parsed *url.URL) (map[string]any, bool) {
+	port, ok := parseURLPort(parsed)
+	if !ok || strings.TrimSpace(parsed.User.Username()) == "" {
+		return nil, false
+	}
+	query := parsed.Query()
+	network := firstNonEmptyString(query.Get("type"), "tcp")
+	security := query.Get("security")
+	proxy := map[string]any{
+		"name":    name,
+		"type":    "vless",
+		"server":  parsed.Hostname(),
+		"port":    port,
+		"uuid":    parsed.User.Username(),
+		"network": network,
+		"udp":     true,
+	}
+	if security == "tls" || security == "reality" {
+		proxy["tls"] = true
+	}
+	if sni := query.Get("sni"); sni != "" {
+		proxy["servername"] = sni
+	}
+	if fp := query.Get("fp"); fp != "" {
+		proxy["client-fingerprint"] = fp
+	}
+	if flow := query.Get("flow"); flow != "" {
+		proxy["flow"] = flow
+	}
+	if query.Get("allowInsecure") == "1" || strings.EqualFold(query.Get("allowInsecure"), "true") {
+		proxy["skip-cert-verify"] = true
+	}
+	if security == "reality" {
+		reality := map[string]any{}
+		if value := query.Get("pbk"); value != "" {
+			reality["public-key"] = value
+		}
+		if value := query.Get("sid"); value != "" {
+			reality["short-id"] = value
+		}
+		if value := query.Get("spx"); value != "" {
+			reality["spider-x"] = value
+		}
+		if len(reality) > 0 {
+			proxy["reality-opts"] = reality
+		}
+	}
+	appendClashNetworkOptions(proxy, network, query)
+	return proxy, true
+}
+
+func clashTrojanProxy(name string, parsed *url.URL) (map[string]any, bool) {
+	port, ok := parseURLPort(parsed)
+	if !ok || strings.TrimSpace(parsed.User.Username()) == "" {
+		return nil, false
+	}
+	query := parsed.Query()
+	network := firstNonEmptyString(query.Get("type"), "tcp")
+	proxy := map[string]any{
+		"name":     name,
+		"type":     "trojan",
+		"server":   parsed.Hostname(),
+		"port":     port,
+		"password": parsed.User.Username(),
+		"network":  network,
+		"udp":      true,
+	}
+	if query.Get("security") == "tls" || query.Get("security") == "reality" {
+		proxy["tls"] = true
+	}
+	if sni := query.Get("sni"); sni != "" {
+		proxy["sni"] = sni
+	}
+	if query.Get("allowInsecure") == "1" || strings.EqualFold(query.Get("allowInsecure"), "true") {
+		proxy["skip-cert-verify"] = true
+	}
+	appendClashNetworkOptions(proxy, network, query)
+	return proxy, true
+}
+
+func clashVMessProxy(name string, parsed *url.URL) (map[string]any, bool) {
+	raw := strings.TrimPrefix(parsed.String(), "vmess://")
+	decoded, err := decodeFlexibleBase64(raw)
+	if err != nil {
+		return nil, false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(decoded, &payload); err != nil {
+		return nil, false
+	}
+	port, err := strconv.Atoi(stringValue(payload["port"]))
+	if err != nil || port <= 0 {
+		return nil, false
+	}
+	network := firstNonEmptyString(payload["net"], "tcp")
+	proxy := map[string]any{
+		"name":    name,
+		"type":    "vmess",
+		"server":  stringValue(payload["add"]),
+		"port":    port,
+		"uuid":    stringValue(payload["id"]),
+		"alterId": intValue(payload["aid"]),
+		"cipher":  firstNonEmptyString(payload["scy"], "auto"),
+		"network": network,
+		"udp":     true,
+	}
+	if stringValue(payload["tls"]) == "tls" {
+		proxy["tls"] = true
+	}
+	if sni := firstNonEmptyString(payload["sni"], payload["host"]); sni != "" {
+		proxy["servername"] = sni
+	}
+	if fp := stringValue(payload["fp"]); fp != "" {
+		proxy["client-fingerprint"] = fp
+	}
+	query := url.Values{}
+	query.Set("path", stringValue(payload["path"]))
+	query.Set("host", stringValue(payload["host"]))
+	appendClashNetworkOptions(proxy, network, query)
+	return proxy, true
+}
+
+func appendClashNetworkOptions(proxy map[string]any, network string, query url.Values) {
+	switch network {
+	case "ws":
+		opts := map[string]any{}
+		if path := query.Get("path"); path != "" {
+			opts["path"] = path
+		}
+		if host := query.Get("host"); host != "" {
+			opts["headers"] = map[string]any{"Host": host}
+		}
+		if len(opts) > 0 {
+			proxy["ws-opts"] = opts
+		}
+	case "grpc":
+		opts := map[string]any{}
+		if service := query.Get("serviceName"); service != "" {
+			opts["grpc-service-name"] = service
+		}
+		if len(opts) > 0 {
+			proxy["grpc-opts"] = opts
+		}
+	case "http":
+		opts := map[string]any{}
+		if host := query.Get("host"); host != "" {
+			opts["headers"] = map[string]any{"Host": []string{host}}
+		}
+		if path := query.Get("path"); path != "" {
+			opts["path"] = []string{path}
+		}
+		if len(opts) > 0 {
+			proxy["http-opts"] = opts
+		}
+	}
+}
+
+func writeClashProxy(b *strings.Builder, proxy map[string]any) {
+	order := []string{
+		"name", "type", "server", "port", "cipher", "password", "uuid", "alterId",
+		"tls", "servername", "sni", "skip-cert-verify", "client-fingerprint",
+		"flow", "network", "udp", "ws-opts", "grpc-opts", "http-opts", "reality-opts",
+	}
+	b.WriteString("  - ")
+	first := true
+	for _, key := range order {
+		value, ok := proxy[key]
+		if !ok || isEmptyYAMLValue(value) {
+			continue
+		}
+		if first {
+			b.WriteString(key)
+			b.WriteString(": ")
+			writeYAMLInlineValue(b, value)
+			b.WriteString("\n")
+			first = false
+			continue
+		}
+		b.WriteString("    ")
+		b.WriteString(key)
+		b.WriteString(":")
+		writeYAMLValue(b, value, 4)
+	}
+}
+
+func writeYAMLValue(b *strings.Builder, value any, indent int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		b.WriteString("\n")
+		writeYAMLMap(b, typed, indent+2)
+	case map[string]string:
+		b.WriteString("\n")
+		mapped := make(map[string]any, len(typed))
+		for key, value := range typed {
+			mapped[key] = value
+		}
+		writeYAMLMap(b, mapped, indent+2)
+	default:
+		b.WriteString(" ")
+		writeYAMLInlineValue(b, value)
+		b.WriteString("\n")
+	}
+}
+
+func writeYAMLMap(b *strings.Builder, values map[string]any, indent int) {
+	keys := []string{"path", "headers", "Host", "grpc-service-name", "public-key", "short-id", "spider-x"}
+	seen := map[string]bool{}
+	for _, key := range keys {
+		if value, ok := values[key]; ok && !isEmptyYAMLValue(value) {
+			writeYAMLMapItem(b, key, value, indent)
+			seen[key] = true
+		}
+	}
+	for key, value := range values {
+		if seen[key] || isEmptyYAMLValue(value) {
+			continue
+		}
+		writeYAMLMapItem(b, key, value, indent)
+	}
+}
+
+func writeYAMLMapItem(b *strings.Builder, key string, value any, indent int) {
+	b.WriteString(strings.Repeat(" ", indent))
+	b.WriteString(key)
+	b.WriteString(":")
+	writeYAMLValue(b, value, indent)
+}
+
+func writeYAMLInlineValue(b *strings.Builder, value any) {
+	switch typed := value.(type) {
+	case bool:
+		if typed {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+	case int:
+		b.WriteString(strconv.Itoa(typed))
+	case int64:
+		b.WriteString(strconv.FormatInt(typed, 10))
+	case []string:
+		b.WriteString("[")
+		for index, item := range typed {
+			if index > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(yamlQuote(item))
+		}
+		b.WriteString("]")
+	default:
+		b.WriteString(yamlQuote(stringValue(typed)))
+	}
+}
+
+func yamlQuote(value string) string {
+	return strconv.Quote(value)
+}
+
+func isEmptyYAMLValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return typed == ""
+	case []string:
+		return len(typed) == 0
+	case map[string]any:
+		return len(typed) == 0
+	default:
+		return false
+	}
+}
+
+func parseURLPort(parsed *url.URL) (int, bool) {
+	port, err := strconv.Atoi(parsed.Port())
+	return port, err == nil && port > 0
+}
+
+func decodeFlexibleBase64(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	if decoded, err := base64.URLEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	return base64.RawURLEncoding.DecodeString(value)
 }
 
 func marshalPretty(value any) (string, error) {

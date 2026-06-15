@@ -2,6 +2,8 @@ package nodecontroller
 
 import (
 	"context"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -97,7 +99,7 @@ func (c Controller) CollectUsage(ctx context.Context, req CollectUsageRequest) (
 			}
 		}
 
-		if err := c.repo.PersistCollectedUsage(ctx, node, userDeltas, outboundDeltas); err != nil {
+		if err := c.persistCollectedUsageWithRetry(ctx, node, userDeltas, outboundDeltas); err != nil {
 			client.Close()
 			cancel()
 			result.Errors = append(result.Errors, fmt.Sprintf("node %d DB write: %s", node.ID, err.Error()))
@@ -122,4 +124,17 @@ func (c Controller) CollectUsage(ctx context.Context, req CollectUsageRequest) (
 		cancel()
 	}
 	return result, nil
+}
+
+func (c Controller) persistCollectedUsageWithRetry(ctx context.Context, node NodeRow, userDeltas []UserUsageDelta, outboundDeltas []OutboundUsageDelta) error {
+	err := c.repo.PersistCollectedUsage(ctx, node, userDeltas, outboundDeltas)
+	if err == nil || !errors.Is(err, driver.ErrBadConn) {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(100 * time.Millisecond):
+	}
+	return c.repo.PersistCollectedUsage(ctx, node, userDeltas, outboundDeltas)
 }
