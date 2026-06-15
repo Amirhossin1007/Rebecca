@@ -156,6 +156,15 @@ func readAdminLoginRequest(r *http.Request) (adminLoginRequest, error) {
 		}
 		return payload, nil
 	}
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			return adminLoginRequest{}, err
+		}
+		return adminLoginRequest{
+			Username: r.Form.Get("username"),
+			Password: r.Form.Get("password"),
+		}, nil
+	}
 	if err := r.ParseForm(); err != nil {
 		return adminLoginRequest{}, err
 	}

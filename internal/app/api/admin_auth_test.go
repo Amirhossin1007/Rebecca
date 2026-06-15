@@ -3,12 +3,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -396,6 +398,34 @@ func TestAdminLoginFrontendAlias(t *testing.T) {
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("alias login status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminLoginFrontendMultipartForm(t *testing.T) {
+	server, db := testAdminServer(t)
+	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("username", "pouria"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("password", "pass123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("grant_type", "password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/token", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("multipart login status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
