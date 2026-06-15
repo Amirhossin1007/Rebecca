@@ -50,7 +50,7 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 20 {
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected version after first run: %#v", version)
 	}
 	assertTableColumns(t, ctx, db, "sqlite", "admins", []string{"id", "username", "role", "permissions", "status", "created_traffic", "delete_user_usage_limit"})
@@ -118,7 +118,7 @@ func TestRunMigrationsExternalDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("external version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 20 {
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected external version: %#v", version)
 	}
 	for _, table := range []string{"admins", "users", "nodes", "services", "subscription_settings", "goose_db_version"} {
@@ -178,7 +178,7 @@ func TestKnownBadAlembicMergeRevisionIsBypassed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version after migration: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 20 {
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected goose version after bypass: %#v", version)
 	}
 	if !version.LegacyRevisionKnownBad || !strings.Contains(version.LegacyRevisionHandling, "merge/no-op") {
@@ -225,7 +225,7 @@ VALUES
 	if err != nil {
 		t.Fatalf("version after migration: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 20 {
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected goose version after repair: %#v", version)
 	}
 	if !version.LegacyRevisionKnownBad || !strings.Contains(version.LegacyRevisionHandling, "admin role repair") {
@@ -271,6 +271,106 @@ VALUES
 	}
 }
 
+func TestFinalAlembicDatabaseIsBaselinedBeforeGoOnlyMigrations(t *testing.T) {
+	ctx := context.Background()
+	db := openSQLiteTestDB(t)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO alembic_version (version_num) VALUES ('23_drop_access_insights')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE admins (id INTEGER PRIMARY KEY, username VARCHAR(34), role VARCHAR(32), permissions TEXT)`,
+		`CREATE TABLE users (
+			id INTEGER PRIMARY KEY,
+			username VARCHAR(34),
+			credential_key VARCHAR(64),
+			status VARCHAR(32),
+			admin_id INTEGER,
+			service_id INTEGER,
+			created_at DATETIME,
+			expire INTEGER,
+			admin_disabled_at DATETIME
+		)`,
+		`CREATE TABLE proxies (id INTEGER PRIMARY KEY, user_id INTEGER, type VARCHAR(32), settings TEXT)`,
+		`CREATE TABLE hosts (id INTEGER PRIMARY KEY, inbound_tag VARCHAR(256), sort INTEGER)`,
+		`CREATE TABLE service_hosts (service_id INTEGER, host_id INTEGER, sort INTEGER)`,
+		`CREATE TABLE next_plans (id INTEGER PRIMARY KEY, user_id INTEGER, position INTEGER)`,
+		`CREATE TABLE user_usage_logs (id INTEGER PRIMARY KEY, user_id INTEGER)`,
+		`CREATE TABLE node_user_usages (id INTEGER PRIMARY KEY, user_id INTEGER, node_id INTEGER, created_at DATETIME)`,
+		`CREATE TABLE node_usages (id INTEGER PRIMARY KEY, node_id INTEGER, created_at DATETIME)`,
+		`CREATE TABLE services (id INTEGER PRIMARY KEY, name VARCHAR(64), users_usage BIGINT DEFAULT 0)`,
+		`CREATE TABLE admins_services (admin_id INTEGER, service_id INTEGER, traffic_limit_mode VARCHAR(32))`,
+		`CREATE TABLE nodes (id INTEGER PRIMARY KEY, name VARCHAR(64), xray_config_mode VARCHAR(32))`,
+		`CREATE TABLE node_operations (id INTEGER PRIMARY KEY, operation_type VARCHAR(32), idempotency_key VARCHAR(255))`,
+		`CREATE TABLE xray_config (id INTEGER PRIMARY KEY, data TEXT)`,
+		`CREATE TABLE subscription_settings (id INTEGER PRIMARY KEY, subscription_path VARCHAR(255))`,
+		`CREATE TABLE telegram_settings (id INTEGER PRIMARY KEY, backup_scope VARCHAR(32))`,
+		`CREATE TABLE jwt (
+			id INTEGER PRIMARY KEY,
+			secret_key VARCHAR(256),
+			subscription_secret_key VARCHAR(256),
+			admin_secret_key VARCHAR(256),
+			vmess_mask VARCHAR(32),
+			vless_mask VARCHAR(32)
+		)`,
+		`CREATE TABLE exclude_inbounds_association (proxy_id INTEGER, inbound_tag VARCHAR(256))`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO jwt (id, secret_key, subscription_secret_key, admin_secret_key, vmess_mask, vless_mask)
+VALUES (1, 'secret', 'sub', 'admin', '00000000000000000000000000000000', '00000000000000000000000000000000')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO users (id, username, credential_key, status, admin_id, service_id, created_at, expire)
+VALUES
+	(1, 'dupe', '00112233445566778899aabbccddeeff', 'active', 1, 1, '2026-06-01 00:00:00', NULL),
+	(2, 'DUPE', '11112233445566778899aabbccddeeff', 'active', 1, 1, '2026-06-01 00:00:00', NULL),
+	(3, 'unique', '22112233445566778899aabbccddeeff', 'deactive', 1, 1, '2026-06-01 00:00:00', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
+		t.Fatalf("run final alembic baseline migrations: %v", err)
+	}
+	version, err := Version(ctx, db, "sqlite")
+	if err != nil {
+		t.Fatalf("version after baseline: %v", err)
+	}
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
+		t.Fatalf("unexpected goose version after final alembic baseline: %#v", version)
+	}
+	var appliedBeforeGoOnly int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM goose_db_version WHERE version_id BETWEEN 1 AND 16 AND is_applied = 1`).Scan(&appliedBeforeGoOnly); err != nil {
+		t.Fatal(err)
+	}
+	if appliedBeforeGoOnly != int(legacyAlembicFinalBaseline) {
+		t.Fatalf("legacy baseline did not seed versions 1..16, got %d", appliedBeforeGoOnly)
+	}
+	assertNoTable(t, ctx, db, "sqlite", "exclude_inbounds_association")
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vmess_mask")
+	assertNoColumn(t, ctx, db, "sqlite", "jwt", "vless_mask")
+	assertTableColumns(t, ctx, db, "sqlite", "nodes", []string{"note"})
+	assertDBStringMigration(t, db, `SELECT username FROM users WHERE id = 1`, "dupe_2")
+	assertDBStringMigration(t, db, `SELECT username FROM users WHERE id = 2`, "DUPE")
+	assertDBStringMigration(t, db, `SELECT status FROM users WHERE id = 3`, "disabled")
+	var proxyRows int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxies WHERE user_id IN (1, 2, 3)`).Scan(&proxyRows); err != nil {
+		t.Fatal(err)
+	}
+	if proxyRows != 6 {
+		t.Fatalf("expected legacy VMess/VLESS proxy materialization for three users, got %d rows", proxyRows)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id, username) VALUES (99, 'DUPE')`); err == nil {
+		t.Fatal("expected duplicate username insert to fail after legacy repair")
+	}
+}
+
 func TestDetectGooseVersion(t *testing.T) {
 	ctx := context.Background()
 	db := openSQLiteTestDB(t)
@@ -281,7 +381,7 @@ func TestDetectGooseVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if !version.HasGoose || version.GooseVersion != 20 {
+	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected goose version: %#v", version)
 	}
 }
@@ -302,14 +402,14 @@ func TestRunMigrationsToSQLite(t *testing.T) {
 	assertTableColumns(t, ctx, db, "sqlite", "nodes", []string{"id", "name", "address", "port"})
 	assertNoTable(t, ctx, db, "sqlite", "services")
 
-	if err := RunMigrationsTo(ctx, db, "sqlite", 20); err != nil {
+	if err := RunMigrationsTo(ctx, db, "sqlite", latestGooseVersion); err != nil {
 		t.Fatalf("run migrations to final checkpoint: %v", err)
 	}
 	finalVersion, err := Version(ctx, db, "sqlite")
 	if err != nil {
 		t.Fatalf("version after final checkpoint: %v", err)
 	}
-	if finalVersion.GooseVersion != 20 {
+	if finalVersion.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected final version: %#v", finalVersion)
 	}
 	assertTableColumns(t, ctx, db, "sqlite", "services", []string{"id", "name", "used_traffic"})

@@ -19,6 +19,12 @@ var migrationFS embed.FS
 var gooseMu sync.Mutex
 var migrationDialect string
 
+const (
+	latestGooseVersion         int64 = 20
+	legacyAlembicFinalRevision       = "23_drop_access_insights"
+	legacyAlembicFinalBaseline int64 = 16
+)
+
 type Runner struct {
 	DB      *sql.DB
 	Dialect string
@@ -86,6 +92,9 @@ func (r Runner) run(ctx context.Context, targetVersion int64) error {
 	goose.SetLogger(log.New(io.Discard, "", 0))
 	goose.SetBaseFS(migrationFS)
 	defer goose.SetBaseFS(nil)
+	if err := r.prepareLegacyBaseline(ctx, dialect, targetVersion); err != nil {
+		return err
+	}
 	var err error
 	if targetVersion > 0 {
 		err = goose.UpToContext(ctx, r.DB, "sql", targetVersion, goose.WithNoColor(true))
@@ -97,6 +106,158 @@ func (r Runner) run(ctx context.Context, targetVersion int64) error {
 		return ensureErr
 	}
 	return err
+}
+
+func (r Runner) prepareLegacyBaseline(ctx context.Context, dialect string, _ int64) error {
+	hasGoose, err := HasTable(ctx, r.DB, dialect, goose.TableName())
+	if err != nil {
+		return err
+	}
+	if hasGoose {
+		return nil
+	}
+	if err := runPreGooseLegacyRepairs(ctx, r.DB, dialect); err != nil {
+		return err
+	}
+	hasAlembic, err := HasTable(ctx, r.DB, dialect, "alembic_version")
+	if err != nil || !hasAlembic {
+		return err
+	}
+	revision, err := readAlembicRevision(ctx, r.DB)
+	if err != nil {
+		return err
+	}
+	baseline, err := legacyGooseBaseline(ctx, r.DB, dialect, revision)
+	if err != nil || baseline <= 0 {
+		return err
+	}
+	return seedGooseBaseline(ctx, r.DB, baseline)
+}
+
+func runPreGooseLegacyRepairs(ctx context.Context, db *sql.DB, dialect string) error {
+	hasUsers, err := HasTable(ctx, db, dialect, "users")
+	if err != nil || !hasUsers {
+		return err
+	}
+	hasID, err := HasColumn(ctx, db, dialect, "users", "id")
+	if err != nil || !hasID {
+		return err
+	}
+	hasUsername, err := HasColumn(ctx, db, dialect, "users", "username")
+	if err != nil || !hasUsername {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := normalizeUserLifecycleStatus(ctx, tx, dialect); err != nil {
+		return err
+	}
+	if err := repairDuplicateUsernames(ctx, tx); err != nil {
+		return err
+	}
+	if err := dropUserUsernameIndexIfPossible(ctx, tx, dialect, "ix_users_username"); err != nil {
+		return err
+	}
+	if err := dropUserUsernameIndexIfPossible(ctx, tx, dialect, "username"); err != nil {
+		return err
+	}
+	if err := createIndex(ctx, tx, dialect, "users", "ix_users_username", []string{"username"}, true); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func legacyGooseBaseline(ctx context.Context, db *sql.DB, dialect string, revision string) (int64, error) {
+	if ok, err := schemaLooksGoLatest(ctx, db, dialect); err != nil || ok {
+		if ok {
+			return latestGooseVersion, nil
+		}
+		return 0, err
+	}
+	if strings.TrimSpace(revision) != legacyAlembicFinalRevision {
+		return 0, nil
+	}
+	ok, err := schemaLooksLegacyAlembicFinal(ctx, db, dialect)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return legacyAlembicFinalBaseline, nil
+}
+
+func schemaLooksGoLatest(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
+	checks := []struct {
+		table  string
+		column string
+	}{
+		{"nodes", "note"},
+		{"users", "credential_key"},
+		{"services", "users_usage"},
+		{"node_operations", "idempotency_key"},
+	}
+	for _, check := range checks {
+		ok, err := HasColumn(ctx, db, dialect, check.table, check.column)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	hasJWTMasks, err := HasColumn(ctx, db, dialect, "jwt", "vmess_mask")
+	if err != nil {
+		return false, err
+	}
+	hasExcludedInbounds, err := HasTable(ctx, db, dialect, "exclude_inbounds_association")
+	if err != nil {
+		return false, err
+	}
+	return !hasJWTMasks && !hasExcludedInbounds, nil
+}
+
+func schemaLooksLegacyAlembicFinal(ctx context.Context, db *sql.DB, dialect string) (bool, error) {
+	checks := []struct {
+		table  string
+		column string
+	}{
+		{"admins", "role"},
+		{"admins", "permissions"},
+		{"users", "credential_key"},
+		{"users", "admin_disabled_at"},
+		{"services", "users_usage"},
+		{"admins_services", "traffic_limit_mode"},
+		{"nodes", "xray_config_mode"},
+		{"node_operations", "idempotency_key"},
+		{"xray_config", "data"},
+		{"subscription_settings", "subscription_path"},
+		{"telegram_settings", "backup_scope"},
+	}
+	for _, check := range checks {
+		ok, err := HasColumn(ctx, db, dialect, check.table, check.column)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func seedGooseBaseline(ctx context.Context, db *sql.DB, baseline int64) error {
+	if baseline <= 0 {
+		return nil
+	}
+	if _, err := goose.EnsureDBVersionContext(ctx, db); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for version := int64(1); version <= baseline; version++ {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, ?)`, version, true); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func activeDialect() string {
