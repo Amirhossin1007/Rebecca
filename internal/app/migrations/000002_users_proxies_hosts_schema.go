@@ -104,6 +104,12 @@ CREATE TABLE users (
 			return err
 		}
 	}
+	// Some legacy databases already contain duplicate usernames before the
+	// later lifecycle repair checkpoint. Normalize them here as well so early
+	// index creation never blocks startup on those installations.
+	if err := repairDuplicateUsernames(ctx, tx); err != nil {
+		return err
+	}
 	for _, index := range []struct {
 		name    string
 		columns []string

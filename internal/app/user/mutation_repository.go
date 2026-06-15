@@ -92,6 +92,9 @@ func (r Repository) createUserMutation(ctx context.Context, admin adminapp.Admin
 	if payload.Status != "" {
 		status = string(payload.Status)
 	}
+	if err := r.ensureUsernameAvailableTx(ctx, tx, payload.Username); err != nil {
+		return MutationResult{}, err
+	}
 	credentialKey := ""
 	if payload.CredentialKey != nil {
 		credentialKey = *payload.CredentialKey
