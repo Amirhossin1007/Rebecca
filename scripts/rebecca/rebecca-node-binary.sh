@@ -15,7 +15,7 @@ SCRIPT_NAME=$(basename "$0")
 SCRIPT_BASENAME="${SCRIPT_NAME%.*}"
 SCRIPT_DEFAULT_APP_NAME="${REBECCA_NODE_DEFAULT_APP_NAME:-$SCRIPT_BASENAME}"
 case "$SCRIPT_DEFAULT_APP_NAME" in
-    rebecca-node-binary)
+    rebecca-node-binary|@|bash|sh)
         SCRIPT_DEFAULT_APP_NAME="rebecca-node"
     ;;
 esac
