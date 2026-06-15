@@ -1,3 +1,4 @@
+import { Box, Button, Heading, Text, VStack } from "@chakra-ui/react";
 import { createHashRouter } from "react-router-dom";
 import { AppLayout } from "../components/AppLayout";
 import { fetch } from "../service/http";
@@ -16,13 +17,63 @@ import TutorialsPage from "./TutorialsPage";
 import UsagePage from "./UsagePage";
 import { UsersPage } from "./UsersPage";
 import { XrayLogsPage } from "./XrayLogsPage";
+import {
+	isRouteErrorResponse,
+	redirect,
+	useNavigate,
+	useRouteError,
+} from "react-router-dom";
+
+const routeErrorMessage = (error: unknown) => {
+	if (isRouteErrorResponse(error)) {
+		return error.statusText || `Request failed with status ${error.status}`;
+	}
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return "The page could not be loaded.";
+};
+
+const RouteErrorPage = () => {
+	const error = useRouteError();
+	const navigate = useNavigate();
+
+	return (
+		<Box minH="100vh" bg="gray.950" color="white" px={6} py={10}>
+			<VStack align="start" spacing={4} maxW="720px" mx="auto">
+				<Heading size="lg">Something went wrong</Heading>
+				<Text color="gray.300">
+					Rebecca kept your session active. You can retry the page or go back to
+					the dashboard.
+				</Text>
+				<Text
+					bg="whiteAlpha.100"
+					border="1px solid"
+					borderColor="whiteAlpha.200"
+					borderRadius="md"
+					color="red.200"
+					fontFamily="mono"
+					fontSize="sm"
+					p={4}
+					w="full"
+					whiteSpace="pre-wrap"
+				>
+					{routeErrorMessage(error)}
+				</Text>
+				<Button colorScheme="blue" onClick={() => navigate("/")}>
+					Back to dashboard
+				</Button>
+			</VStack>
+		</Box>
+	);
+};
 
 const fetchAdminLoader = async () => {
 	try {
 		const token = getAuthToken();
 		if (!token) {
 			console.warn("No authentication token found");
-			throw new Error("No token available");
+			throw redirect("/login/");
 		}
 		const response = await fetch("/admin", {
 			headers: {
@@ -34,6 +85,12 @@ const fetchAdminLoader = async () => {
 		}
 		return response;
 	} catch (error) {
+		const status =
+			(error as { response?: { status?: number }; status?: number })?.response
+				?.status ?? (error as { status?: number })?.status;
+		if (status === 401 || status === 403) {
+			throw redirect("/login/");
+		}
 		console.error("Loader error:", error);
 		throw error;
 	}
@@ -43,7 +100,7 @@ export const router = createHashRouter([
 	{
 		path: "/",
 		element: <AppLayout />,
-		errorElement: <Login />,
+		errorElement: <RouteErrorPage />,
 		loader: fetchAdminLoader,
 		children: [
 			{

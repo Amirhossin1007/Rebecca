@@ -521,7 +521,9 @@ VALUES
 	(2, 'alice', 'active', 0, 100, NULL, 1),
 	(3, 'expired_user', 'expired', 0, 100, 1700000000, 1),
 	(4, 'limited_user', 'limited', 0, 100, NULL, 1),
-	(5, 'random_key_user', 'active', 0, 100, NULL, 1)`); err != nil {
+	(5, 'random_key_user', 'active', 0, 100, NULL, 1),
+	(6, 'bob', 'active', 0, 100, NULL, 1),
+	(7, 'bob', 'active', 0, 100, NULL, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `
@@ -550,6 +552,8 @@ VALUES
 	assertUserStatus(t, db, 3, "expired")
 	assertUserStatus(t, db, 4, "limited")
 	assertCredentialKeyNull(t, db, 5)
+	assertUserName(t, db, 6, "bob_2_6")
+	assertUserName(t, db, 7, "bob")
 	assertTableColumns(t, ctx, db, "sqlite", "next_plans", []string{"position", "increase_data_limit", "start_on_first_connect", "trigger_on"})
 
 	var proxySettings string
@@ -1166,6 +1170,17 @@ func assertUserStatus(t *testing.T, db *sql.DB, id int64, status string) {
 	}
 	if got != status {
 		t.Fatalf("user %d status=%q, want %q", id, got, status)
+	}
+}
+
+func assertUserName(t *testing.T, db *sql.DB, id int64, username string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRow(`SELECT username FROM users WHERE id = ?`, id).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != username {
+		t.Fatalf("user %d username=%q, want %q", id, got, username)
 	}
 }
 
