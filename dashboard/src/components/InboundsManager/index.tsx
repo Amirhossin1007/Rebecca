@@ -42,6 +42,28 @@ type FilterState = {
 	search: string;
 };
 
+const normalizeTargetRefs = (value: unknown): string[] => {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => {
+			if (typeof item === "string") return item;
+			if (item && typeof item === "object" && "id" in item) {
+				const id = (item as { id?: unknown }).id;
+				return typeof id === "string" ? id : "";
+			}
+			return "";
+		})
+		.filter(Boolean);
+};
+
+const normalizeInboundTargets = (inbound: RawInbound): RawInbound => ({
+	...inbound,
+	targets: normalizeTargetRefs((inbound as { targets?: unknown }).targets),
+	effective_targets: normalizeTargetRefs(
+		(inbound as { effective_targets?: unknown }).effective_targets,
+	),
+});
+
 export const InboundsManager: FC = () => {
 	const { t } = useTranslation();
 	const toast = useToast();
@@ -69,7 +91,7 @@ export const InboundsManager: FC = () => {
 			fetch<{ targets: CoreConfigTarget[] }>("/core/config/targets"),
 		])
 			.then(([data, targetsResponse]) => {
-				setInbounds(data || []);
+				setInbounds((data || []).map(normalizeInboundTargets));
 				setConfigTargets(targetsResponse?.targets || []);
 			})
 			.catch(() => {
