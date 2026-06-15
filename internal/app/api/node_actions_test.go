@@ -53,6 +53,7 @@ func TestNodeMutationHandlersCreateUpdateResetRegenerateDelete(t *testing.T) {
 		Note            *string `json:"note"`
 		Status          string  `json:"status"`
 		NodeCertificate *string `json:"node_certificate"`
+		NodeKey         *string `json:"node_certificate_key"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
@@ -66,6 +67,9 @@ func TestNodeMutationHandlersCreateUpdateResetRegenerateDelete(t *testing.T) {
 			got = *created.NodeCertificate
 		}
 		t.Fatalf("node did not use pending certificate: got_len=%d want_len=%d got_prefix=%q want_prefix=%q", len(got), len(certResponse.Certificate), prefixForTest(got), prefixForTest(certResponse.Certificate))
+	}
+	if created.NodeKey == nil || strings.TrimSpace(*created.NodeKey) != strings.TrimSpace(certResponse.CertificateKey) {
+		t.Fatalf("node creation response did not include the matching private key")
 	}
 	assertDBInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config' AND node_id = ?`, 1, created.ID)
 	assertDBInt64(t, db, `SELECT COUNT(*) FROM pending_node_certificates`, 0)
@@ -145,6 +149,19 @@ func TestNodeMutationHandlersCreateUpdateResetRegenerateDelete(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("regenerate certificate status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	var regenerated struct {
+		NodeCertificate *string `json:"node_certificate"`
+		NodeKey         *string `json:"node_certificate_key"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &regenerated); err != nil {
+		t.Fatal(err)
+	}
+	if regenerated.NodeCertificate == nil || strings.TrimSpace(*regenerated.NodeCertificate) == "" {
+		t.Fatalf("regenerate response did not include the node certificate: %s", rec.Body.String())
+	}
+	if regenerated.NodeKey == nil || strings.TrimSpace(*regenerated.NodeKey) == "" {
+		t.Fatalf("regenerate response did not include the matching private key: %s", rec.Body.String())
+	}
 	after := ""
 	if err := db.QueryRow(`SELECT certificate FROM nodes WHERE id = 1`).Scan(&after); err != nil {
 		t.Fatal(err)
@@ -186,6 +203,7 @@ func TestNodeMutationHandlersCreateWithGeneratedCertificate(t *testing.T) {
 		ID              int64   `json:"id"`
 		Name            string  `json:"name"`
 		NodeCertificate *string `json:"node_certificate"`
+		NodeKey         *string `json:"node_certificate_key"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
@@ -195,6 +213,9 @@ func TestNodeMutationHandlersCreateWithGeneratedCertificate(t *testing.T) {
 	}
 	if created.NodeCertificate == nil || *created.NodeCertificate == "" {
 		t.Fatalf("generated certificate was not returned: %#v", created)
+	}
+	if created.NodeKey == nil || *created.NodeKey == "" {
+		t.Fatalf("generated certificate key was not returned: %#v", created)
 	}
 	assertDBInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config' AND node_id = ?`, 1, created.ID)
 }

@@ -141,7 +141,12 @@ INSERT INTO nodes (
 	if err := tx.Commit(); err != nil {
 		return NodeResponse{}, err
 	}
-	return r.GetNode(ctx, nodeID)
+	node, err := r.GetNode(ctx, nodeID)
+	if err != nil {
+		return NodeResponse{}, err
+	}
+	node.NodeCertificateKey = &key
+	return node, nil
 }
 
 func (r Repository) GetNode(ctx context.Context, nodeID int64) (NodeResponse, error) {
@@ -348,7 +353,11 @@ func (r Repository) UpdateNode(ctx context.Context, nodeID int64, payload NodeMo
 	if err := tx.Commit(); err != nil {
 		return NodeResponse{}, err
 	}
-	return r.GetNode(ctx, nodeID)
+	node, err := r.GetNode(ctx, nodeID)
+	if err != nil {
+		return NodeResponse{}, err
+	}
+	return node, nil
 }
 
 func (r Repository) DeleteNode(ctx context.Context, nodeID int64) error {
@@ -400,7 +409,11 @@ func (r Repository) ResetNodeUsage(ctx context.Context, nodeID int64) (NodeRespo
 	if err := tx.Commit(); err != nil {
 		return NodeResponse{}, err
 	}
-	return r.GetNode(ctx, nodeID)
+	node, err := r.GetNode(ctx, nodeID)
+	if err != nil {
+		return NodeResponse{}, err
+	}
+	return node, nil
 }
 
 func (r Repository) RegenerateNodeCertificate(ctx context.Context, nodeID int64) (NodeResponse, error) {
@@ -426,7 +439,12 @@ func (r Repository) RegenerateNodeCertificate(ctx context.Context, nodeID int64)
 	if err := tx.Commit(); err != nil {
 		return NodeResponse{}, err
 	}
-	return r.GetNode(ctx, nodeID)
+	node, err := r.GetNode(ctx, nodeID)
+	if err != nil {
+		return NodeResponse{}, err
+	}
+	node.NodeCertificateKey = &key
+	return node, nil
 }
 
 func (r Repository) DeleteExpiredPendingCertificates(ctx context.Context) error {

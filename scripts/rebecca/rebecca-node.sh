@@ -1023,63 +1023,61 @@ install_latest_xray_for_binary_node() {
     REBECCA_DATA_DIR="$DATA_DIR" XRAY_INSTALL_DIR="$DATA_DIR/xray-core" XRAY_ASSETS_DIR="$DATA_DIR/xray-core" bash "$APP_DIR/scripts/install_latest_xray.sh"
 }
 
+read_node_certificate_bundle() {
+    local bundle_file
+    local bundle_started=0
+    local bundle_completed=0
+    bundle_file=$(mktemp)
+    : > "$bundle_file"
+
+    echo -e "Paste the Node install bundle from the panel, press ENTER on a new line when finished: "
+    while IFS= read -r line; do
+        if [[ -z $line ]]; then
+            if [ "$bundle_started" -eq 0 ]; then
+                break
+            fi
+            continue
+        fi
+        bundle_started=1
+        echo "$line" >>"$bundle_file"
+        if [[ "$line" =~ ^-----END\ .+PRIVATE\ KEY-----$ ]] && grep -q -- "-----END CERTIFICATE-----" "$bundle_file"; then
+            bundle_completed=1
+            break
+        fi
+    done
+
+    if [ "$bundle_completed" -ne 1 ]; then
+        colorized_echo red "Node install bundle is incomplete. Paste the full bundle shown by the panel."
+        rm -f "$bundle_file"
+        exit 1
+    fi
+
+    awk 'BEGIN{capture=0} /-----BEGIN CERTIFICATE-----/{capture=1} capture{print} /-----END CERTIFICATE-----/{exit}' "$bundle_file" >"$CERT_FILE"
+    awk 'BEGIN{capture=0} /-----BEGIN .*PRIVATE KEY-----/{capture=1} capture{print} /-----END .*PRIVATE KEY-----/{exit}' "$bundle_file" >"$CERT_KEY_FILE"
+    rm -f "$bundle_file"
+
+    if ! grep -q -- "-----END CERTIFICATE-----" "$CERT_FILE"; then
+        colorized_echo red "The bundle does not contain a valid PEM certificate."
+        rm -f "$CERT_FILE" "$CERT_KEY_FILE"
+        exit 1
+    fi
+    if ! grep -Eq -- "-----END .+PRIVATE KEY-----" "$CERT_KEY_FILE"; then
+        colorized_echo red "The bundle does not contain a valid PEM private key."
+        rm -f "$CERT_FILE" "$CERT_KEY_FILE"
+        exit 1
+    fi
+
+    chmod 600 "$CERT_KEY_FILE"
+    colorized_echo green "Node certificate bundle saved to $CERT_FILE and $CERT_KEY_FILE"
+}
+
 configure_binary_node_env() {
     mkdir -p "$DATA_DIR" "$APP_DIR"
     echo "$BRANCH" > "$BRANCH_FILE"
 
-    if [ ! -s "$CERT_FILE" ]; then
-        : > "$CERT_FILE"
-        echo -e "Please paste the content of the Client Certificate, press ENTER on a new line when finished: "
-        local cert_started=0
-        local cert_completed=0
-        while IFS= read -r line; do
-            if [[ -z $line ]]; then
-                if [ "$cert_started" -eq 0 ]; then
-                    break
-                fi
-                continue
-            fi
-            cert_started=1
-            echo "$line" >>"$CERT_FILE"
-            if [[ "$line" == *"-----END CERTIFICATE-----"* ]]; then
-                cert_completed=1
-                break
-            fi
-        done
-        if [ "$cert_completed" -ne 1 ]; then
-            colorized_echo red "Client certificate is incomplete. Please paste a full PEM certificate ending with -----END CERTIFICATE-----."
-            rm -f "$CERT_FILE"
-            exit 1
-        fi
-        colorized_echo green "Certificate saved to $CERT_FILE"
-    fi
-
-    if [ ! -s "$CERT_KEY_FILE" ]; then
-        : > "$CERT_KEY_FILE"
-        echo -e "Please paste the content of the Client Private Key, press ENTER on a new line when finished: "
-        local key_started=0
-        local key_completed=0
-        while IFS= read -r line; do
-            if [[ -z $line ]]; then
-                if [ "$key_started" -eq 0 ]; then
-                    break
-                fi
-                continue
-            fi
-            key_started=1
-            echo "$line" >>"$CERT_KEY_FILE"
-            if [[ "$line" =~ ^-----END\ .+PRIVATE\ KEY-----$ ]]; then
-                key_completed=1
-                break
-            fi
-        done
-        if [ "$key_completed" -ne 1 ]; then
-            colorized_echo red "Client private key is incomplete. Please paste a full PEM private key ending with -----END PRIVATE KEY-----."
-            rm -f "$CERT_KEY_FILE"
-            exit 1
-        fi
-        chmod 600 "$CERT_KEY_FILE"
-        colorized_echo green "Private key saved to $CERT_KEY_FILE"
+    if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY_FILE" ]; then
+        rm -f "$CERT_FILE" "$CERT_KEY_FILE"
+        read_node_certificate_bundle
     fi
 
     get_occupied_ports

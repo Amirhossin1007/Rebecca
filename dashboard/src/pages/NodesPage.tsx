@@ -296,13 +296,19 @@ export const NodesPage: FC = () => {
 	>(null);
 	const [newNodeCertificate, setNewNodeCertificate] = useState<{
 		certificate: string;
+		certificate_key?: string | null;
 		name?: string | null;
 	} | null>(null);
 	const generatedCertificateValue = newNodeCertificate?.certificate ?? "";
+	const generatedCertificateKeyValue =
+		newNodeCertificate?.certificate_key ?? "";
+	const generatedCertificateBundleValue = generatedCertificateKeyValue
+		? `${generatedCertificateValue.trim()}\n${generatedCertificateKeyValue.trim()}\n`
+		: generatedCertificateValue;
 	const {
-		onCopy: copyGeneratedCertificate,
-		hasCopied: generatedCertificateCopied,
-	} = useClipboard(generatedCertificateValue);
+		onCopy: copyGeneratedCertificateBundle,
+		hasCopied: generatedCertificateBundleCopied,
+	} = useClipboard(generatedCertificateBundleValue);
 	const {
 		isOpen: isResetConfirmOpen,
 		onOpen: openResetConfirm,
@@ -457,6 +463,7 @@ export const NodesPage: FC = () => {
 				if (updatedNode?.node_certificate) {
 					setNewNodeCertificate({
 						certificate: updatedNode.node_certificate,
+						certificate_key: updatedNode.node_certificate_key,
 						name: updatedNode.name,
 					});
 				}
@@ -2409,6 +2416,7 @@ export const NodesPage: FC = () => {
 					if (createdNode?.node_certificate) {
 						setNewNodeCertificate({
 							certificate: createdNode.node_certificate,
+							certificate_key: createdNode.node_certificate_key,
 							name: createdNode.name,
 						});
 					}
@@ -2435,7 +2443,10 @@ export const NodesPage: FC = () => {
 									color="gray.600"
 									_dark={{ color: "gray.300" }}
 								>
-									{t("nodes.newNodePublicKeyDesc")}
+									{t(
+										"nodes.newNodePublicKeyDesc",
+										"Save this single bundle now. Paste it once into the node installer and the installer will split the certificate and private key automatically.",
+									)}
 								</Text>
 								<Box borderWidth="1px" borderRadius="lg" overflow="hidden">
 									<HStack
@@ -2448,7 +2459,10 @@ export const NodesPage: FC = () => {
 									>
 										<VStack align="flex-start" spacing={0}>
 											<Text fontWeight="semibold">
-												{t("nodes.certificateLabel")}
+												{t(
+													"nodes.installBundleLabel",
+													"Node install bundle",
+												)}
 											</Text>
 											{newNodeCertificate.name && (
 												<Text
@@ -2466,8 +2480,8 @@ export const NodesPage: FC = () => {
 												variant="outline"
 												leftIcon={<CopyIconStyled />}
 												onClick={() => {
-													if (!generatedCertificateValue) return;
-													copyGeneratedCertificate();
+													if (!generatedCertificateBundleValue) return;
+													copyGeneratedCertificateBundle();
 													toast({
 														title: t("copied"),
 														status: "success",
@@ -2476,29 +2490,32 @@ export const NodesPage: FC = () => {
 														duration: 2000,
 													});
 												}}
-												isDisabled={!generatedCertificateValue}
+												isDisabled={!generatedCertificateBundleValue}
 											>
-												{generatedCertificateCopied ? t("copied") : t("copy")}
+												{generatedCertificateBundleCopied ? t("copied") : t("copy")}
 											</Button>
 											<Button
 												size="sm"
 												variant="outline"
 												leftIcon={<DownloadIconStyled />}
 												onClick={() => {
-													if (!generatedCertificateValue) return;
-													const blob = new Blob([generatedCertificateValue], {
+													if (!generatedCertificateBundleValue) return;
+													const blob = new Blob([generatedCertificateBundleValue], {
 														type: "text/plain",
 													});
 													const url = URL.createObjectURL(blob);
 													const anchor = document.createElement("a");
 													anchor.href = url;
-													anchor.download = "node_certificate.pem";
+													anchor.download = "node_install_bundle.pem";
 													anchor.click();
 													URL.revokeObjectURL(url);
 												}}
-												isDisabled={!generatedCertificateValue}
+												isDisabled={!generatedCertificateBundleValue}
 											>
-												{t("nodes.download-node-certificate")}
+												{t(
+													"nodes.download-node-install-bundle",
+													"Download install bundle",
+												)}
 											</Button>
 										</HStack>
 									</HStack>
@@ -2514,7 +2531,7 @@ export const NodesPage: FC = () => {
 										maxH="280px"
 										overflow="auto"
 									>
-										{generatedCertificateValue}
+										{generatedCertificateBundleValue}
 									</Box>
 								</Box>
 							</VStack>

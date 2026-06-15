@@ -115,6 +115,7 @@ export const NodeSchema = z
 		uses_default_certificate: z.boolean().optional(),
 		certificate_public_key: z.string().nullable().optional(),
 		node_certificate: z.string().nullable().optional(),
+		node_certificate_key: z.string().nullable().optional(),
 		xray_config: configSchema,
 		sing_config: configSchema,
 		hysteria_config: configSchema,
