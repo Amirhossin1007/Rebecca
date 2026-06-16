@@ -92,13 +92,13 @@
 برای نصب باینری Master رِبِکا:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh | sudo bash -s -- install
 ```
 
 برای نصب باینری Rebecca-node روی هر سرور نود:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh | sudo bash -s -- install
 ```
 
 نصاب‌های باینری سرویس native systemd می‌سازند و asset مناسب معماری سرور را خودکار دانلود می‌کنند. Master دیتابیس‌های SQLite، MySQL و MariaDB را از طریق گزینه‌های نصب پشتیبانی می‌کند؛ نصاب نود فقط runtime نود را نصب می‌کند و اتصال آن به Master از طریق certificate/token داخل پنل انجام می‌شود.
@@ -144,7 +144,7 @@ rebecca --help
 شما میتواند به کمک [Xray-install](https://github.com/XTLS/Xray-install) این کار را انجام دهید.
 
 ```bash
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s -- install
 ```
 
 پروژه را clone کنید و داشبورد و باینری‌های Go را بسازید.

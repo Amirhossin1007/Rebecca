@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 )
 
 func checkDatabaseIntegrity(ctx context.Context, db *sql.DB) error {
@@ -20,7 +21,11 @@ func checkDatabaseIntegrity(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if nodeCount == 0 && operationCount > 0 {
-		return fmt.Errorf("node operation queue has %d rows but the nodes table is empty; restore the correct database or recover missing node rows before startup", operationCount)
+		deleted, err := deleteRows(ctx, db, `DELETE FROM node_operations`)
+		if err != nil {
+			return fmt.Errorf("repair stale node operation queue: %w", err)
+		}
+		log.Printf("database integrity repair: removed %d stale node operation rows because the nodes table is empty", deleted)
 	}
 
 	orphanNodeUsages, err := countRows(ctx, db, `SELECT COUNT(*) FROM node_usages nu LEFT JOIN nodes n ON n.id = nu.node_id WHERE nu.node_id IS NOT NULL AND n.id IS NULL`)
@@ -35,8 +40,15 @@ func checkDatabaseIntegrity(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if orphanNodeUsages > 0 || orphanUserUsages > 0 || orphanOperations > 0 {
-		return fmt.Errorf("node references are inconsistent: node_usages=%d node_user_usages=%d node_operations=%d point to missing nodes", orphanNodeUsages, orphanUserUsages, orphanOperations)
+	if orphanOperations > 0 {
+		deleted, err := deleteRows(ctx, db, `DELETE FROM node_operations WHERE node_id IS NOT NULL AND node_id NOT IN (SELECT id FROM nodes)`)
+		if err != nil {
+			return fmt.Errorf("repair orphan node operations: %w", err)
+		}
+		log.Printf("database integrity repair: removed %d node operation rows that referenced missing nodes", deleted)
+	}
+	if orphanNodeUsages > 0 || orphanUserUsages > 0 {
+		return fmt.Errorf("node references are inconsistent: node_usages=%d node_user_usages=%d point to missing nodes", orphanNodeUsages, orphanUserUsages)
 	}
 
 	checks := []struct {
@@ -67,6 +79,18 @@ func countRows(ctx context.Context, db *sql.DB, query string, args ...any) (int6
 	var count int64
 	if err := db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, err
+	}
+	return count, nil
+}
+
+func deleteRows(ctx context.Context, db *sql.DB, query string, args ...any) (int64, error) {
+	result, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, nil
 	}
 	return count, nil
 }

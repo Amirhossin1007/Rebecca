@@ -30,21 +30,46 @@ func TestDatabaseIntegrityAllowsConsistentNodeData(t *testing.T) {
 	}
 }
 
-func TestDatabaseIntegrityRejectsOperationQueueWithoutNodes(t *testing.T) {
+func TestDatabaseIntegrityRepairsOperationQueueWithoutNodes(t *testing.T) {
 	db := newIntegrityTestDB(t)
 	execIntegritySQL(t, db, `INSERT INTO node_operations (id, node_id) VALUES (1, NULL)`)
 
-	err := checkDatabaseIntegrity(context.Background(), db)
-	if err == nil || !strings.Contains(err.Error(), "nodes table is empty") {
-		t.Fatalf("expected empty nodes guard, got %v", err)
+	if err := checkDatabaseIntegrity(context.Background(), db); err != nil {
+		t.Fatalf("expected stale node operations to be repaired, got %v", err)
+	}
+	count, err := countRows(context.Background(), db, `SELECT COUNT(*) FROM node_operations`)
+	if err != nil {
+		t.Fatalf("count node operations: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected stale node operations to be removed, got %d", count)
 	}
 }
 
-func TestDatabaseIntegrityRejectsOrphanNodeReferences(t *testing.T) {
+func TestDatabaseIntegrityRepairsOrphanNodeOperations(t *testing.T) {
 	db := newIntegrityTestDB(t)
 	execIntegritySQL(t, db,
 		`INSERT INTO nodes (id) VALUES (1)`,
 		`INSERT INTO node_operations (id, node_id) VALUES (1, 99)`,
+	)
+
+	if err := checkDatabaseIntegrity(context.Background(), db); err != nil {
+		t.Fatalf("expected orphan node operations to be repaired, got %v", err)
+	}
+	count, err := countRows(context.Background(), db, `SELECT COUNT(*) FROM node_operations`)
+	if err != nil {
+		t.Fatalf("count node operations: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected orphan node operations to be removed, got %d", count)
+	}
+}
+
+func TestDatabaseIntegrityRejectsOrphanNodeUsage(t *testing.T) {
+	db := newIntegrityTestDB(t)
+	execIntegritySQL(t, db,
+		`INSERT INTO nodes (id) VALUES (1)`,
+		`INSERT INTO node_usages (id, node_id) VALUES (1, 99)`,
 	)
 
 	err := checkDatabaseIntegrity(context.Background(), db)

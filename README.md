@@ -91,13 +91,13 @@ Rebecca is user-friendly, feature-rich and reliable. It lets you create differen
 Install Rebecca master with the binary installer:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh | sudo bash -s -- install
 ```
 
 Install Rebecca-node on each node server with the binary node installer:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh | sudo bash -s -- install
 ```
 
 The binary installers create native systemd services and automatically download the matching Linux release asset for the server architecture. The master installer supports SQLite, MySQL, and MariaDB through its install options; the node installer installs only the node runtime and connects it to the master through the certificate/token flow in the panel.
@@ -148,7 +148,7 @@ Install xray on your machine
 You can install it using [Xray-install](https://github.com/XTLS/Xray-install)
 
 ```bash
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s -- install
 ```
 
 Clone this project and build the dashboard and Go binaries:

@@ -94,13 +94,13 @@ Rebecca удобен в использовании, многофункциона
 Установите Rebecca master через бинарный установщик:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh | sudo bash -s -- install
 ```
 
 Установите Rebecca-node на каждом node-сервере через бинарный установщик node:
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh | sudo bash -s -- install
 ```
 
 Бинарные установщики создают native systemd-сервисы и автоматически скачивают подходящий Linux binary для архитектуры сервера. Master поддерживает SQLite, MySQL и MariaDB через параметры установки; node-установщик устанавливает только runtime ноды и подключается к Master через certificate/token flow из панели.
@@ -146,7 +146,7 @@ rebecca --help
 Вы можете сделать это, используя [Xray-install](https://github.com/XTLS/Xray-install):
 
 ```bash
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s -- install
 ```
 
 Клонируйте проект и соберите dashboard и Go-бинарники:

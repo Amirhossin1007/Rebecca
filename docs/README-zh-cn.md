@@ -92,13 +92,13 @@ Rebecca 是一个用户友好、功能丰富且可靠的工具。它让您可以
 使用二进制安装脚本安装 Rebecca master：
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-binary.sh | sudo bash -s -- install
 ```
 
 在每台 node 服务器上使用二进制 node 安装脚本安装 Rebecca-node：
 
 ```bash
-sudo bash -c "$(curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh)" @ install
+curl -sL https://raw.githubusercontent.com/rebeccapanel/Rebecca/master/scripts/rebecca/rebecca-node-binary.sh | sudo bash -s -- install
 ```
 
 二进制安装脚本会创建 native systemd 服务，并自动下载适合服务器架构的 Linux binary。Master 通过安装参数支持 SQLite、MySQL 和 MariaDB；node 安装脚本只安装 node runtime，并通过面板中的 certificate/token flow 连接到 Master。
@@ -145,7 +145,7 @@ If you are eager to run the project using the source code, check the section bel
 您可以使用 [Xray-install](https://github.com/XTLS/Xray-install) 脚本进行安装：
 
 ```bash
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s -- install
 ```
 
 克隆项目并构建 dashboard 和 Go 二进制文件：
