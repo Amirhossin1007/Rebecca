@@ -56,6 +56,9 @@ func New(cfg Config) (*Server, error) {
 	if err := migrations.RunMigrations(migrationCtx, pool.DB, pool.Dialect); err != nil {
 		return nil, fmt.Errorf("run database migrations: %w", err)
 	}
+	if err := checkDatabaseIntegrity(migrationCtx, pool.DB); err != nil {
+		return nil, fmt.Errorf("database integrity check: %w", err)
+	}
 	adminRepo := adminapp.NewRepository(pool.DB, pool.Dialect)
 	nodeRepo := nodecontroller.NewRepository(pool.DB, pool.Dialect)
 	nodeMutationRepo := nodeapp.NewRepository(pool.DB, pool.Dialect)
