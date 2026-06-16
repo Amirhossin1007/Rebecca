@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	userread "github.com/rebeccapanel/rebecca/internal/app/user"
@@ -33,6 +34,9 @@ func (c Controller) buildRuntimeConfig(ctx context.Context, node NodeRow) (strin
 		return "", err
 	}
 	applyRuntimeAPI(raw, node.APIPort)
+	if err := inlineTLSCertificateFiles(raw); err != nil {
+		return "", err
+	}
 	if err := c.includeDBUsers(ctx, raw); err != nil {
 		return "", err
 	}
@@ -151,6 +155,150 @@ func applyRuntimeAPI(raw map[string]any, apiPort int) {
 		}
 	}
 	routing["rules"] = append([]any{map[string]any{"inboundTag": []any{"API_INBOUND"}, "outboundTag": "API", "type": "field"}}, rules...)
+}
+
+func inlineTLSCertificateFiles(raw map[string]any) error {
+	for _, section := range []string{"inbounds", "outbounds"} {
+		for _, item := range listOfMaps(raw[section]) {
+			if err := inlineStreamTLSCertificateFiles(item); err != nil {
+				tag := stringValue(item["tag"])
+				if tag == "" {
+					tag = "<untagged>"
+				}
+				return fmt.Errorf("%s %s TLS certificate: %w", strings.TrimSuffix(section, "s"), tag, err)
+			}
+		}
+	}
+	return nil
+}
+
+func inlineStreamTLSCertificateFiles(item map[string]any) error {
+	stream := mapValue(item["streamSettings"])
+	if len(stream) == 0 {
+		return nil
+	}
+	tlsSettings := mapValue(stream["tlsSettings"])
+	if len(tlsSettings) == 0 {
+		return nil
+	}
+	certificates, ok := certificateMaps(tlsSettings["certificates"])
+	if !ok || len(certificates) == 0 {
+		return nil
+	}
+	for index, certificate := range certificates {
+		if err := inlineCertificatePair(certificate); err != nil {
+			return fmt.Errorf("certificate[%d]: %w", index, err)
+		}
+	}
+	tlsSettings["certificates"] = mapsToInterfaces(certificates)
+	stream["tlsSettings"] = tlsSettings
+	item["streamSettings"] = stream
+	return nil
+}
+
+func inlineCertificatePair(certificate map[string]any) error {
+	if err := inlineCertificateFile(certificate, "certificate", []string{"certificateFile", "certFile", "certfile"}); err != nil {
+		return err
+	}
+	if err := inlineCertificateFile(certificate, "key", []string{"keyFile", "keyfile"}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func inlineCertificateFile(certificate map[string]any, contentKey string, pathKeys []string) error {
+	if contentLines, ok := certificateContentLines(certificate[contentKey]); ok {
+		certificate[contentKey] = contentLines
+		deleteCertificatePathKeys(certificate, pathKeys)
+		return nil
+	}
+	path := firstCertificatePath(certificate, pathKeys)
+	if path == "" {
+		deleteCertificatePathKeys(certificate, pathKeys)
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s file %q: %w", contentKey, path, err)
+	}
+	lines, ok := certificateContentLines(string(raw))
+	if !ok {
+		return fmt.Errorf("%s file %q is empty", contentKey, path)
+	}
+	certificate[contentKey] = lines
+	deleteCertificatePathKeys(certificate, pathKeys)
+	return nil
+}
+
+func certificateMaps(value any) ([]map[string]any, bool) {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed, true
+	case []any:
+		result := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			mapped, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			result = append(result, mapped)
+		}
+		return result, true
+	case map[string]any:
+		return []map[string]any{typed}, true
+	default:
+		return nil, false
+	}
+}
+
+func certificateContentLines(value any) ([]string, bool) {
+	switch typed := value.(type) {
+	case []string:
+		result := make([]string, 0, len(typed))
+		for _, line := range typed {
+			result = append(result, strings.TrimRight(line, "\r"))
+		}
+		return result, len(strings.TrimSpace(strings.Join(result, "\n"))) > 0
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, strings.TrimRight(stringValue(item), "\r"))
+		}
+		return result, len(strings.TrimSpace(strings.Join(result, "\n"))) > 0
+	case string:
+		normalized := strings.ReplaceAll(typed, "\r\n", "\n")
+		normalized = strings.ReplaceAll(normalized, "\r", "\n")
+		normalized = strings.TrimSpace(normalized)
+		if normalized == "" {
+			return nil, false
+		}
+		return strings.Split(normalized, "\n"), true
+	default:
+		return nil, false
+	}
+}
+
+func firstCertificatePath(certificate map[string]any, pathKeys []string) string {
+	for _, key := range pathKeys {
+		if path := stringValue(certificate[key]); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+func deleteCertificatePathKeys(certificate map[string]any, pathKeys []string) {
+	for _, key := range pathKeys {
+		delete(certificate, key)
+	}
+}
+
+func mapsToInterfaces(items []map[string]any) []any {
+	result := make([]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, item)
+	}
+	return result
 }
 
 func flowSupportedForInbound(inbound map[string]any) bool {
