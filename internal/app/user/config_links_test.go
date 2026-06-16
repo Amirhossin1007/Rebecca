@@ -185,6 +185,139 @@ func TestBuildConfigLinksKeepsRealityPublicKeyForXHTTP(t *testing.T) {
 	}
 }
 
+func TestBuildConfigLinksKeepsRealityMetadataForTCPAndJSON(t *testing.T) {
+	serviceID := int64(1)
+	inbound, err := resolveInbound(map[string]any{
+		"tag":      "Reality TCP",
+		"protocol": "vless",
+		"port":     int64(443),
+		"settings": map[string]any{
+			"decryption": "none",
+		},
+		"streamSettings": map[string]any{
+			"network":  "tcp",
+			"security": "reality",
+			"realitySettings": map[string]any{
+				"settings": map[string]any{
+					"serverName":  "origin.example.com",
+					"publicKey":   "public-key-from-settings",
+					"fingerprint": "firefox",
+					"shortId":     "abcd",
+					"spiderX":     "/spider",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolveInbound error: %v", err)
+	}
+	links, err := BuildConfigLinks(
+		ConfigLinkUser{
+			ID:            11,
+			Username:      "erin",
+			Status:        "active",
+			ServiceID:     &serviceID,
+			CredentialKey: "05bfddf81eb418fa1edbce7cd286eee1",
+			ServiceHostOrders: map[int64]int64{
+				1: 0,
+			},
+		},
+		map[string]ResolvedInbound{"Reality TCP": inbound},
+		[]string{"Reality TCP"},
+		[]Host{{
+			ID:         1,
+			InboundTag: "Reality TCP",
+			Remark:     "reality-tcp",
+			Address:    "edge.example.com",
+			Security:   "inbound_default",
+			ServiceIDs: []int64{1},
+		}},
+		map[string][]byte{},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("BuildConfigLinks error: %v", err)
+	}
+	if len(links.Links) != 1 {
+		t.Fatalf("expected one link, got %#v", links.Links)
+	}
+	parsed, err := url.Parse(links.Links[0])
+	if err != nil {
+		t.Fatalf("parse link: %v", err)
+	}
+	query := parsed.Query()
+	for key, expected := range map[string]string{
+		"security": "reality",
+		"type":     "tcp",
+		"sni":      "origin.example.com",
+		"fp":       "firefox",
+		"pbk":      "public-key-from-settings",
+		"sid":      "abcd",
+		"spx":      "/spider",
+	} {
+		if got := query.Get(key); got != expected {
+			t.Fatalf("expected query %s=%q, got %q link=%s", key, expected, got, links.Links[0])
+		}
+	}
+
+	body, err := renderV2RayJSONSubscription(links.Links, false)
+	if err != nil {
+		t.Fatalf("render v2ray-json: %v", err)
+	}
+	var configs []map[string]any
+	if err := json.Unmarshal([]byte(body), &configs); err != nil {
+		t.Fatalf("invalid v2ray-json: %v\n%s", err, body)
+	}
+	stream := configs[0]["outbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)
+	if stream["security"] != "reality" {
+		t.Fatalf("expected reality stream, got %#v", stream)
+	}
+	reality := stream["realitySettings"].(map[string]any)
+	for key, expected := range map[string]string{
+		"serverName":  "origin.example.com",
+		"fingerprint": "firefox",
+		"publicKey":   "public-key-from-settings",
+		"shortId":     "abcd",
+		"spiderX":     "/spider",
+	} {
+		if got := stringValue(reality[key]); got != expected {
+			t.Fatalf("expected realitySettings %s=%q, got %q settings=%#v", key, expected, got, reality)
+		}
+	}
+}
+
+func TestMergeResolvedInboundMetadataFillsDuplicateRealityTag(t *testing.T) {
+	target := ResolvedInbound{
+		"tag":      "Reality TCP",
+		"protocol": "vless",
+		"network":  "tcp",
+		"tls":      "reality",
+		"sni":      []string{},
+		"sids":     []string{},
+	}
+	source := ResolvedInbound{
+		"tag":      "Reality TCP",
+		"protocol": "vless",
+		"network":  "tcp",
+		"tls":      "reality",
+		"sni":      []string{"origin.example.com"},
+		"pbk":      "public-key-from-node-custom",
+		"sids":     []string{"abcd"},
+		"sid":      "abcd",
+		"fp":       "chrome",
+	}
+	mergeResolvedInboundMetadata(target, source)
+	if got := stringValue(target["pbk"]); got != "public-key-from-node-custom" {
+		t.Fatalf("expected merged pbk, got %#v", target)
+	}
+	if got := firstStringList(target["sids"]); got != "abcd" {
+		t.Fatalf("expected merged short id, got %#v", target)
+	}
+	if got := firstStringList(target["sni"]); got != "origin.example.com" {
+		t.Fatalf("expected merged sni, got %#v", target)
+	}
+}
+
 func TestResolveInboundDerivesRealityPublicKeyForSubscriptionLinks(t *testing.T) {
 	inbound, err := resolveInbound(map[string]any{
 		"tag":      "Reality TCP",

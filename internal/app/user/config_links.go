@@ -322,8 +322,51 @@ func effectiveInboundForHost(username string, variables map[string]string, inbou
 	effective["sni"] = sni
 	effective["host"] = requestHost
 	effective["path"] = path
-	effective["sid"] = firstStringList(inbound["sids"])
+	if pbk := firstNonEmptyString(inbound["pbk"], inbound["publicKey"], inbound["public_key"]); pbk != "" {
+		effective["pbk"] = pbk
+	}
+	effective["sid"] = firstNonEmptyString(firstStringList(inbound["sids"]), inbound["sid"], firstStringList(inbound["shortIds"]), inbound["shortId"])
 	return remark, address, effective, true
+}
+
+func mergeResolvedInboundMetadata(target ResolvedInbound, source ResolvedInbound) {
+	if target == nil || source == nil {
+		return
+	}
+	for _, key := range []string{
+		"tls", "sni", "host", "path", "header_type", "fp", "alpn", "ais", "allowinsecure",
+		"pbk", "publicKey", "public_key", "sids", "sid", "shortIds", "shortId", "spx",
+		"fragment_setting", "noise_setting",
+		"scMaxBufferedPosts", "scMaxEachPostBytes", "scMaxConcurrentPosts", "scMinPostsIntervalMs",
+		"scStreamUpServerSecs", "xPaddingBytes", "noSSEHeader", "noGRPCHeader", "keepAlivePeriod", "xmux", "mode",
+	} {
+		if !inboundValueEmpty(target[key]) {
+			continue
+		}
+		if inboundValueEmpty(source[key]) {
+			continue
+		}
+		target[key] = source[key]
+	}
+	if stringValue(target["tls"]) == "none" && stringValue(source["tls"]) != "" && stringValue(source["tls"]) != "none" {
+		target["tls"] = source["tls"]
+	}
+}
+
+func inboundValueEmpty(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		cleaned := strings.TrimSpace(typed)
+		return cleaned == "" || cleaned == "none"
+	case []string:
+		return len(typed) == 0
+	case []any:
+		return len(typed) == 0
+	default:
+		return false
+	}
 }
 
 func copyInbound(inbound ResolvedInbound) ResolvedInbound {
@@ -974,15 +1017,17 @@ func resolveInbound(inbound map[string]any) (ResolvedInbound, error) {
 
 	if security == "tls" {
 		tlsSettings := mapValue(stream["tlsSettings"])
-		resolved["sni"] = nonEmptyStrings(firstNonEmptyString(tlsSettings["serverName"], tlsSettings["sni"]))
-		if fp := stringValue(tlsSettings["fingerprint"]); fp != "" {
+		tlsMeta := mapValue(tlsSettings["settings"])
+		resolved["sni"] = nonEmptyStrings(firstNonEmptyString(tlsSettings["serverName"], tlsSettings["sni"], tlsMeta["serverName"], tlsMeta["sni"]))
+		if fp := firstNonEmptyString(tlsMeta["fingerprint"], tlsSettings["fingerprint"]); fp != "" {
 			resolved["fp"] = fp
 		}
-		if alpn := joinStringList(tlsSettings["alpn"]); alpn != "" {
+		if alpn := firstNonEmptyString(joinStringList(tlsSettings["alpn"]), joinStringList(tlsMeta["alpn"])); alpn != "" {
 			resolved["alpn"] = alpn
 		}
-		if value, ok := tlsSettings["allowInsecure"]; ok {
+		if value, ok := firstPresent(tlsMeta, tlsSettings, "allowInsecure"); ok {
 			resolved["ais"] = value
+			resolved["allowinsecure"] = boolValue(value)
 		}
 	}
 	if security == "reality" {
@@ -991,17 +1036,30 @@ func resolveInbound(inbound map[string]any) (ResolvedInbound, error) {
 		resolved["fp"] = firstNonEmptyString(realityMeta["fingerprint"], realitySettings["fingerprint"], "chrome")
 		sni := stringList(realitySettings["serverNames"])
 		if len(sni) == 0 {
-			sni = nonEmptyStrings(firstNonEmptyString(realityMeta["serverName"], realitySettings["serverName"]))
+			sni = nonEmptyStrings(firstNonEmptyString(realityMeta["serverName"], realitySettings["serverName"], realityMeta["sni"], realitySettings["sni"]))
 		}
 		resolved["sni"] = sni
-		pbk := firstNonEmptyString(realityMeta["publicKey"], realitySettings["publicKey"])
+		pbk := firstNonEmptyString(realityMeta["publicKey"], realitySettings["publicKey"], realityMeta["public_key"], realitySettings["public_key"])
 		if pbk == "" {
-			if derived, err := xrayconfig.DeriveRealityPublicKey(stringValue(realitySettings["privateKey"])); err == nil {
+			if derived, err := xrayconfig.DeriveRealityPublicKey(firstNonEmptyString(realitySettings["privateKey"], realityMeta["privateKey"])); err == nil {
 				pbk = derived
 			}
 		}
 		resolved["pbk"] = pbk
-		resolved["sids"] = stringList(realitySettings["shortIds"])
+		sids := stringList(realitySettings["shortIds"])
+		if len(sids) == 0 {
+			sids = stringList(realitySettings["shortId"])
+		}
+		if len(sids) == 0 {
+			sids = stringList(realityMeta["shortIds"])
+		}
+		if len(sids) == 0 {
+			sids = stringList(realityMeta["shortId"])
+		}
+		resolved["sids"] = sids
+		if len(sids) > 0 {
+			resolved["sid"] = sids[0]
+		}
 		resolved["spx"] = firstNonEmptyString(realityMeta["spiderX"], realitySettings["SpiderX"], realitySettings["spiderX"])
 	}
 
@@ -1250,6 +1308,20 @@ func firstNonEmptyString(values ...any) string {
 		}
 	}
 	return ""
+}
+
+func firstPresent(primary map[string]any, secondary map[string]any, key string) (any, bool) {
+	if primary != nil {
+		if value, ok := primary[key]; ok {
+			return value, true
+		}
+	}
+	if secondary != nil {
+		if value, ok := secondary[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func stringValue(value any) string {

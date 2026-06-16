@@ -277,12 +277,13 @@ func (r Repository) ResolvedInboundsByTag(ctx context.Context) (map[string]Resol
 			if _, skip := excluded[tag]; skip {
 				continue
 			}
-			if _, exists := result[tag]; exists {
-				continue
-			}
 			resolved, err := resolveInbound(inbound)
 			if err != nil {
 				return nil, nil, err
+			}
+			if existing, exists := result[tag]; exists {
+				mergeResolvedInboundMetadata(existing, resolved)
+				continue
 			}
 			result[tag] = resolved
 			order = append(order, tag)

@@ -280,16 +280,20 @@ func (c *Config) resolveInbound(inbound map[string]any) (ResolvedInbound, error)
 		if alpn := joinStringList(securitySettings["alpn"]); alpn != "" {
 			resolved["alpn"] = alpn
 		}
-		if sni := firstNonEmptyString(securitySettings["serverName"], securitySettings["sni"]); sni != "" {
+		if sni := firstNonEmptyString(securitySettings["serverName"], securitySettings["sni"], securityMeta["serverName"], securityMeta["sni"]); sni != "" {
 			resolved["sni"] = []string{sni}
 		}
 	case "reality":
 		resolved["tls"] = "reality"
 		resolved["fp"] = firstNonEmptyString(securityMeta["fingerprint"], securitySettings["fingerprint"], "chrome")
-		resolved["sni"] = stringList(securitySettings["serverNames"])
-		pbk := firstNonEmptyString(securityMeta["publicKey"], securitySettings["publicKey"])
+		sni := stringList(securitySettings["serverNames"])
+		if len(sni) == 0 {
+			sni = nonEmptyStrings(firstNonEmptyString(securityMeta["serverName"], securitySettings["serverName"], securityMeta["sni"], securitySettings["sni"]))
+		}
+		resolved["sni"] = sni
+		pbk := firstNonEmptyString(securityMeta["publicKey"], securitySettings["publicKey"], securityMeta["public_key"], securitySettings["public_key"])
 		if pbk == "" {
-			privateKey := stringValue(securitySettings["privateKey"])
+			privateKey := firstNonEmptyString(securitySettings["privateKey"], securityMeta["privateKey"])
 			if privateKey == "" {
 				return nil, fmt.Errorf("You need to provide privateKey in realitySettings of %s", tag)
 			}
@@ -300,7 +304,20 @@ func (c *Config) resolveInbound(inbound map[string]any) (ResolvedInbound, error)
 			pbk = derived
 		}
 		resolved["pbk"] = pbk
-		resolved["sids"] = stringList(securitySettings["shortIds"])
+		sids := stringList(securitySettings["shortIds"])
+		if len(sids) == 0 {
+			sids = stringList(securitySettings["shortId"])
+		}
+		if len(sids) == 0 {
+			sids = stringList(securityMeta["shortIds"])
+		}
+		if len(sids) == 0 {
+			sids = stringList(securityMeta["shortId"])
+		}
+		resolved["sids"] = sids
+		if len(sids) > 0 {
+			resolved["sid"] = sids[0]
+		}
 		resolved["spx"] = firstNonEmptyString(securityMeta["spiderX"], securitySettings["SpiderX"], securitySettings["spiderX"])
 	}
 

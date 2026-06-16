@@ -223,6 +223,43 @@ func TestRealityInboundDerivesPublicKey(t *testing.T) {
 	}
 }
 
+func TestRealityInboundAcceptsSettingsShortID(t *testing.T) {
+	cfg := testConfig()
+	cfg["inbounds"] = []any{
+		map[string]any{
+			"tag":      "reality",
+			"port":     443,
+			"protocol": "vless",
+			"streamSettings": map[string]any{
+				"network":  "tcp",
+				"security": "reality",
+				"realitySettings": map[string]any{
+					"privateKey": strings.Repeat("02", 32),
+					"settings": map[string]any{
+						"serverName": "example.com",
+						"shortId":    "abcd",
+						"spiderX":    "/spider",
+					},
+				},
+			},
+		},
+	}
+	parsed, err := Parse(cfg, Options{})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	inbound := parsed.InboundsByTag()["reality"]
+	if got := firstStringList(inbound["sids"]); got != "abcd" {
+		t.Fatalf("expected shortId compatibility, got %#v", inbound)
+	}
+	if got := firstStringList(inbound["sni"]); got != "example.com" {
+		t.Fatalf("expected settings serverName compatibility, got %#v", inbound)
+	}
+	if got := stringValue(inbound["spx"]); got != "/spider" {
+		t.Fatalf("expected spiderX compatibility, got %#v", inbound)
+	}
+}
+
 func hasAPIInbound(payload map[string]any) bool {
 	for _, inbound := range payload["inbounds"].([]any) {
 		if inbound.(map[string]any)["tag"] == "API_INBOUND" {
