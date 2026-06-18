@@ -13,6 +13,7 @@ import (
 	"time"
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 	"github.com/rebeccapanel/rebecca/internal/app/usage"
 	userapp "github.com/rebeccapanel/rebecca/internal/app/user"
 )
@@ -246,12 +247,12 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// TODO: emit user creation report through the Go Telegram notifier.
 	result, err := s.userService.CreateUser(r.Context(), principal.Context.Admin, raw)
 	if err != nil {
 		writeUserMutationError(w, err)
 		return
 	}
+	s.telegramReports.UserCreated(r.Context(), userReportForTelegram(result, principal.Context.Admin.Username, principal.Context.Admin.Username, raw))
 	s.writeUserMutationDetail(w, r, principal, result.Username, http.StatusCreated)
 }
 
@@ -266,11 +267,15 @@ func (s *Server) handleUserUpdate(w http.ResponseWriter, r *http.Request, userna
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// TODO: emit user update report through the Go Telegram notifier.
 	result, err := s.userService.UpdateUser(r.Context(), principal.Context.Admin, username, raw)
 	if err != nil {
 		writeUserMutationError(w, err)
 		return
+	}
+	report := userReportForTelegram(result, principal.Context.Admin.Username, principal.Context.Admin.Username, raw)
+	s.telegramReports.UserUpdated(r.Context(), report)
+	if rawJSONHasField(raw, "status") && strings.TrimSpace(result.Status) != "" {
+		s.telegramReports.UserStatusChanged(r.Context(), report)
 	}
 	s.writeUserMutationDetail(w, r, principal, result.Username, http.StatusOK)
 }
@@ -281,12 +286,17 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request, userna
 		writeError(w, http.StatusUnauthorized, "missing admin context")
 		return
 	}
-	// TODO: emit user deletion report through the Go Telegram notifier.
 	result, err := s.userService.DeleteUser(r.Context(), principal.Context.Admin, username)
 	if err != nil {
 		writeUserMutationError(w, err)
 		return
 	}
+	s.telegramReports.UserDeleted(r.Context(), telegramapp.UserReport{
+		Username: result.Username,
+		Owner:    principal.Context.Admin.Username,
+		Actor:    principal.Context.Admin.Username,
+		Status:   result.Status,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username": result.Username,
 		"status":   result.Status,
@@ -309,13 +319,10 @@ func (s *Server) handleUserMutationAction(w http.ResponseWriter, r *http.Request
 	)
 	switch suffix {
 	case "reset":
-		// TODO: emit user reset report through the Go Telegram notifier.
 		result, err = s.userService.ResetUser(r.Context(), principal.Context.Admin, username)
 	case "revoke_sub":
-		// TODO: emit user revoke report through the Go Telegram notifier.
 		result, err = s.userService.RevokeUserSubscription(r.Context(), principal.Context.Admin, username)
 	case "active-next":
-		// TODO: emit next-plan activation report through the Go Telegram notifier.
 		result, err = s.userService.ActiveNextPlan(r.Context(), principal.Context.Admin, username)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
@@ -324,6 +331,20 @@ func (s *Server) handleUserMutationAction(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeUserMutationError(w, err)
 		return
+	}
+	report := telegramapp.UserReport{
+		Username: result.Username,
+		Owner:    principal.Context.Admin.Username,
+		Actor:    principal.Context.Admin.Username,
+		Status:   result.Status,
+	}
+	switch suffix {
+	case "reset":
+		s.telegramReports.UserUsageReset(r.Context(), report)
+	case "revoke_sub":
+		s.telegramReports.UserSubscriptionRevoked(r.Context(), report)
+	case "active-next":
+		s.telegramReports.UserNextPlanApplied(r.Context(), report)
 	}
 	s.writeUserMutationDetail(w, r, principal, result.Username, http.StatusOK)
 }

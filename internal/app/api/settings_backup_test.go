@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
 	backupapp "github.com/rebeccapanel/rebecca/internal/app/backup"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 )
 
 func TestBackupExportRequiresBinaryRuntime(t *testing.T) {
@@ -95,6 +97,57 @@ func TestBackupImportRoute(t *testing.T) {
 	}
 	if name != "after" {
 		t.Fatalf("unexpected restored row: %s", name)
+	}
+}
+
+func TestTelegramManualBackupSendRoute(t *testing.T) {
+	t.Setenv("REBECCA_INSTALL_MODE", "binary")
+	server, db := testAdminServer(t)
+	createSettingsTables(t, db)
+	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
+	if _, err := db.Exec(`CREATE TABLE backup_items (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO backup_items (name) VALUES ('alpha')`); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/sendDocument") {
+			t.Fatalf("unexpected Telegram API path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer api.Close()
+	server.telegramRepo = telegramapp.NewRepository(db, "sqlite")
+	server.telegramSender = telegramapp.NewSender(server.telegramRepo, api.URL)
+	server.telegramBackup = telegramapp.NewBackupDelivery(server.telegramRepo, server.telegramSender)
+	if _, err := db.Exec(`INSERT INTO telegram_settings (id, api_token, use_telegram, admin_chat_ids, backup_enabled, backup_scope, backup_interval_value, backup_interval_unit) VALUES (1, 'token', 1, '[111]', 1, 'database', 24, 'hours')`); err != nil {
+		t.Fatal(err)
+	}
+	token := adminBearerToken(t, server, "pouria", "pass123")
+
+	rec := adminJSONRequest(t, server, http.MethodPost, "/api/settings/telegram/backup/send", token, `{"scope":"database"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manual telegram backup status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result telegramapp.BackupDeliveryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Scope != backupapp.ScopeDatabase || len(result.Results) == 0 {
+		t.Fatalf("unexpected delivery result: %#v", result)
+	}
+}
+
+func TestTelegramManualBackupRequiresBinaryRuntime(t *testing.T) {
+	t.Setenv("REBECCA_INSTALL_MODE", "docker")
+	server, db := testAdminServer(t)
+	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
+	token := adminBearerToken(t, server, "pouria", "pass123")
+
+	rec := adminJSONRequest(t, server, http.MethodPost, "/api/settings/telegram/backup/send", token, `{"scope":"database"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected conflict, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), backupapp.DisabledDetail) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 }
 

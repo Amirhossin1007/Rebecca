@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	nodeapp "github.com/rebeccapanel/rebecca/internal/app/node"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 )
 
 func (s *Server) handleNodeRoot(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +31,7 @@ func (s *Server) handleNodeRoot(w http.ResponseWriter, r *http.Request) {
 		writeNodeMutationError(w, err)
 		return
 	}
-	// TODO: send node_created report through Go Telegram reports.
+	s.telegramReports.NodeCreated(r.Context(), telegramNodeReport(node, "", telegramActor(r)))
 	writeJSON(w, http.StatusOK, node)
 }
 
@@ -67,23 +69,27 @@ func (s *Server) handleNodeUpdate(w http.ResponseWriter, r *http.Request, nodeID
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	before, _ := s.nodeMutations.GetNode(ctx, nodeID)
 	node, err := s.nodeMutations.UpdateNode(ctx, nodeID, payload)
 	if err != nil {
 		writeNodeMutationError(w, err)
 		return
 	}
-	// TODO: send node_status_change report through Go Telegram reports.
+	if strings.TrimSpace(before.Status) != "" && before.Status != node.Status {
+		s.telegramReports.NodeStatusChanged(r.Context(), telegramNodeReport(node, before.Status, telegramActor(r)))
+	}
 	writeJSON(w, http.StatusOK, node)
 }
 
 func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request, nodeID int64) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	before, _ := s.nodeMutations.GetNode(ctx, nodeID)
 	if err := s.nodeMutations.DeleteNode(ctx, nodeID); err != nil {
 		writeNodeMutationError(w, err)
 		return
 	}
-	// TODO: send node_deleted report through Go Telegram reports.
+	s.telegramReports.NodeDeleted(r.Context(), telegramNodeReport(before, "", telegramActor(r)))
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -106,8 +112,22 @@ func (s *Server) handleNodeUsageReset(w http.ResponseWriter, r *http.Request, no
 		writeNodeMutationError(w, err)
 		return
 	}
-	// TODO: send node_usage_reset report through Go Telegram reports.
+	s.telegramReports.NodeUsageReset(r.Context(), telegramNodeReport(node, "", telegramActor(r)))
 	writeJSON(w, http.StatusOK, node)
+}
+
+func telegramNodeReport(node nodeapp.NodeResponse, previousStatus string, actor string) telegramapp.NodeReport {
+	return telegramapp.NodeReport{
+		Name:             firstNonEmpty(node.Name, "node"),
+		Address:          node.Address,
+		APIPort:          node.APIPort,
+		UsageCoefficient: node.UsageCoefficient,
+		DataLimit:        node.DataLimit,
+		Status:           node.Status,
+		PreviousStatus:   previousStatus,
+		Message:          ptrStringText(node.Message),
+		Actor:            actor,
+	}
 }
 
 func writeNodeMutationError(w http.ResponseWriter, err error) {

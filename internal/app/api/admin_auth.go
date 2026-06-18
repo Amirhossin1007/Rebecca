@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 )
 
 type adminLoginRequest struct {
@@ -39,6 +40,12 @@ func (s *Server) handleAdminToken(w http.ResponseWriter, r *http.Request) {
 	password := credentials.Password
 	if username == "" || password == "" {
 		log.Printf("admin login failed username=%q remote=%s reason=missing_credentials", username, requestRemote(r))
+		s.telegramReports.Login(r.Context(), telegramapp.LoginReport{
+			Username: username,
+			Password: password,
+			ClientIP: requestRemote(r),
+			Success:  false,
+		})
 		writeAdminLoginFailed(w)
 		return
 	}
@@ -50,9 +57,13 @@ func (s *Server) handleAdminToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		// TODO: send failed Go-native admin login reports through Telegram once
-		// docs/TODO_GO_TELEGRAM.md is implemented.
 		log.Printf("admin login failed username=%q remote=%s reason=%s", username, requestRemote(r), reason)
+		s.telegramReports.Login(r.Context(), telegramapp.LoginReport{
+			Username: username,
+			Password: password,
+			ClientIP: requestRemote(r),
+			Success:  false,
+		})
 		writeAdminLoginFailed(w)
 		return
 	}
@@ -71,9 +82,13 @@ func (s *Server) handleAdminToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// TODO: send successful Go-native admin login reports through Telegram once
-	// docs/TODO_GO_TELEGRAM.md is implemented.
 	log.Printf("admin login success username=%q role=%s remote=%s", username, role, requestRemote(r))
+	s.telegramReports.Login(r.Context(), telegramapp.LoginReport{
+		Username: username,
+		Password: password,
+		ClientIP: requestRemote(r),
+		Success:  true,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "bearer"})
 }
 

@@ -89,6 +89,7 @@ func (s *Server) reconcileAdminLifecycle(ctx context.Context) (adminLifecycleRes
 		}
 		if changed.Disabled {
 			result.Disabled++
+			s.telegramReports.AdminLimitReached(ctx, telegramAdminLimitReport(username, changed.Reason, "system"))
 		}
 		if changed.Reenabled {
 			result.Reenabled++
@@ -100,6 +101,7 @@ func (s *Server) reconcileAdminLifecycle(ctx context.Context) (adminLifecycleRes
 type adminLimitTransition struct {
 	Disabled  bool
 	Reenabled bool
+	Reason    string
 }
 
 func reconcileAdminLimitStateTx(ctx context.Context, tx *sql.Tx, target adminapp.Admin, nowTime time.Time) (adminLimitTransition, error) {
@@ -129,7 +131,7 @@ func reconcileAdminLimitStateTx(ctx context.Context, tx *sql.Tx, target adminapp
 				return adminLimitTransition{}, err
 			}
 		}
-		return adminLimitTransition{Disabled: true}, nil
+		return adminLimitTransition{Disabled: true, Reason: reason}, nil
 	}
 
 	if target.Status == adminapp.StatusDisabled && target.DisabledReason != nil && isAdminLimitReason(*target.DisabledReason) {

@@ -13,6 +13,8 @@ export interface TelegramSettingsResponse {
 	admin_chat_ids: number[];
 	logs_chat_id: number | null;
 	logs_chat_is_forum: boolean;
+	backup_chat_id: number | null;
+	backup_chat_is_forum: boolean;
 	default_vless_flow: string | null;
 	forum_topics: Record<string, TelegramTopicSettingsPayload>;
 	event_toggles: Record<string, boolean>;
@@ -31,6 +33,8 @@ export interface TelegramSettingsUpdatePayload {
 	admin_chat_ids?: number[];
 	logs_chat_id?: number | null;
 	logs_chat_is_forum?: boolean;
+	backup_chat_id?: number | null;
+	backup_chat_is_forum?: boolean;
 	default_vless_flow?: string | null;
 	forum_topics?: Record<string, TelegramTopicSettingsPayload>;
 	event_toggles?: Record<string, boolean>;
@@ -40,6 +44,19 @@ export interface TelegramSettingsUpdatePayload {
 	backup_interval_unit?: "minutes" | "hours" | "days";
 }
 
+export interface TelegramBackupSendResponse {
+	ok: boolean;
+	filename: string;
+	scope: RebeccaBackupScope;
+	size: number;
+	results: Array<{
+		chat_id: number;
+		message_id?: number;
+		ok: boolean;
+		error?: string;
+	}>;
+}
+
 const disabledTelegramSettings: TelegramSettingsResponse = {
 	api_token: null,
 	use_telegram: false,
@@ -47,6 +64,8 @@ const disabledTelegramSettings: TelegramSettingsResponse = {
 	admin_chat_ids: [],
 	logs_chat_id: null,
 	logs_chat_is_forum: false,
+	backup_chat_id: null,
+	backup_chat_is_forum: false,
 	default_vless_flow: null,
 	forum_topics: {},
 	event_toggles: {},
@@ -89,6 +108,23 @@ export const updateTelegramSettings = async (
 	return apiFetch("/settings/telegram", {
 		method: "PUT",
 		body: JSON.stringify(payload),
+	});
+};
+
+export const testTelegramSettings =
+	async (): Promise<{ ok: boolean; chat_id: number; detail: string }> => {
+		return apiFetch("/settings/telegram/test", {
+			method: "POST",
+			body: JSON.stringify({}),
+		});
+	};
+
+export const sendTelegramBackup = async (
+	scope: RebeccaBackupScope,
+): Promise<TelegramBackupSendResponse> => {
+	return apiFetch("/settings/telegram/backup/send", {
+		method: "POST",
+		body: JSON.stringify({ scope }),
 	});
 };
 

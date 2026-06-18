@@ -43,10 +43,6 @@ func NewServer(cfg Config) (*Server, error) {
 			http.Error(w, deprecatedRuntimeRouteDetail(r), http.StatusGone)
 			return
 		}
-		if isDeprecatedTelegramSettingsRoute(r) {
-			http.Error(w, "Telegram integration is temporarily disabled and tracked in TODO_GO_TELEGRAM.md.", http.StatusGone)
-			return
-		}
 		if isDeprecatedMasterNodeRoute(r) {
 			http.Error(w, "master node usage/runtime routes have been removed", http.StatusGone)
 			return
@@ -88,11 +84,6 @@ func deprecatedRuntimeRouteDetail(r *http.Request) string {
 		return "Master runtime is node-only; update nodes instead."
 	}
 	return "Access Insights is temporarily disabled while it is rebuilt as a Go-native feature."
-}
-
-func isDeprecatedTelegramSettingsRoute(r *http.Request) bool {
-	path := strings.TrimRight(r.URL.Path, "/")
-	return path == "/api/settings/telegram"
 }
 
 func isDeprecatedMasterNodeRoute(r *http.Request) bool {

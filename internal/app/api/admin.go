@@ -17,6 +17,7 @@ import (
 	"time"
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 )
 
 const (
@@ -219,6 +220,13 @@ func (s *Server) handleCreateAdmin(w http.ResponseWriter, r *http.Request) {
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminCreated(r.Context(), telegramapp.AdminReport{
+		Username:   created.Username,
+		Actor:      telegramActor(r),
+		Role:       string(created.Role),
+		UsersLimit: created.UsersLimit,
+		DataLimit:  created.DataLimit,
+	})
 	writeJSON(w, http.StatusOK, adminResponse(created))
 }
 
@@ -289,12 +297,15 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request, usern
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var previous adminapp.Admin
 	var updated adminapp.Admin
+	var limitTransition adminLimitTransition
 	err = s.withTx(r.Context(), func(tx *sql.Tx) error {
 		target, err := adminByUsernameTx(r.Context(), tx, username)
 		if err != nil {
 			return err
 		}
+		previous = target
 		isSelf := strings.EqualFold(principal.Context.Admin.Username, target.Username)
 		if !isSelf {
 			if err := ensureCanManageAdmin(principal.Context.Admin, target); err != nil {
@@ -423,7 +434,8 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request, usern
 		if err != nil {
 			return err
 		}
-		if _, err := reconcileAdminLimitStateTx(r.Context(), tx, updated, time.Now().UTC()); err != nil {
+		limitTransition, err = reconcileAdminLimitStateTx(r.Context(), tx, updated, time.Now().UTC())
+		if err != nil {
 			return err
 		}
 		updated, err = adminByUsernameTx(r.Context(), tx, target.Username)
@@ -433,16 +445,27 @@ func (s *Server) handleUpdateAdmin(w http.ResponseWriter, r *http.Request, usern
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminUpdated(r.Context(), telegramapp.AdminReport{
+		Username: updated.Username,
+		Actor:    telegramActor(r),
+		Role:     string(updated.Role),
+		Changes:  adminTelegramChanges(previous, updated),
+	})
+	if limitTransition.Disabled {
+		s.telegramReports.AdminLimitReached(r.Context(), telegramAdminLimitReport(updated.Username, limitTransition.Reason, telegramActor(r)))
+	}
 	writeJSON(w, http.StatusOK, adminResponse(updated))
 }
 
 func (s *Server) handleDeleteAdmin(w http.ResponseWriter, r *http.Request, username string) {
 	principal, _ := r.Context().Value(adminContextKey).(adminPrincipal)
+	deletedUsername := username
 	err := s.withTx(r.Context(), func(tx *sql.Tx) error {
 		target, err := adminByUsernameTx(r.Context(), tx, username)
 		if err != nil {
 			return err
 		}
+		deletedUsername = target.Username
 		if err := ensureCanManageAdmin(principal.Context.Admin, target); err != nil {
 			return err
 		}
@@ -479,6 +502,10 @@ func (s *Server) handleDeleteAdmin(w http.ResponseWriter, r *http.Request, usern
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminDeleted(r.Context(), telegramapp.AdminReport{
+		Username: deletedUsername,
+		Actor:    telegramActor(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "Admin removed successfully"})
 }
 
@@ -525,6 +552,11 @@ func (s *Server) handleDisableAdmin(w http.ResponseWriter, r *http.Request, user
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminUpdated(r.Context(), telegramapp.AdminReport{
+		Username: updated.Username,
+		Actor:    telegramActor(r),
+		Changes:  []string{"<b>Status:</b> <code>disabled</code>"},
+	})
 	writeJSON(w, http.StatusOK, adminResponse(updated))
 }
 
@@ -593,6 +625,11 @@ func (s *Server) handleEnableAdmin(w http.ResponseWriter, r *http.Request, usern
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminUpdated(r.Context(), telegramapp.AdminReport{
+		Username: updated.Username,
+		Actor:    telegramActor(r),
+		Changes:  []string{"<b>Status:</b> <code>active</code>"},
+	})
 	writeJSON(w, http.StatusOK, adminResponse(updated))
 }
 
@@ -718,6 +755,10 @@ func (s *Server) handleAdminUsageResetPath(w http.ResponseWriter, r *http.Reques
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminUsageReset(r.Context(), telegramapp.AdminReport{
+		Username: updated.Username,
+		Actor:    telegramActor(r),
+	})
 	writeJSON(w, http.StatusOK, adminResponse(updated))
 }
 
@@ -754,6 +795,10 @@ func (s *Server) handleDeletedUsersUsageReset(w http.ResponseWriter, r *http.Req
 		writeStatusError(w, err)
 		return
 	}
+	s.telegramReports.AdminUsageReset(r.Context(), telegramapp.AdminReport{
+		Username: updated.Username,
+		Actor:    telegramActor(r),
+	})
 	writeJSON(w, http.StatusOK, adminResponse(updated))
 }
 

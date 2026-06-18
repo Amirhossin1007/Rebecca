@@ -68,6 +68,8 @@ import {
 	issueSubscriptionCertificate,
 	type PanelSettingsResponse,
 	renewSubscriptionCertificate,
+	sendTelegramBackup,
+	testTelegramSettings,
 	type SubscriptionSettingsBundle,
 	type SubscriptionTemplateContentResponse,
 	type SubscriptionTemplateSettings,
@@ -447,6 +449,8 @@ type FormValues = {
 	admin_chat_ids: string;
 	logs_chat_id: string;
 	logs_chat_is_forum: boolean;
+	backup_chat_id: string;
+	backup_chat_is_forum: boolean;
 	default_vless_flow: string;
 	forum_topics: Record<string, TopicFormValue>;
 	event_toggles: Record<string, boolean>;
@@ -493,6 +497,9 @@ const buildDefaultValues = (settings: TelegramSettingsResponse): FormValues => {
 		logs_chat_id:
 			settings.logs_chat_id != null ? String(settings.logs_chat_id) : "",
 		logs_chat_is_forum: settings.logs_chat_is_forum,
+		backup_chat_id:
+			settings.backup_chat_id != null ? String(settings.backup_chat_id) : "",
+		backup_chat_is_forum: settings.backup_chat_is_forum,
 		default_vless_flow: settings.default_vless_flow ?? "",
 		forum_topics: topics,
 		event_toggles: toggles,
@@ -914,6 +921,8 @@ export const IntegrationSettingsPage = () => {
 				admin_chat_ids: [],
 				logs_chat_id: null,
 				logs_chat_is_forum: false,
+				backup_chat_id: null,
+				backup_chat_is_forum: false,
 				default_vless_flow: null,
 				forum_topics: {},
 				event_toggles: {},
@@ -1039,6 +1048,43 @@ export const IntegrationSettingsPage = () => {
 				title: t("errors.generic"),
 				status: "error",
 			});
+		},
+	});
+
+	const telegramBackupMutation = useMutation(sendTelegramBackup, {
+		onSuccess: (result) => {
+			queryClient.invalidateQueries("telegram-settings");
+			toast({
+				title: t(
+					"settings.telegram.backupSendSuccess",
+					"Backup sent to Telegram.",
+				),
+				description: result.filename,
+				status: "success",
+				duration: 4000,
+			});
+		},
+		onError: (error) => {
+			generateErrorMessage(error, toast);
+		},
+	});
+
+	const telegramTestMutation = useMutation(testTelegramSettings, {
+		onSuccess: (result) => {
+			queryClient.invalidateQueries("telegram-settings");
+			toast({
+				title: t(
+					"settings.telegram.testMessageSuccess",
+					"Telegram test message sent.",
+				),
+				description: result.detail,
+				status: "success",
+				duration: 4000,
+			});
+		},
+		onError: (error) => {
+			generateErrorMessage(error, toast);
+			queryClient.invalidateQueries("telegram-settings");
 		},
 	});
 
@@ -1225,6 +1271,10 @@ export const IntegrationSettingsPage = () => {
 				? Number(values.logs_chat_id.trim())
 				: null,
 			logs_chat_is_forum: values.logs_chat_is_forum,
+			backup_chat_id: values.backup_chat_id.trim()
+				? Number(values.backup_chat_id.trim())
+				: null,
+			backup_chat_is_forum: values.backup_chat_is_forum,
 			default_vless_flow: values.default_vless_flow.trim() || null,
 			forum_topics: Object.fromEntries(
 				Object.entries(values.forum_topics || {}).map(([key, topic]) => [
@@ -1445,6 +1495,7 @@ export const IntegrationSettingsPage = () => {
 	const forumTopics = watchTelegram("forum_topics");
 	const isTelegramEnabled = watchTelegram("use_telegram");
 	const isTelegramBackupEnabled = watchTelegram("backup_enabled");
+	const telegramBackupScope = watchTelegram("backup_scope");
 	const telegramDisabledMessage = t("settings.telegram.disabledOverlay");
 	const telegramBackupDisabledMessage = t(
 		"settings.telegram.backupBinaryOnly",
@@ -2063,6 +2114,20 @@ export const IntegrationSettingsPage = () => {
 													/>
 												</FormControl>
 											</SimpleGrid>
+											<Flex justify="flex-end" mt={4}>
+												<Button
+													size="sm"
+													variant="outline"
+													leftIcon={<SaveIcon />}
+													isLoading={telegramTestMutation.isLoading}
+													onClick={() => telegramTestMutation.mutate()}
+												>
+													{t(
+														"settings.telegram.testMessage",
+														"Send test message",
+													)}
+												</Button>
+											</Flex>
 										</Box>
 									</DisabledCard>
 
@@ -2116,6 +2181,43 @@ export const IntegrationSettingsPage = () => {
 											<SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
 												<FormControl>
 													<FormLabel>
+														{t(
+															"settings.telegram.backupChatId",
+															"Backup chat ID",
+														)}
+													</FormLabel>
+													<Input
+														placeholder="-100123456789"
+														{...register("backup_chat_id")}
+													/>
+													<FormHelperText>
+														{t(
+															"settings.telegram.backupChatIdHint",
+															"Leave empty to use the log chat or admin chats.",
+														)}
+													</FormHelperText>
+												</FormControl>
+												<FormControl display="flex" alignItems="center">
+													<FormLabel htmlFor="backup_chat_is_forum" mb="0">
+														{t(
+															"settings.telegram.backupChatIsForum",
+															"Backup chat is a forum",
+														)}
+													</FormLabel>
+													<Controller
+														control={control}
+														name="backup_chat_is_forum"
+														render={({ field }) => (
+															<Switch
+																id="backup_chat_is_forum"
+																isChecked={field.value}
+																onChange={field.onChange}
+															/>
+														)}
+													/>
+												</FormControl>
+												<FormControl>
+													<FormLabel>
 														{t("settings.telegram.backupScope", "Backup scope")}
 													</FormLabel>
 													<Controller
@@ -2124,7 +2226,6 @@ export const IntegrationSettingsPage = () => {
 														render={({ field }) => (
 															<Select
 																{...field}
-																isDisabled={!isTelegramBackupEnabled}
 															>
 																<option value="database">
 																	{t(
@@ -2225,6 +2326,48 @@ export const IntegrationSettingsPage = () => {
 													</Text>
 												)}
 											</SimpleGrid>
+											<Flex justify="flex-end" mt={4}>
+												<Button
+													size="sm"
+													variant="outline"
+													leftIcon={<ArrowUpTrayIcon width={16} />}
+													isLoading={telegramBackupMutation.isLoading}
+													onClick={() =>
+														telegramBackupMutation.mutate(telegramBackupScope)
+													}
+												>
+													{t(
+														"settings.telegram.backupSendNow",
+														"Send backup now",
+													)}
+												</Button>
+											</Flex>
+										</Box>
+									</DisabledCard>
+
+									<DisabledCard
+										disabled={!isTelegramEnabled}
+										message={telegramDisabledMessage}
+									>
+										<Box className="master-settings-card">
+											<Flex
+												justify="space-between"
+												align={{ base: "flex-start", md: "center" }}
+												gap={3}
+												flexDirection={{ base: "column", md: "row" }}
+											>
+												<Box>
+													<Heading size="sm">
+														{t(
+															"settings.telegram.botCommandsTitle",
+															"Bot commands",
+														)}
+													</Heading>
+												</Box>
+												<Badge colorScheme="yellow">
+													{t("settings.tabs.comingSoon", "Coming Soon")}
+												</Badge>
+											</Flex>
 										</Box>
 									</DisabledCard>
 

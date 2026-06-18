@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type MetricsProvider interface {
 
 type Service struct {
 	db        *sql.DB
+	dialect   string
 	dashboard dashboardapp.Repository
 	metrics   MetricsProvider
 	version   string
@@ -53,6 +55,7 @@ func NewServiceWithProvider(db *sql.DB, dialect string, version string, provider
 	}
 	return &Service{
 		db:        db,
+		dialect:   dialect,
 		dashboard: dashboardapp.NewRepository(db, dialect),
 		metrics:   provider,
 		version:   version,
@@ -73,9 +76,8 @@ func (s *Service) Stats(ctx context.Context, admin dashboardapp.AdminContext) (S
 		return SystemStats{}, err
 	}
 	history := s.appendHistory(snapshot)
+	lastTelegramError := s.telegramLastError(ctx)
 
-	// TODO(go-telegram): populate last_telegram_error from the Go Telegram reporter once
-	// Telegram reporting is restored natively.
 	return SystemStats{
 		Version:               s.version,
 		CPUCores:              snapshot.CPUCores,
@@ -113,8 +115,72 @@ func (s *Service) Stats(ctx context.Context, admin dashboardapp.AdminContext) (S
 		PersonalUsage:         summary.PersonalUsage,
 		AdminOverview:         summary.AdminOverview,
 		LastXrayError:         nil,
-		LastTelegramError:     nil,
+		LastTelegramError:     lastTelegramError,
 	}, nil
+}
+
+func (s *Service) telegramLastError(ctx context.Context) *string {
+	if s.db == nil {
+		return nil
+	}
+	hasTable, err := hasSystemTable(ctx, s.db, s.dialect, "telegram_settings")
+	if err != nil || !hasTable {
+		return nil
+	}
+	hasColumn, err := hasSystemColumn(ctx, s.db, s.dialect, "telegram_settings", "last_error")
+	if err != nil || !hasColumn {
+		return nil
+	}
+	var value sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT last_error FROM telegram_settings ORDER BY id DESC LIMIT 1`).Scan(&value); err != nil {
+		return nil
+	}
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return nil
+	}
+	result := value.String
+	return &result
+}
+
+func hasSystemTable(ctx context.Context, db *sql.DB, dialect string, table string) (bool, error) {
+	var exists int
+	switch strings.ToLower(strings.TrimSpace(dialect)) {
+	case "mysql":
+		err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?`, table).Scan(&exists)
+		return exists > 0, err
+	default:
+		err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists)
+		return exists > 0, err
+	}
+}
+
+func hasSystemColumn(ctx context.Context, db *sql.DB, dialect string, table string, column string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(dialect)) {
+	case "mysql":
+		var exists int
+		err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, table, column).Scan(&exists)
+		return exists > 0, err
+	default:
+		rows, err := db.QueryContext(ctx, `PRAGMA table_info("`+strings.ReplaceAll(table, `"`, `""`)+`")`)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notNull int
+			var defaultValue any
+			var pk int
+			if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+				return false, err
+			}
+			if strings.EqualFold(name, column) {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
 }
 
 type historySnapshot struct {

@@ -20,6 +20,7 @@ import (
 	"github.com/rebeccapanel/rebecca/internal/app/nodecontroller"
 	settingsapp "github.com/rebeccapanel/rebecca/internal/app/settings"
 	systemapp "github.com/rebeccapanel/rebecca/internal/app/system"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 	"github.com/rebeccapanel/rebecca/internal/app/usage"
 	userapp "github.com/rebeccapanel/rebecca/internal/app/user"
 	warpapp "github.com/rebeccapanel/rebecca/internal/app/warp"
@@ -28,22 +29,26 @@ import (
 )
 
 type Server struct {
-	cfg            Config
-	db             *sql.DB
-	dialect        string
-	adminRepo      adminapp.Repository
-	adminAuth      adminapp.Authenticator
-	nodeController nodecontroller.Controller
-	nodeMutations  nodeapp.Repository
-	systemService  *systemapp.Service
-	maintenance    *systemapp.MaintenanceService
-	usageService   usage.Service
-	userService    userapp.Service
-	warpService    warpapp.Service
-	configRepo     xrayconfig.Repository
-	settingsRepo   settingsapp.Repository
-	backupService  *backupapp.Service
-	backgroundOnce sync.Once
+	cfg             Config
+	db              *sql.DB
+	dialect         string
+	adminRepo       adminapp.Repository
+	adminAuth       adminapp.Authenticator
+	nodeController  nodecontroller.Controller
+	nodeMutations   nodeapp.Repository
+	systemService   *systemapp.Service
+	maintenance     *systemapp.MaintenanceService
+	usageService    usage.Service
+	userService     userapp.Service
+	warpService     warpapp.Service
+	configRepo      xrayconfig.Repository
+	settingsRepo    settingsapp.Repository
+	telegramRepo    telegramapp.Repository
+	telegramSender  telegramapp.Sender
+	telegramReports telegramapp.Reporter
+	telegramBackup  telegramapp.BackupDelivery
+	backupService   *backupapp.Service
+	backgroundOnce  sync.Once
 }
 
 func New(cfg Config) (*Server, error) {
@@ -66,6 +71,8 @@ func New(cfg Config) (*Server, error) {
 	userRepo := userapp.NewRepository(pool.DB, pool.Dialect)
 	warpRepo := warpapp.NewRepository(pool.DB, pool.Dialect)
 	settingsRepo := settingsapp.NewRepository(pool.DB, pool.Dialect)
+	telegramRepo := telegramapp.NewRepository(pool.DB, pool.Dialect)
+	telegramSender := telegramapp.NewSender(telegramRepo, cfg.TelegramAPIBase)
 	backupService := backupapp.NewService(pool.DB, pool.Dialect, cfg.Database)
 	configRepo := xrayconfig.NewRepository(pool.DB, pool.Dialect, xrayconfig.Options{
 		FallbackInboundTag:  cfg.XrayFallbackInboundTag,
@@ -90,6 +97,13 @@ func New(cfg Config) (*Server, error) {
 		warpService:    warpapp.NewService(warpRepo, warpapp.NewClient(cfg.WarpAPIBase)),
 		configRepo:     configRepo,
 		settingsRepo:   settingsRepo,
+		telegramRepo:   telegramRepo,
+		telegramSender: telegramSender,
+		telegramReports: telegramapp.NewReporter(
+			telegramRepo,
+			telegramSender,
+		),
+		telegramBackup: telegramapp.NewBackupDelivery(telegramRepo, telegramSender),
 		backupService:  backupService,
 	}, nil
 }
@@ -100,6 +114,7 @@ func (s *Server) StartBackground(ctx context.Context) {
 		go s.runNodeUsageCollector(ctx)
 		go s.runAdminLifecycleWorker(ctx)
 		s.runUserLifecycleWorkers(ctx)
+		go s.runTelegramBackupScheduler(ctx)
 	})
 }
 

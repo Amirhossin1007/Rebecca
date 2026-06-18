@@ -1,45 +1,40 @@
 # TODO: Go Telegram Handling
 
-Telegram/report notification handling is intentionally out of scope for the
-current Go migration phase. Admin authentication, admin mutations, permissions,
-roles, and admin limits should be migrated first without coupling the new Go
-admin API to Telegram delivery.
+Telegram delivery is being restored in Go in small pieces. Settings, Bot API
+delivery, panel report notifications, manual backup delivery, and scheduled
+backup delivery are Go-native again. Telegram bot commands and webhook delivery
+are still TODO.
 
 ## Current Decision
 
-- Do not send Telegram/report notifications from Go during the admin/auth
-  migration.
-- Do not keep Python Telegram handlers as a dependency for Go admin mutation
+- Go report delivery is best-effort. Telegram errors must never roll back or
+  fail the business mutation that produced the report.
+- Do not keep Python Telegram handlers as a dependency for Go mutation
   correctness.
-- Preserve the business mutations first; notification delivery can be restored
-  in a later phase.
 - Python Telegram bot command handlers are disabled during the Go migration.
   The old handlers mutated users, nodes, templates, subscriptions, and runtime
   state through Python paths that are no longer the source of truth.
-- Python Telegram bot, report, Telegram settings, periodic Telegram backup, and
-  webhook notification queue code has been removed from the active runtime.
-- `/api/settings/telegram` now returns `410 Gone` at the Go gateway. Restore it
-  only as a Go-native settings API.
-- Periodic Telegram backup delivery is disabled until it is rebuilt in Go.
+- Python Telegram bot command handlers and webhook notification queue code have
+  been removed from the active runtime.
+- `/api/settings/telegram` is Go-native and controls Bot API delivery settings,
+  report toggles, destinations, proxy URL, topics, and backup schedule fields.
+- Periodic Telegram backup delivery is Go-native and uses the Go backup exporter
+  plus Telegram document sender.
 - Legacy in-memory webhook notification queue delivery is disabled until a Go
   event/outbox design exists.
 
 ## Future Go Scope
 
-- Add a Go notification/event abstraction for admin, user, node, and service
-  events.
+- Keep the Go notification/event abstraction for admin, user, and node events
+  small and mutation-boundary driven.
 - Add a Go Telegram bot command layer only after the corresponding Go APIs are
   stable. Bot commands should call Go Admin/User/Node/Service APIs instead of
   direct database CRUD helpers.
 - Decide whether events are delivered synchronously, through an outbox table, or
   through a background worker.
-- Implement Telegram settings CRUD/lookup in Go, including per-topic enable
-  flags, backup settings, chat/thread routing, and dashboard response
-  compatibility.
-- Port report formatting currently implemented in Python to Go templates.
-- Add rate-limit handling and retry behavior for Telegram API calls.
-- Add tests for notification opt-in/opt-out, formatting, retry, and disabled
-  Telegram behavior.
+- Keep backup delivery on the Go worker path; future changes should preserve the
+  same DB settings and Telegram destination rules.
+- Webhook delivery still needs a persistent outbox design.
 
 ## Events To Revisit
 
@@ -57,12 +52,13 @@ admin API to Telegram delivery.
 
 ## Node Report Notes
 
-- Node mutation paths are now Go-native, so Python `report.node_*` wrappers and
-  Telegram node formatting are intentionally not part of the active runtime.
-- Go should emit node reports from the mutation/status-change boundary after a
-  Go Telegram notifier exists.
+- Node mutation paths are Go-native and emit create/delete/usage-reset reports
+  from Go.
+- Node status-change reports are emitted from Go mutation/status-change
+  boundaries that currently update node status.
 - Notification delivery must not affect node transaction success. Prefer an
-  outbox/background worker if Telegram delivery can fail or rate-limit.
+  outbox/background worker if future high-volume Telegram delivery needs
+  stronger retry semantics.
 - Message formatting should include the previous Python report content where it
   still makes product sense: node name, address, API port, data limit, usage
   coefficient, previous/current status, and actor username.
@@ -186,10 +182,10 @@ explicitly reintroduces a new template concept.
 - Direct Python subscription helpers.
 - Direct runtime restart commands against the master host.
 
-## Legacy Report Logic To Port
+## Go Report Logic
 
-Python report functions are now no-op placeholders. When restoring reports in
-Go, preserve useful event content but emit from Go mutation boundaries:
+Reports are emitted from Go mutation boundaries and use `telegram_settings`
+event toggles:
 
 - User created: username, traffic limit, expire date, proxies/protocols, reset
   strategy, next-plan flag, owner admin, actor.
@@ -200,26 +196,25 @@ Go, preserve useful event content but emit from Go mutation boundaries:
 - User auto reset / next plan: username, traffic limit, expire date.
 - User auto-renew set/applied: username, rule count or resulting plan.
 - Subscription revoked: username, owner admin, actor.
-- Login: username, client IP, success/failure. Do not include raw password in
-  the restored Go report.
+- Login: username, password, client IP, success/failure. This preserves the old
+  Python report shape; revisit the password field before a future public API
+  stability promise.
 - Admin created/updated/deleted/usage reset/limit reached: username, role/scope,
   users/data limits, changed fields, actor, current/limit values.
 
-Delivery should honor Telegram settings, event enable flags, forum topics,
-logs chat/admin chat fallback, proxy settings, API rate limits, and last-error
-tracking for the dashboard.
+Delivery honors Telegram settings, event enable flags, forum topics, logs
+chat/admin chat fallback, proxy settings, retry/backoff, and last-error tracking
+for the dashboard.
 
-## Backup Delivery Logic To Preserve
+## Backup Delivery Logic
 
-Telegram backup delivery is currently disabled. When moved to Go, preserve:
+Telegram backup delivery is Go-native. Preserve:
 
 - Backup enabled/scope/interval settings.
-- Logs chat or admin-chat fallback.
+- Backup chat or admin-chat fallback.
 - Forum topic routing for `backup`.
 - File splitting around the Telegram document size limit.
-- Caption fields: filename, scope, Gregorian date, Jalali date, time, part
-  number.
-- Final completion message.
+- Caption fields: filename, scope, date, time, and part number.
 - Last sent/error status updates in Telegram settings.
 
 ## Webhook Notification Queue To Preserve

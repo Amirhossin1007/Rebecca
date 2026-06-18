@@ -108,7 +108,6 @@ func TestRemovedAndDeprecatedRoutes(t *testing.T) {
 		path   string
 		want   int
 	}{
-		{method: http.MethodGet, path: "/api/settings/telegram", want: http.StatusGone},
 		{method: http.MethodPost, path: "/api/core/xray/update", want: http.StatusGone},
 		{method: http.MethodGet, path: "/api/core/access/insights", want: http.StatusGone},
 		{method: http.MethodGet, path: "/api/node/master", want: http.StatusGone},

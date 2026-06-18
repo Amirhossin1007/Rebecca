@@ -6,12 +6,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
+	telegramapp "github.com/rebeccapanel/rebecca/internal/app/telegram"
 )
 
 func createSettingsTables(t *testing.T, db *sql.DB) {
@@ -63,11 +65,141 @@ func createSettingsTables(t *testing.T, db *sql.DB) {
 			created_at DATETIME NULL,
 			updated_at DATETIME NULL
 		)`,
+		`CREATE TABLE telegram_settings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			api_token TEXT NULL,
+			use_telegram INTEGER NOT NULL DEFAULT 1,
+			proxy_url TEXT NULL,
+			admin_chat_ids TEXT NULL,
+			logs_chat_id INTEGER NULL,
+			logs_chat_is_forum INTEGER NOT NULL DEFAULT 0,
+			backup_chat_id INTEGER NULL,
+			backup_chat_is_forum INTEGER NOT NULL DEFAULT 0,
+			default_vless_flow TEXT NULL,
+			forum_topics TEXT NULL,
+			event_toggles TEXT NULL,
+			backup_enabled INTEGER NOT NULL DEFAULT 0,
+			backup_scope TEXT NOT NULL DEFAULT 'database',
+			backup_interval_value INTEGER NOT NULL DEFAULT 24,
+			backup_interval_unit TEXT NOT NULL DEFAULT 'hours',
+			backup_last_sent_at DATETIME NULL,
+			backup_last_error TEXT NULL,
+			last_sent_at DATETIME NULL,
+			last_error TEXT NULL,
+			last_error_at DATETIME NULL,
+			created_at DATETIME NULL,
+			updated_at DATETIME NULL
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestTelegramSettingsRoutes(t *testing.T) {
+	server, db := testAdminServer(t)
+	createSettingsTables(t, db)
+	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
+	token := adminBearerToken(t, server, "pouria", "pass123")
+
+	rec := adminJSONRequest(t, server, http.MethodGet, "/api/settings/telegram", token, `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get telegram status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var settings telegramapp.Settings
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !settings.UseTelegram || settings.BackupScope != "database" || settings.BackupIntervalValue != 24 {
+		t.Fatalf("unexpected default telegram settings: %#v", settings)
+	}
+	if !settings.EventToggles["user.created"] || settings.ForumTopics["backup"].Title != "Backup" {
+		t.Fatalf("missing default toggles/topics: %#v %#v", settings.EventToggles, settings.ForumTopics)
+	}
+
+	rec = adminJSONRequest(t, server, http.MethodPut, "/api/settings/telegram", token, `{
+		"api_token":" token ",
+		"use_telegram":true,
+		"proxy_url":"socks5://127.0.0.1:1080",
+		"admin_chat_ids":[123, "123", 456],
+		"logs_chat_id":"-1001",
+		"logs_chat_is_forum":true,
+		"backup_chat_id":"-1002",
+		"backup_chat_is_forum":true,
+		"default_vless_flow":"xtls-rprx-vision",
+		"forum_topics":{"backup":{"title":"Backups","topic_id":99}},
+		"event_toggles":{"user.created":false,"custom.event":true},
+		"backup_enabled":true,
+		"backup_scope":"full",
+		"backup_interval_value":6,
+		"backup_interval_unit":"hours"
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update telegram status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.APIToken == nil || *settings.APIToken != "token" || settings.ProxyURL == nil || *settings.ProxyURL != "socks5://127.0.0.1:1080" {
+		t.Fatalf("unexpected token/proxy: %#v", settings)
+	}
+	if len(settings.AdminChatIDs) != 2 || settings.AdminChatIDs[0] != 123 || settings.AdminChatIDs[1] != 456 {
+		t.Fatalf("unexpected chat ids: %#v", settings.AdminChatIDs)
+	}
+	if settings.LogsChatID == nil || *settings.LogsChatID != -1001 || settings.BackupChatID == nil || *settings.BackupChatID != -1002 {
+		t.Fatalf("unexpected destination ids: %#v", settings)
+	}
+	if !settings.BackupEnabled || settings.BackupScope != "full" || settings.BackupIntervalValue != 6 || settings.BackupIntervalUnit != "hours" {
+		t.Fatalf("unexpected backup settings: %#v", settings)
+	}
+	if settings.EventToggles["user.created"] || !settings.EventToggles["custom.event"] {
+		t.Fatalf("unexpected event toggles: %#v", settings.EventToggles)
+	}
+
+	rec = adminJSONRequest(t, server, http.MethodPut, "/api/settings/telegram", token, `{"proxy_url":"ftp://127.0.0.1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid proxy status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTelegramSettingsTestRoute(t *testing.T) {
+	server, db := testAdminServer(t)
+	createSettingsTables(t, db)
+	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
+	token := adminBearerToken(t, server, "pouria", "pass123")
+
+	var telegramPath string
+	mockTelegram := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		telegramPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer mockTelegram.Close()
+	server.telegramRepo = telegramapp.NewRepository(db, "sqlite")
+	server.telegramSender = telegramapp.NewSender(server.telegramRepo, mockTelegram.URL)
+
+	rec := adminJSONRequest(t, server, http.MethodPut, "/api/settings/telegram", token, `{
+		"api_token":"telegram-token",
+		"admin_chat_ids":[123]
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update telegram status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	rec = adminJSONRequest(t, server, http.MethodPost, "/api/settings/telegram/test", token, `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test message status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if telegramPath != "/bottelegram-token/sendMessage" {
+		t.Fatalf("unexpected telegram path: %s", telegramPath)
+	}
+	var result telegramapp.TestResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.ChatID != 123 {
+		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 

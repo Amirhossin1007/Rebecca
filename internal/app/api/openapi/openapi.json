@@ -2644,6 +2644,91 @@
         "operationId": "putSettingsPanel"
       }
     },
+    "/api/settings/telegram": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get Telegram settings",
+        "description": "Return Telegram integration settings from the database, including bot token, proxy URL, admin/log/backup chat destinations, forum topic IDs, notification event toggles, and periodic backup schedule. Bot command handling is still intentionally disabled; this route only manages delivery settings used by Go-native reports and backups.\n\nAuthentication: send `Authorization: Bearer <token>` using a JWT from `POST /api/admin/token` or a valid admin API key.\n\nPermissions: Telegram settings require sudo/full_access because the response can include the bot token and chat destinations.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/JSON"
+          }
+        },
+        "operationId": "getSettingsTelegram"
+      },
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Update Telegram settings",
+        "description": "Update Telegram delivery settings. `admin_chat_ids` is normalized to a de-duplicated integer list. `logs_chat_id` controls report/notification delivery, while `backup_chat_id` can override the backup destination. `forum_topics` stores per-category Telegram topic/thread IDs, and `event_toggles` stores report switches such as user/admin/node/login events. `proxy_url` supports http, https, socks5, and socks5h.\n\nAuthentication: send `Authorization: Bearer <token>` using a JWT from `POST /api/admin/token` or a valid admin API key.\n\nPermissions: Telegram settings require sudo/full_access because the request can mutate bot credentials and delivery targets.\n\nRequest body: JSON object. Unknown fields are ignored for compatibility; invalid proxy URLs, chat IDs, backup scope, or interval units return 400.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/JSON"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/JSON"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "putSettingsTelegram"
+      }
+    },
+    "/api/settings/telegram/backup/send": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Send Telegram backup now",
+        "description": "Create a Rebecca backup with the Go backup service and send it to Telegram immediately. The route reads the stored Telegram bot token, proxy URL, backup chat destination, admin-chat fallback, and backup topic/thread settings from `telegram_settings`. The request may specify `scope` as `database` or `full`; if omitted, the stored periodic backup scope is used. Large backup archives are split into multiple Telegram documents and each part gets a part-number caption. Delivery status is written back to `backup_last_sent_at` or `backup_last_error`.\n\nAuthentication: send `Authorization: Bearer <token>` using a JWT from `POST /api/admin/token` or a valid admin API key.\n\nPermissions: sudo/full_access is required because this operation exports database/files and sends them to an external Telegram chat.\n\nRuntime constraints: backup export is available only in binary installation mode. Docker/non-binary installations return 409. Telegram delivery errors return 400/502 depending on whether the failure is configuration-related or remote-delivery-related.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/JSON"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/JSON"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "502": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "postSettingsTelegramBackupSend"
+      }
+    },
+    "/api/settings/telegram/test": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Send Telegram test message",
+        "description": "Send a Telegram test message using the stored bot token, proxy, and destination settings. If a `chat_id` is not provided, Rebecca uses the log chat first and then the first admin chat. The route records the last Telegram error in `telegram_settings.last_error`, which is also surfaced by `/api/system` as `last_telegram_error`.\n\nAuthentication: send `Authorization: Bearer <token>` using a JWT from `POST /api/admin/token` or a valid admin API key.\n\nPermissions: sudo/full_access is required because this sends an external message and validates secret bot credentials.\n\nRequest body: optional JSON object with `chat_id` and `text`.",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/JSON"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/JSON"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "502": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "postSettingsTelegramTest"
+      }
+    },
     "/api/settings/backup/export": {
       "get": {
         "tags": [
