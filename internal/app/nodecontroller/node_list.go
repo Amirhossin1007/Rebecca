@@ -181,5 +181,5 @@ func setCertificatePublicKey(item *NodeListItem, cert string) {
 }
 
 func withListMetricsTimeout(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, 3*time.Second)
+	return context.WithTimeout(parent, 12*time.Second)
 }

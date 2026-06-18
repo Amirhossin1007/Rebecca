@@ -31,6 +31,21 @@ func (c Controller) Connect(ctx context.Context, req Request) (RuntimeResult, er
 	}
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
+		if node.ID != 0 {
+			if strings.TrimSpace(req.ConfigJSON) != "" {
+				if result, legacyErr := c.legacySyncConfig(ctx, node, req.ConfigJSON); legacyErr == nil {
+					_, _ = c.ProcessQueue(ctx, ProcessOperationsRequest{NodeID: node.ID, Limit: 50})
+					return result, nil
+				} else {
+					err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+				}
+			} else if result, legacyErr := c.legacyMetrics(ctx, node); legacyErr == nil {
+				_, _ = c.ProcessQueue(ctx, ProcessOperationsRequest{NodeID: node.ID, Limit: 50})
+				return result, nil
+			} else {
+				err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+			}
+		}
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("connect", req.NodeID, err)
 	}
@@ -68,6 +83,20 @@ func (c Controller) Reconnect(ctx context.Context, req Request) (RuntimeResult, 
 func (c Controller) Restart(ctx context.Context, req Request) (RuntimeResult, error) {
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
+		if node.ID != 0 {
+			configJSON := strings.TrimSpace(req.ConfigJSON)
+			if configJSON == "" {
+				configJSON, err = c.buildRuntimeConfig(ctx, node)
+				if err != nil {
+					return RuntimeResult{}, err
+				}
+			}
+			if result, legacyErr := c.legacySyncConfig(ctx, node, configJSON); legacyErr == nil {
+				return result, nil
+			} else {
+				err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+			}
+		}
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("restart", req.NodeID, err)
 	}
@@ -115,6 +144,13 @@ func (c Controller) Health(ctx context.Context, req Request) (RuntimeResult, err
 func (c Controller) Metrics(ctx context.Context, req Request) (RuntimeResult, error) {
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
+		if node.ID != 0 {
+			if result, legacyErr := c.legacyMetrics(ctx, node); legacyErr == nil {
+				return result, nil
+			} else {
+				err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+			}
+		}
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("metrics", req.NodeID, err)
 	}
@@ -413,6 +449,20 @@ func (c Controller) applyOperation(ctx context.Context, operation OperationRow) 
 	case "sync_config", "add_user", "update_user", "remove_user", "disable_user", "enable_user":
 		client, node, err := c.dial(ctx, operation.NodeID.Int64)
 		if err != nil {
+			if node.ID != 0 {
+				configJSON := strings.TrimSpace(payload.ConfigJSON)
+				if configJSON == "" {
+					configJSON, err = c.buildRuntimeConfig(ctx, node)
+					if err != nil {
+						return err
+					}
+				}
+				if _, legacyErr := c.legacySyncConfig(ctx, node, configJSON); legacyErr == nil {
+					return nil
+				} else {
+					err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+				}
+			}
 			_ = c.repo.SetError(ctx, operation.NodeID.Int64, err.Error())
 			return err
 		}
@@ -482,16 +532,18 @@ func (c Controller) dial(ctx context.Context, nodeID int64) (*nodeclient.Client,
 	if err != nil {
 		return nil, NodeRow{}, err
 	}
-	grpcPort := node.APIPort + 1
-	if grpcPort <= 1 {
-		grpcPort = node.Port + 2
+	addresses := NodeGRPCAddressCandidates(node.Address, node.Port, node.APIPort)
+	errors := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		attemptCtx, cancel := withNodeDialAttemptTimeout(ctx)
+		client, err := nodeclient.Dial(attemptCtx, address, tlsConfig, grpc.WithBlock())
+		cancel()
+		if err == nil {
+			return client, node, nil
+		}
+		errors = append(errors, address+": "+err.Error())
 	}
-	address := net.JoinHostPort(node.Address, strconv.Itoa(grpcPort))
-	client, err := nodeclient.Dial(ctx, address, tlsConfig, grpc.WithBlock())
-	if err != nil {
-		return nil, NodeRow{}, err
-	}
-	return client, node, nil
+	return nil, node, fmt.Errorf("node gRPC dial failed: %s", strings.Join(errors, "; "))
 }
 
 func (c Controller) finishRuntime(ctx context.Context, node NodeRow, state *nodev1.RuntimeState, message string) (RuntimeResult, error) {
@@ -555,4 +607,44 @@ func firstNonEmpty(values ...string) string {
 
 func WithDefaultTimeout(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, 30*time.Second)
+}
+
+const nodeDialAttemptTimeout = 6 * time.Second
+
+func withNodeDialAttemptTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := parent.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= nodeDialAttemptTimeout {
+			return context.WithCancel(parent)
+		}
+	}
+	return context.WithTimeout(parent, nodeDialAttemptTimeout)
+}
+
+func NodeGRPCAddressCandidates(address string, servicePort int, apiPort int) []string {
+	ports := NodeGRPCPortCandidates(servicePort, apiPort)
+	result := make([]string, 0, len(ports))
+	for _, port := range ports {
+		result = append(result, net.JoinHostPort(strings.TrimSpace(address), strconv.Itoa(port)))
+	}
+	return result
+}
+
+func NodeGRPCPortCandidates(servicePort int, apiPort int) []int {
+	seen := map[int]bool{}
+	result := make([]int, 0, 2)
+	add := func(port int) {
+		if port <= 0 || seen[port] {
+			return
+		}
+		seen[port] = true
+		result = append(result, port)
+	}
+	if apiPort > 0 {
+		add(apiPort + 1)
+	}
+	if len(result) == 0 {
+		add(servicePort)
+	}
+	return result
 }

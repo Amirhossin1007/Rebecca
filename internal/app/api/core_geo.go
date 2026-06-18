@@ -19,6 +19,7 @@ type geoTargetNode struct {
 	ID      int64
 	Name    string
 	Address string
+	Port    int
 	APIPort int
 }
 
@@ -170,7 +171,7 @@ func geoSkipNodeSet(payload geoUpdatePayload) map[int64]bool {
 func (s *Server) geoDefaultNodes(ctx context.Context) ([]geoTargetNode, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT id, COALESCE(name, ''), address, api_port FROM nodes
+		`SELECT id, COALESCE(name, ''), address, port, api_port FROM nodes
 WHERE status NOT IN ('disabled', 'limited')
   AND COALESCE(geo_mode, 'default') = 'default'
 ORDER BY id`,
@@ -182,7 +183,7 @@ ORDER BY id`,
 	var nodes []geoTargetNode
 	for rows.Next() {
 		var node geoTargetNode
-		if err := rows.Scan(&node.ID, &node.Name, &node.Address, &node.APIPort); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.Address, &node.Port, &node.APIPort); err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, node)
@@ -191,15 +192,18 @@ ORDER BY id`,
 }
 
 func ensureGeoNodeReachable(node geoTargetNode) error {
-	grpcPort := node.APIPort + 1
-	if grpcPort <= 1 {
+	addresses := nodecontroller.NodeGRPCAddressCandidates(node.Address, node.Port, node.APIPort)
+	if len(addresses) == 0 {
 		return fmt.Errorf("invalid node gRPC port")
 	}
-	address := net.JoinHostPort(strings.TrimSpace(node.Address), strconv.Itoa(grpcPort))
-	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
-	if err != nil {
-		return err
+	errors := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		conn, err := net.DialTimeout("tcp", address, 3*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		errors = append(errors, address+": "+err.Error())
 	}
-	_ = conn.Close()
-	return nil
+	return fmt.Errorf("%s", strings.Join(errors, "; "))
 }

@@ -30,6 +30,13 @@ func (c Controller) UpdateRuntime(ctx context.Context, req Request) (RuntimeResu
 func (c Controller) UpdateGeo(ctx context.Context, req Request) (RuntimeResult, error) {
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
+		if node.ID != 0 {
+			if result, legacyErr := c.legacyUpdateGeo(ctx, node, req.Files); legacyErr == nil {
+				return result, nil
+			} else {
+				err = fmt.Errorf("%w; legacy REST failed: %v", err, legacyErr)
+			}
+		}
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("update geo", req.NodeID, err)
 	}
