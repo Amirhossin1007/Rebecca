@@ -62,13 +62,18 @@ func (c Controller) CollectUsage(ctx context.Context, req CollectUsageRequest) (
 				result.UserBatches++
 			}
 			for _, sample := range userBatch.GetStats() {
-				userID, parseErr := strconv.ParseInt(strings.TrimSpace(sample.GetUid()), 10, 64)
-				if parseErr != nil || userID <= 0 {
+				userID, onlineOnly, ok := parseUserUsageSampleUID(sample.GetUid())
+				if !ok {
 					continue
 				}
 				value := int64(sample.GetValue())
+				if onlineOnly {
+					userDeltas = append(userDeltas, UserUsageDelta{UserID: userID, Online: true})
+					result.UserSamples++
+					continue
+				}
 				if value > 0 {
-					userDeltas = append(userDeltas, UserUsageDelta{UserID: userID, Value: value})
+					userDeltas = append(userDeltas, UserUsageDelta{UserID: userID, Value: value, Online: true})
 					result.UserSamples++
 				}
 			}
@@ -195,6 +200,22 @@ func usageCollectionShouldReset(req CollectUsageRequest) bool {
 		return false
 	}
 	return true
+}
+
+const onlineUsageSamplePrefix = "online:"
+
+func parseUserUsageSampleUID(raw string) (int64, bool, bool) {
+	uid := strings.TrimSpace(raw)
+	onlineOnly := false
+	if strings.HasPrefix(uid, onlineUsageSamplePrefix) {
+		onlineOnly = true
+		uid = strings.TrimSpace(strings.TrimPrefix(uid, onlineUsageSamplePrefix))
+	}
+	userID, err := strconv.ParseInt(uid, 10, 64)
+	if err != nil || userID <= 0 {
+		return 0, false, false
+	}
+	return userID, onlineOnly, true
 }
 
 func (c Controller) persistCollectedUsageWithRetry(ctx context.Context, node NodeRow, userDeltas []UserUsageDelta, outboundDeltas []OutboundUsageDelta) error {

@@ -61,6 +61,60 @@ INSERT INTO system (id, uplink, downlink) VALUES (1, 0, 0);`)
 	assertInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'disable_user' AND user_id = 10`, 1)
 }
 
+func TestRepositoryPersistsOnlineOnlyUserUsage(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "usage-online.db")+"?_busy_timeout=30000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	createUsageTables(t, ctx, db)
+
+	_, err = db.ExecContext(ctx, `
+INSERT INTO admins (id, users_usage, lifetime_usage) VALUES (1, 0, 0);
+INSERT INTO services (id, used_traffic, lifetime_used_traffic, users_usage, updated_at) VALUES (2, 0, 0, 0, CURRENT_TIMESTAMP);
+INSERT INTO admins_services (admin_id, service_id, used_traffic, lifetime_used_traffic, updated_at) VALUES (1, 2, 0, 0, CURRENT_TIMESTAMP);
+INSERT INTO users (id, status, used_traffic, data_limit, admin_id, service_id) VALUES (10, 'active', 0, 100000, 1, 2);
+INSERT INTO nodes (id, status, uplink, downlink, data_limit, usage_coefficient) VALUES (7, 'connected', 0, 0, NULL, 1);
+INSERT INTO system (id, uplink, downlink) VALUES (1, 0, 0);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewRepository(db, "sqlite")
+	err = repo.PersistCollectedUsage(
+		ctx,
+		NodeRow{ID: 7, UsageCoefficient: 1},
+		[]UserUsageDelta{{UserID: 10, Online: true}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertInt64(t, db, `SELECT used_traffic FROM users WHERE id = 10`, 0)
+	assertInt64(t, db, `SELECT users_usage FROM admins WHERE id = 1`, 0)
+	assertInt64(t, db, `SELECT used_traffic FROM services WHERE id = 2`, 0)
+	assertInt64(t, db, `SELECT COUNT(*) FROM node_user_usages WHERE user_id = 10 AND node_id = 7`, 0)
+	assertInt64(t, db, `SELECT COUNT(*) FROM users WHERE id = 10 AND online_at IS NOT NULL`, 1)
+}
+
+func TestParseUserUsageSampleUID(t *testing.T) {
+	userID, onlineOnly, ok := parseUserUsageSampleUID("online:42")
+	if !ok || userID != 42 || !onlineOnly {
+		t.Fatalf("unexpected online marker parse: id=%d onlineOnly=%v ok=%v", userID, onlineOnly, ok)
+	}
+
+	userID, onlineOnly, ok = parseUserUsageSampleUID("42")
+	if !ok || userID != 42 || onlineOnly {
+		t.Fatalf("unexpected traffic marker parse: id=%d onlineOnly=%v ok=%v", userID, onlineOnly, ok)
+	}
+
+	if _, _, ok := parseUserUsageSampleUID("online:"); ok {
+		t.Fatal("empty online marker should be ignored")
+	}
+}
+
 func createUsageTables(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	statements := []string{

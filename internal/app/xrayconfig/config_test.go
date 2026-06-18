@@ -156,6 +156,12 @@ func TestRuntimeInjectionDoesNotMutateRawConfig(t *testing.T) {
 	if !hasAPIInbound(runtime) {
 		t.Fatal("runtime config should include API_INBOUND")
 	}
+	policy := runtime["policy"].(map[string]any)
+	levels := policy["levels"].(map[string]any)
+	level0 := levels["0"].(map[string]any)
+	if level0["statsUserOnline"] != true {
+		t.Fatalf("runtime config should enable online user stats: %#v", level0)
+	}
 	routing := runtime["routing"].(map[string]any)
 	rules := routing["rules"].([]any)
 	if len(rules) == 0 {

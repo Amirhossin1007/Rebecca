@@ -147,11 +147,18 @@ func (c *legacyRESTClient) collectUserUsage(ctx context.Context) (string, []User
 	}
 	deltas := make([]UserUsageDelta, 0, len(payload.Stats))
 	for _, sample := range payload.Stats {
-		userID, err := strconv.ParseInt(strings.TrimSpace(sample.UID), 10, 64)
-		if err != nil || userID <= 0 || sample.Value <= 0 {
+		userID, onlineOnly, ok := parseUserUsageSampleUID(sample.UID)
+		if !ok {
 			continue
 		}
-		deltas = append(deltas, UserUsageDelta{UserID: userID, Value: sample.Value})
+		if onlineOnly {
+			deltas = append(deltas, UserUsageDelta{UserID: userID, Online: true})
+			continue
+		}
+		if sample.Value <= 0 {
+			continue
+		}
+		deltas = append(deltas, UserUsageDelta{UserID: userID, Value: sample.Value, Online: true})
 	}
 	return strings.TrimSpace(payload.BatchID), deltas, len(payload.Stats), nil
 }

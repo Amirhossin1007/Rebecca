@@ -16,6 +16,7 @@ import (
 type UserUsageDelta struct {
 	UserID int64
 	Value  int64
+	Online bool
 }
 
 type OutboundUsageDelta struct {
@@ -178,8 +179,15 @@ func (r Repository) PersistCollectedUsage(ctx context.Context, node NodeRow, use
 
 func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeRow, deltas []UserUsageDelta, bucket time.Time, now time.Time) (map[int64]int64, []usageQueuedOperation, error) {
 	aggregated := map[int64]int64{}
+	onlineUsers := map[int64]struct{}{}
 	for _, delta := range deltas {
-		if delta.UserID <= 0 || delta.Value <= 0 {
+		if delta.UserID <= 0 {
+			continue
+		}
+		if delta.Online {
+			onlineUsers[delta.UserID] = struct{}{}
+		}
+		if delta.Value <= 0 {
 			continue
 		}
 		value := int64(math.Round(float64(delta.Value) * node.UsageCoefficient))
@@ -187,17 +195,34 @@ func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeR
 			continue
 		}
 		aggregated[delta.UserID] += value
+		onlineUsers[delta.UserID] = struct{}{}
 	}
-	if len(aggregated) == 0 {
+	if len(aggregated) == 0 && len(onlineUsers) == 0 {
 		return aggregated, nil, nil
 	}
 
-	mapping, err := r.loadUsageUserMapping(ctx, tx, keysInt64(aggregated))
+	mapping, err := r.loadUsageUserMapping(ctx, tx, unionInt64Keys(aggregated, onlineUsers))
 	if err != nil {
 		return nil, nil, fmt.Errorf("load user mapping: %w", err)
 	}
 	if len(mapping) == 0 {
 		return map[int64]int64{}, nil, nil
+	}
+
+	for userID := range onlineUsers {
+		if _, ok := mapping[userID]; !ok {
+			continue
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE users
+SET online_at = CASE WHEN status IN ('active', 'on_hold') THEN ? ELSE online_at END
+WHERE id = ?`,
+			r.timeArg(now),
+			userID,
+		); err != nil {
+			return nil, nil, fmt.Errorf("update user %d online status: %w", userID, err)
+		}
 	}
 
 	adminUsage := map[int64]int64{}
@@ -213,11 +238,9 @@ func (r Repository) persistUserUsage(ctx context.Context, tx *sql.Tx, node NodeR
 		if _, err := tx.ExecContext(
 			ctx,
 			`UPDATE users
-SET used_traffic = COALESCE(used_traffic, 0) + ?,
-    online_at = CASE WHEN status IN ('active', 'on_hold') THEN ? ELSE online_at END
+SET used_traffic = COALESCE(used_traffic, 0) + ?
 WHERE id = ?`,
 			value,
-			r.timeArg(now),
 			userID,
 		); err != nil {
 			return nil, nil, fmt.Errorf("update user %d: %w", userID, err)
@@ -866,6 +889,21 @@ func operationKey(operationType string, nodeID int64, userID int64, now time.Tim
 func keysInt64(values map[int64]int64) []int64 {
 	result := make([]int64, 0, len(values))
 	for key := range values {
+		result = append(result, key)
+	}
+	return result
+}
+
+func unionInt64Keys(values map[int64]int64, keys map[int64]struct{}) []int64 {
+	seen := make(map[int64]struct{}, len(values)+len(keys))
+	for key := range values {
+		seen[key] = struct{}{}
+	}
+	for key := range keys {
+		seen[key] = struct{}{}
+	}
+	result := make([]int64, 0, len(seen))
+	for key := range seen {
 		result = append(result, key)
 	}
 	return result

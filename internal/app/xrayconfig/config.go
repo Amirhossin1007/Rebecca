@@ -553,7 +553,11 @@ func applyNetworkSettings(resolved ResolvedInbound, network string, settings map
 
 func mergePolicy(runtime map[string]any) {
 	forced := map[string]any{
-		"levels": map[string]any{"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true}},
+		"levels": map[string]any{"0": map[string]any{
+			"statsUserUplink":   true,
+			"statsUserDownlink": true,
+			"statsUserOnline":   true,
+		}},
 		"system": map[string]any{
 			"statsInboundDownlink":  false,
 			"statsInboundUplink":    false,
