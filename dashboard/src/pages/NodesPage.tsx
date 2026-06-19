@@ -2446,7 +2446,35 @@ export const NodesPage: FC = () => {
 										</HStack>
 										<HStack spacing={2} flexWrap="wrap">
 											{statusDisplay}
-											<HStack spacing={1} align="center">
+											
+											{nodeServiceUpdateAvailable && (
+												<Tag
+													as="button"
+													type="button"
+													colorScheme="orange"
+													size="sm"
+													cursor={(!nodeId || !nodeHostActionsAvailable || isUpdatingMaintenance) ? "not-allowed" : "pointer"}
+													opacity={(!nodeId || !nodeHostActionsAvailable || isUpdatingMaintenance) ? 0.6 : 1}
+													_hover={{ opacity: (!nodeId || !nodeHostActionsAvailable || isUpdatingMaintenance) ? 0.6 : 0.82 }}
+													onClick={() => {
+														if (nodeId && nodeHostActionsAvailable && !isUpdatingMaintenance) {
+															handleUpdateNodeService(node);
+														}
+													}}
+													whiteSpace="nowrap"
+													display="inline-flex"
+													alignItems="center"
+												>
+													{isUpdatingMaintenance ? (
+														<Spinner size="xs" marginEnd={1.5} />
+													) : (
+														<DownloadIconStyled marginEnd={1.5} />
+													)}
+													{t("nodes.nodeUpdateAvailable", "Update available")}
+												</Tag>
+											)}
+
+											<HStack spacing={2} align="center" flexWrap="wrap">
 												<Tag
 													as="button"
 													type="button"
@@ -2458,12 +2486,13 @@ export const NodesPage: FC = () => {
 														nodeId &&
 														setVersionDialogTarget({ type: "node", node })
 													}
+													whiteSpace="nowrap"
 												>
 													{node.xray_version
 														? `Xray ${node.xray_version}`
 														: t("nodes.versionUnknown", "Version unknown")}
 												</Tag>
-												<Tag colorScheme="green" size="sm">
+												<Tag colorScheme="green" size="sm" whiteSpace="nowrap">
 													{nodeRuntimeVersion
 														? t("nodes.nodeServiceVersionTag", {
 																version: nodeRuntimeVersion,
@@ -2473,19 +2502,6 @@ export const NodesPage: FC = () => {
 																"Node version unknown",
 															)}
 												</Tag>
-												{nodeServiceUpdateAvailable && (
-													<Button
-														size="xs"
-														variant="link"
-														colorScheme="orange"
-														leftIcon={<DownloadIconStyled />}
-														onClick={() => handleUpdateNodeService(node)}
-														isLoading={isUpdatingMaintenance}
-														isDisabled={!nodeId || !nodeHostActionsAvailable}
-													>
-														{t("nodes.updateAvailable", "Update available")}
-													</Button>
-												)}
 												<Button
 													size="xs"
 													variant="ghost"
@@ -2496,6 +2512,7 @@ export const NodesPage: FC = () => {
 													}
 													isLoading={isCoreUpdating}
 													isDisabled={!nodeId || !nodeHostActionsAvailable}
+													whiteSpace="nowrap"
 												>
 													{t("nodes.updateCoreAction")}
 												</Button>
