@@ -278,7 +278,7 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
 		get().fetchAdmins(undefined, { force: true });
 	},
 	async createAdmin(payload) {
-		const created = await fetch<Admin>("/admin", {
+		const created = await fetch<Admin>("/api/admin", {
 			method: "POST",
 			body: payload,
 		});
