@@ -24,7 +24,7 @@ const fetchAdminLoader = async () => {
 			console.warn("No authentication token found");
 			throw new Error("No token available");
 		}
-		const response = await fetch("/admin", {
+		const response = await fetch("/api/admin", {
 			headers: {
 				Authorization: `Bearer ${token}`,
 			},
