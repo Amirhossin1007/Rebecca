@@ -90,3 +90,22 @@ func TestOutboundTestRejectsMasterTarget(t *testing.T) {
 		t.Fatalf("unexpected body=%s", rec.Body.String())
 	}
 }
+
+func TestOutboundTestTypeNormalization(t *testing.T) {
+	tests := map[string]struct {
+		payload map[string]any
+		want    string
+	}{
+		"default": {payload: map[string]any{}, want: "latency"},
+		"tcp":     {payload: map[string]any{"test_type": "tcp"}, want: "tcp"},
+		"icmp":    {payload: map[string]any{"testType": "ping"}, want: "icmp"},
+		"unknown": {payload: map[string]any{"type": "weird"}, want: "latency"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := outboundTestType(tc.payload); got != tc.want {
+				t.Fatalf("outboundTestType()=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
