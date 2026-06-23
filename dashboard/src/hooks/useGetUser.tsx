@@ -12,7 +12,7 @@ import {
 import type { UseGetUserReturn, UserApi } from "types/User";
 
 const fetchUser = async () => {
-	return await fetch("/api/admin");
+	return await fetch("/admin");
 };
 
 const useGetUser = (): UseGetUserReturn => {
