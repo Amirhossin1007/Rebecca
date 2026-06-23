@@ -59,7 +59,6 @@ import { AdminRole, AdminSection } from "types/Admin";
 import { clearClientSession } from "utils/session";
 import { ReactComponent as ImperialIranFlag } from "../assets/imperial-iran-flag.svg";
 import { AppSidebar } from "./AppSidebar";
-import { GitHubStars } from "./GitHubStars";
 import { HeaderCalendar } from "./HeaderCalendar";
 import ThemeSelector from "./ThemeSelector";
 
@@ -759,8 +758,7 @@ export function AppLayout() {
 						</HStack>
 						<HStack spacing={2} alignItems="center" flexShrink={0}>
 							<HeaderCalendar />
-							<GitHubStars />
-
+							
 							{/* User Menu */}
 							{getUserIsSuccess && userData.username && (
 								<Menu
