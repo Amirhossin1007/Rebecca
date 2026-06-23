@@ -1,6 +1,6 @@
 {
 	"meta": {
-		"updated": "2026-06-22 16:50"
+		"updated": "2026-06-23 13:20"
 	},
 	"intro": "This page serves as the operational guide for the panel. We highly recommend reading it thoroughly before you begin.",
 	"quickTips": [
@@ -44,12 +44,12 @@
 			"title": "Create user",
 			"description": "Create a new user and hand over the link instantly—no server-side configuration required.",
 			"steps": [
-				"On the Users page, click “Create user” to open the form.",
-				"Fill in the username, status (Active or On Hold), expiry date, and data limit.",
-				"Select the appropriate service and inbounds to ensure the correct link is generated.",
-				"Set an IP limit and add a descriptive note.",
-				"Enable Auto Renew if you want the account to manage its own billing cycle.",
-				"Save your changes and send the resulting link or QR code to the customer."
+				"On the Users page, click “Create user” to open the dialog.",
+				"Fill username, status (active or on hold), expiry date, and data cap.",
+				"Choose the right service so the correct link is generated for the customer.",
+				"Set IP limit and add a note if needed.",
+				"Enable Auto Renew if you want hands-off renewals.",
+				"Save and share the link or QR with the user."
 			],
 			"hints": [
 				"Use the 'On Hold' status to keep an account ready without starting the clock until the customer connects.",
@@ -107,20 +107,15 @@
 		{
 			"id": "myaccount",
 			"title": "My account",
-			"description": "Access this section to view your usage, manage API keys, and update your password securely.",
+			"description": "See your own usage and update your password from one place.",
 			"steps": [
-				"Click \"My account\" from the sidebar menu.",
-				"The top cards display your used, remaining, and total data, along with your user capacity limits.",
-				"Use the Daily Usage chart with a date filter to monitor your day-to-day traffic consumption.",
-				"If permitted, the Per Node Usage section provides a breakdown of data consumption across different nodes.",
-				"Under API Keys, you can generate new keys (valid for 1, 3, 6, 12 months, or forever) and delete old ones.",
-				"In the Change Password section, enter your current and new password, or click the generator button for a secure random password."
+				"Open \"My account\" from the sidebar.",
+				"Top cards show your used/remaining/total data and user limits.",
+				"Use the Daily usage chart with a date filter to track your usage over time.",
+				"In Change password, enter current + new password or use the random generator button."
 			],
 			"hints": [
-				"API keys are displayed only once upon creation—ensure you copy them immediately.",
-				"For optimal security, prefer short-lived keys and rotate them if you suspect a breach.",
-				"If your account lacks self_api_keys or self_change_password permissions, those specific cards will remain hidden.",
-				"Select a narrower date range for charts to ensure faster loading times."
+				"Narrow the date range for charts if you want faster loading."
 			]
 		},
 		{
@@ -309,37 +304,20 @@
 		},
 		{
 			"id": "dialog-service",
-			"title": "Service & inbounds",
-			"description": "Configure the underlying protocols and how the final links are constructed.",
+			"title": "Service",
+			"description": "Pick which service the account should use.",
 			"fields": [
 				{
 					"name": "Service",
-					"detail": "Select a predefined service plan to automatically populate default settings."
-				},
-				{
-					"name": "Inbounds / protocols",
-					"detail": "Assign an inbound for each protocol (vless/vmess/trojan/ss) to generate the user link.",
-					"tips": [
-						"If the dropdown is empty, you must add an inbound first under Hosts/Nodes.",
-						"If using a setservice-* tag, select it exclusively; it automatically maps to the correct service.",
-						"Manually selecting a service will override and ignore any manual inbound choices."
-					]
-				},
-				{
-					"name": "Flow / TLS",
-					"detail": "Specify an optional flow (e.g., xtls-rprx-vision) or custom credential. Leave blank if you are unsure."
+					"detail": "Select the right service so the settings needed to build the link are applied automatically."
 				}
 			]
 		},
 		{
 			"id": "dialog-access",
-			"title": "Access keys & links",
-			"description": "Manage subscription links and manual credential inputs.",
+			"title": "Subscription link",
+			"description": "How to get the customer's connection link.",
 			"fields": [
-				{
-					"name": "Manual credential key",
-					"detail": "Toggle 'Manual' to input a custom 32-character security key."
-				},
 				{
 					"name": "Subscription link / QR",
 					"detail": "After hitting save, grab the freshly generated link or QR code directly from the users table."
@@ -522,19 +500,11 @@
 	],
 	"panelIntro": {
 		"title": "Panel overview",
-		"description": "The Rebecca panel is a powerful XRay-based VPN management system. After evaluating multiple alternatives, the Vento team halted the development of our proprietary panel due to the comprehensive architecture and robust features of this system, ultimately selecting Rebecca as our primary platform. This panel empowers you to seamlessly create, manage, and monitor users, admins, and nodes.",
+		"description": "Rebecca is a VPN service management panel. After evaluating several options, the Vento team found it covered everything they needed in structure and features, so they stopped building an in-house panel and adopted Rebecca as their main platform. This panel is used to create and manage customer accounts.",
 		"bullets": [
-			"Create and extend users utilizing varying statuses (Active, On Hold, Limited, and Expired), complete with quick links, QR codes, and Auto Renew functionalities.",
-			"Govern admins with granular roles and permissions, alongside strict data and user limits.",
-			"Manage nodes utilizing unique, secure Secrets, and monitor server connectivity directly via the Hosts/Integrations tab.",
-			"My account: Easily manage API keys, change passwords, and access detailed daily and per-node consumption reports."
-		],
-		"links": [
-			{
-				"label": "Rebecca Panel GitHub",
-				"action": "url",
-				"target": "https://github.com/rebeccapanel/rebecca"
-			}
+			"Create and renew users with active, on hold, limited, and expired statuses, plus links, QR codes, and Auto Renew.",
+			"Quickly search for users by username, link, or subscription code.",
+			"My Account: view your daily usage report and change your password."
 		]
 	}
 }
