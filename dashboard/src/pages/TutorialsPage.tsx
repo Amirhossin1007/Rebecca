@@ -1471,6 +1471,7 @@ const TutorialsPage: FC = () => {
 								{...cardStyles}
 								{...highlightStyles("quick-tips")}
 								id="quick-tips"
+								mt={4}
 							>
 								<HStack spacing={2} mb={2}>
 									<SparkleIcon />
