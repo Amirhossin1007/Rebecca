@@ -33,8 +33,13 @@ i18n
 			},
 			load: "languageOnly",
 			detection: {
-				caches: ["localStorage", "sessionStorage", "cookie"],
-			},
+               order: ["localStorage", "sessionStorage", "cookie"],
+               caches: ["localStorage", "sessionStorage", "cookie"],
+               lookupLocalStorage: "i18nextLng",
+               lookupSessionStorage: "i18nextLng",
+               lookupCookie: "i18nextLng",
+            },
+fallbackLng: "fa",
 			backend: {
 				loadPath: joinPaths([
 					import.meta.env.BASE_URL,
