@@ -1157,7 +1157,7 @@ const TutorialsPage: FC = () => {
 						zIndex={2}
 					>
 						<VStack align="stretch" spacing={3}>
-							{false && adminSections.length > 0 && (
+							{adminSections.length > 0 && (
 								<HStack spacing={2}>
 									<Button
 										size="sm"
