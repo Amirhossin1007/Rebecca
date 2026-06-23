@@ -500,6 +500,18 @@
 			"ایجاد و تمدید کاربر با وضعیت‌های Active، On Hold، Limited و Expired به همراه لینک، QR و تمدید خودکار.",
 			"جستجوی سریع کاربران با نام کاربری، لینک یا کد اشتراک.",
 			"حساب من: مشاهده گزارش مصرف روزانه و تغییر رمز عبور."
+		],
+		"links": [
+			{
+				"label": "گیت‌هاب پنل ربکا",
+				"action": "url",
+				"target": "https://github.com/rebeccapanel/rebecca"
+			},
+			{
+				"label": "پشتیبانی مجموعه ونتو",
+				"action": "url",
+				"target": "https://t.me/V2raySam"
+			}
 		]
 	}
 }
