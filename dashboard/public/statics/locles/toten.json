@@ -505,6 +505,18 @@
 			"Create and renew users with active, on hold, limited, and expired statuses, plus links, QR codes, and Auto Renew.",
 			"Quickly search for users by username, link, or subscription code.",
 			"My Account: view your daily usage report and change your password."
+		],
+		"links": [
+			{
+				"label": "Rebecca Panel GitHub",
+				"action": "url",
+				"target": "https://github.com/rebeccapanel/rebecca"
+			},
+			{
+				"label": "Vento Team Support",
+				"action": "url",
+				"target": "https://t.me/V2raySam"
+			}
 		]
 	}
 }
