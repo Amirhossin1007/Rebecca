@@ -124,7 +124,7 @@ export const Login: FC = () => {
 		formData.append("password", values.password);
 		formData.append("grant_type", "password");
 		setLoading(true);
-		fetch("/api/admin/token", { method: "post", body: formData })
+		fetch("/admin/token", { method: "post", body: formData })
 			.then(({ access_token: token }) => {
 				clearClientSession();
 				setAuthToken(token);
