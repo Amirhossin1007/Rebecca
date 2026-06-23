@@ -42,7 +42,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { AdminSection, UserPermissionToggle } from "types/Admin";
 import { ReactComponent as ImperialIranFlag } from "../assets/imperial-iran-flag.svg";
-import { GitHubStars } from "./GitHubStars";
 import ThemeSelector from "./ThemeSelector";
 
 type HeaderProps = {
@@ -226,8 +225,6 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
 						<CoreSettingsIcon />
 					</IconButton>
 				)}
-
-				<GitHubStars />
 
 				<Popover
 					isOpen={actionsMenu.isOpen}

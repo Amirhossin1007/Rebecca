@@ -2,47 +2,47 @@
 	"meta": {
 		"updated": "2026-06-23 13:20"
 	},
-	"intro": "This page is a quick walk-through so you can ship accounts fast without touching the backend.",
+	"intro": "This page serves as the operational guide for the panel. We highly recommend reading it thoroughly before you begin.",
 	"quickTips": [
-		"When you create a fresh user, set the status to on hold so it only starts counting after the first connection.",
-		"Always leave a short note (monthly, test, VIP) so future-you remembers what this account is for.",
-		"If someone says the link is broken, copy the subscription URL or QR from the table to generate a clean link.",
-		"Before deleting an account, revoke the subscription so old links stop working.",
-		"Pro tip: the Users search box accepts subscription links, tokens, keys, UUIDs, and full config links."
+		"When creating a new user, set their status to 'On Hold' so the expiration timer only starts upon their first connection.",
+		"Never leave the note field empty; add a brief description like 'monthly', 'test', or 'VIP' to make account management much easier later.",
+		"If a customer reports a broken link, simply click the copy or QR icon from the users table to generate a fresh, valid link.",
+		"Before deleting an account, always revoke its subscription first to ensure old links are permanently deactivated.",
+		"Pro tip: The Users search box is highly versatile—it accepts subscription links, tokens, keys, UUIDs, and full config links."
 	],
 	"sections": [
 		{
 			"id": "user-search",
-			"title": "Search users by links or IDs",
-			"description": "You can paste almost anything from a user and find them instantly.",
+			"title": "Search users by link or ID",
+			"description": "You can find a customer's account instantly by entering almost any piece of their connection data.",
 			"steps": [
-				"Paste a subscription URL (token, key, or username/key) into the Users search box.",
-				"Paste a config link (vless/vmess/trojan/shadowsocks) to find the owner.",
-				"You can also search by UUID, credential key, or raw token."
+				"Paste a subscription link (token, key, or username/key) into the Users search box.",
+				"Enter a config link (vless/vmess/trojan/shadowsocks) to immediately identify its owner.",
+				"Searching by UUID, credential key, or raw token is also fully supported."
 			],
 			"hints": [
-				"If a user cannot connect, paste their exact config link to locate the account quickly.",
-				"Search accepts both plain values and full URLs."
+				"For rapid troubleshooting, paste the customer's exact config link into the search box.",
+				"The search engine accepts both raw values and full URLs."
 			]
 		},
 		{
 			"id": "single-config",
 			"title": "Get a single config",
-			"description": "When you need a one-off config for a user, grab it from the Links tab.",
+			"description": "If you need to provide a standalone config to a customer, you can easily grab it from the Links tab.",
 			"steps": [
-				"On the Users page, click the edit icon for the user.",
-				"Open the \"Links\" tab.",
-				"Use the QR or copy button to grab the single config."
+				"On the Users page, click the edit icon for the desired user.",
+				"Navigate to the \"Links\" tab.",
+				"Use the QR or copy button right there to grab the single config."
 			],
 			"hints": [
-				"QR is fastest for sharing to phones; copy is best for messaging.",
-				"If the subscription link is broken, the single config works as a fallback."
+				"QR codes are fastest for sharing to mobile devices; copying the link is better for text messaging.",
+				"If the main subscription link is experiencing issues, a single config serves as a great fallback."
 			]
 		},
 		{
 			"id": "create-user",
 			"title": "Create user",
-			"description": "Create a user fast and hand over the link—no backend work needed.",
+			"description": "Create a new user and hand over the link instantly—no server-side configuration required.",
 			"steps": [
 				"On the Users page, click “Create user” to open the dialog.",
 				"Fill username, status (active or on hold), expiry date, and data cap.",
@@ -52,56 +52,56 @@
 				"Save and share the link or QR with the user."
 			],
 			"hints": [
-				"Use on hold to keep it ready without starting the clock until first connect.",
-				"Add a short note so you remember why this account exists.",
-				"IP limit 1–2 makes sharing much harder."
+				"Use the 'On Hold' status to keep an account ready without starting the clock until the customer connects.",
+				"Always add a brief note so you remember the specific purpose of the account.",
+				"Setting the IP limit to 1 or 2 is an effective way to prevent unauthorized sharing."
 			]
 		},
 		{
 			"id": "service-auto-inbound",
-			"title": "Service inbound auto-assign",
-			"description": "Use service inbound tags to auto-select a service while creating or editing users.",
+			"title": "Service auto-assign via Service Inbound",
+			"description": "Utilize Service Inbound tags to automatically assign a service when creating or editing a user.",
 			"requiresRole": ["full_access", "sudo"],
 			"steps": [
-				"Go to Services, open a service, and create its \"Service inbound\". The tag format is setservice-<service_id>.",
-				"In Create/Edit user, if no service is selected, choose only that service inbound tag in inbounds.",
-				"The panel automatically assigns the linked service and applies service-specific inbounds/hosts.",
-				"If you manually select a service, inbound selections are ignored and service settings are applied."
+				"Go to the Services page, open a service, and create its \"Service inbound\". The tag format is setservice-<service_id>.",
+				"In the Create/Edit user form, if no service is selected, choose only that Service Inbound tag in the Inbounds section.",
+				"The panel will automatically assign the linked service and apply its specific settings.",
+				"Note: If you manually select a service, any inbound selections are ignored and the service's default settings take over."
 			],
 			"hints": [
-				"Service inbound must be selected alone. Do not combine it with any other inbound tag.",
-				"If you need manual inbound control, do not use the setservice-* inbound.",
-				"Use the service tutorial from Nodes/Services page for troubleshooting and exact setup."
+				"The Service Inbound must be selected by itself. Do not combine it with other inbound tags.",
+				"If you require manual inbound control, avoid using the setservice-* tags entirely.",
+				"For troubleshooting, refer to the Tutorial button on the Node or Service page."
 			]
 		},
 		{
 			"id": "renew-user",
 			"title": "Renew user",
-			"description": "You don’t need a brand new user to extend time or quota.",
+			"description": "You don’t need to create a brand new account to extend time or add data limits.",
 			"steps": [
-				"In the table, click the username or edit icon to open the user drawer.",
-				"Pick a new expiry date or increase the data limit.",
-				"If the user was blocked, switch the status back to \"active\" (or \"limited\" if you want to cap them).",
-				"Save your changes. The existing links keep working."
+				"In the users table, click the username or the edit icon to open the settings drawer.",
+				"Select a new expiry date or increase the data limit allowance.",
+				"If the user was previously disabled or limited, change their status back to \"Active\".",
+				"Save your changes. The customer's existing link will continue to work seamlessly."
 			],
 			"hints": [
-				"Turn on Auto Renew if you want the account to extend itself when it hits time or quota.",
-				"Reset usage is available in the same dialog if you want to start counting from zero."
+				"Enable Auto Renew in this same window if you want the account to automatically top-up upon reaching its limits.",
+				"If you need to restart their usage tracking from zero, simply use the Reset Usage button."
 			]
 		},
 		{
 			"id": "onhold-setup",
 			"title": "On-hold user",
-			"description": "Use this when you want to hand over the link now but let activation wait for first connect.",
+			"description": "Use this status when you want to prepare an account in advance but delay activation until the first connection.",
 			"steps": [
-				"Set the status to \"on hold\" in the create/edit form.",
-				"Fill the \"on hold duration\" with 2-5 days so it expires if they never connect.",
-				"For safety, set the IP limit to 1 or 2.",
-				"Share the subscription link; after the first connection it becomes active and starts counting."
+				"Set the status to \"On Hold\" in the create/edit form.",
+				"Set the \"On hold duration\" to 2-5 days so the account expires automatically if they never connect.",
+				"For added security, set the IP limit to 1 or 2.",
+				"Share the subscription link. After the first successful connection, the status flips to Active and tracking begins."
 			],
 			"hints": [
-				"If the on-hold window ends and they still haven’t connected, put it back on hold or delete it.",
-				"Once it turns active, you can extend traffic or time from the same dialog."
+				"If the on-hold period expires before the customer connects, you can either extend the duration or delete the account.",
+				"Once the account becomes active, you can easily extend data or time from the exact same window."
 			]
 		},
 		{
@@ -121,10 +121,10 @@
 		{
 			"id": "nodes-admin",
 			"title": "Nodes",
-			"description": "Three parts: overview, how to create/configure, and copying the secret + connectivity.",
+			"description": "This section covers three main areas: general node overview, setup instructions, and managing node Secrets.",
 			"modalExample": {
 				"title": "Node certificate created",
-				"copyHint": "Copy this certificate and place it on the node.",
+				"copyHint": "Copy this certificate and place it on the node server.",
 				"certificateSample": "-----BEGIN CERTIFICATE-----\\nMIIF...snipped...\\n-----END CERTIFICATE-----"
 			},
 			"links": [
@@ -144,26 +144,26 @@
 				{
 					"id": "intro",
 					"title": "Overview",
-					"description": "Shows node status, service/API ports, usage coefficient, and total traffic per node.",
+					"description": "Displays the operational status, service/API ports, usage coefficient, and total traffic for each node.",
 					"steps": []
 				},
 				{
 					"id": "guide",
 					"title": "How to set up",
 					"steps": [
-						"Click Add node and fill name, domain/IP, service port, API port, usage coefficient, and optional data cap.",
-						"Add per-node xray_config / sing_config / hysteria_config if you need overrides; leave empty to inherit global settings.",
-						"If you use Nobetci, turn it on and set the monitor port.",
-						"After saving, the modal shows the unique secret; copy or download it right away (each node has its own).",
-						"Example: teh1.example.com with service port 62050 and API 62051; put the generated secret on that server.",
-						"After saving, check Hosts/Integrations to confirm connectivity."
+						"Click 'Add node' and fill in the name, domain/IP, service port, API port, usage coefficient, and an optional data cap.",
+						"If you require standalone configurations per node, fill in xray_config, sing_config, or hysteria_config; otherwise, leave them blank to inherit global settings.",
+						"If you utilize Nobetci, enable the option and define the monitor port.",
+						"After saving, a modal will display the unique node Secret; copy or download it immediately (each node requires its own).",
+						"Example: For teh1.example.com with service port 62050 and API 62051, place the generated Secret securely on that specific server.",
+						"Once registered, verify connectivity by checking the Hosts/Integrations section."
 					],
 					"hints": [
-						"The secret appears only after saving; you can view it again from the node page.",
-						"Keep service/API ports open and server time in sync (NTP).",
-						"Use the usage coefficient for manual load balance; e.g., 2 for a stronger node.",
-						"Do not reuse the same secret across nodes; generate one per node.",
-						"If offline, check firewall, DNS, and Hosts settings."
+						"The Secret is generated after saving and can be retrieved later from the node page if needed.",
+						"Ensure your service and API ports are open, and that your server time is synchronized via NTP.",
+						"Leverage the usage coefficient for manual load balancing (e.g., assigning a '2' to a higher-capacity node).",
+						"Never share a Secret across multiple nodes; generate a unique one for every server.",
+						"If a node shows as offline, double-check your firewall, DNS, and Hosts configurations."
 					]
 				}
 			]
@@ -171,7 +171,7 @@
 		{
 			"id": "admins-page",
 			"title": "Admins",
-			"description": "Three parts: admin overview, how to manage, and admin roles (each role its own box).",
+			"description": "Covers the admins page overview, comprehensive management guide, and detailed role explanations.",
 			"links": [
 				{
 					"label": "Go to Admins",
@@ -184,35 +184,35 @@
 				{
 					"id": "intro",
 					"title": "Overview",
-					"description": "Table shows role, status, data/user caps, and quick stats; filter to find faster.",
+					"description": "The table displays the assigned role, status, data/user limits, and general activity stats for every admin.",
 					"steps": []
 				},
 				{
 					"id": "guide",
 					"title": "How to manage",
 					"steps": [
-						"Click Add admin, set username/password, and pick a role (Full Access / Sudo / Reseller / Standard).",
-						"Set data_limit and users_limit so their scope is bounded.",
-						"Use enable/disable to pause or resume the admin and their users.",
-						"Delete is a soft delete for the admin and their users; use the shortcut to open create-admin quickly."
+						"Click 'Add admin', set a username and password, and select a role: Full Access, Sudo, Reseller, or Standard.",
+						"Define a data_limit and users_limit to set the boundaries of their operational scope.",
+						"Use the Enable/Disable toggle to temporarily pause or resume access for an admin and their associated sub-users.",
+						"Deleting an admin performs a soft delete, which safely disables their sub-users as well."
 					],
 					"hints": [
-						"After raising limits or resetting usage, re-enable if still paused.",
-						"Keep Full Access rare; prefer Sudo/Standard for support teams."
+						"If you've increased limits or reset usage for a paused admin, remember to re-enable their account.",
+						"Reserve the Full Access role for primary owners; use Sudo or Standard roles for your support teams."
 					]
 				},
 				{
 					"id": "role-full-access",
 					"title": "Full Access",
-					"description": "Owner-level control over all sections and sensitive settings (Users, Admins, Services, Hosts, Nodes, Integrations, settings).",
+					"description": "The highest tier of access, offering absolute control over all sections and sensitive settings.",
 					"steps": [
-						"Create/edit roles, services, nodes, and integrations without restriction.",
-						"Set limits and permissions for other admins and users.",
-						"Reserve for the primary owner; keep the count low."
+						"Create and edit roles, services, nodes, and integrations without any restrictions.",
+						"Define data caps and access rights for all other admins and users.",
+						"Assign this role exclusively to system owners and keep the total count to an absolute minimum."
 					],
 					"hints": [
-						"Review permissions before handing this role to someone else.",
-						"Use strong passwords and 2FA for this role."
+						"Carefully review permissions before elevating an account to this role.",
+						"Mandate strong passwords and Two-Factor Authentication (2FA) for Full Access accounts."
 					],
 					"icon": "crown",
 					"color": "yellow"
@@ -220,15 +220,15 @@
 				{
 					"id": "role-sudo",
 					"title": "Sudo",
-					"description": "High operational access without full ownership; ideal for senior support/ops.",
+					"description": "Provides high operational access without system ownership rights; ideal for senior technical and support staff.",
 					"steps": [
-						"Create/edit users, services, and nodes (except owner-only settings).",
-						"Can handle most daily operations but limited on ownership changes.",
-						"Keep the number small to reduce risk."
+						"Create and edit users, services, and nodes (excluding core ownership configurations).",
+						"Capable of handling most daily operations but restricted from ownership-level modifications.",
+						"Keep the number of Sudo admins small to minimize security risks."
 					],
 					"hints": [
-						"If they don’t need to manage Full Access, Sudo is enough.",
-						"Review limits and logs regularly."
+						"If a staff member doesn't need to manage other Full Access accounts, the Sudo role is sufficient.",
+						"Periodically review their caps and activity logs for auditing purposes."
 					],
 					"icon": "shield",
 					"color": "purple"
@@ -236,15 +236,15 @@
 				{
 					"id": "role-reseller",
 					"title": "Reseller",
-					"description": "Seller/agent with defined data/user caps; manages only their own users.",
+					"description": "Designed for sales agents with defined quotas; allows management strictly for their own sub-users.",
 					"steps": [
-						"Create/manage their own users within users_limit and data_limit.",
-						"No access to sensitive system sections beyond what selling requires.",
-						"Use for partners with scoped access."
+						"Create and manage sub-users within the confines of their assigned users_limit and data_limit.",
+						"No access granted to sensitive system architecture or sections outside of client management.",
+						"The perfect fit for business partners and sales affiliates."
 					],
 					"hints": [
-						"On-hold users do not count toward users_limit; active ones do.",
-						"Set caps to match the contract scope."
+						"Users in the 'On Hold' status do not consume the users_limit quota; only active ones do.",
+						"Set these limits to reflect your agreed partnership contract."
 					],
 					"icon": "tag",
 					"color": "green"
@@ -252,15 +252,15 @@
 				{
 					"id": "role-standard",
 					"title": "Standard",
-					"description": "Most limited; sees/edits only the sections you enable.",
+					"description": "The most restricted access level; operators can only view or edit sections explicitly enabled for them.",
 					"steps": [
-						"Good for trainees or constrained support.",
-						"Each section (Users, Admins, Services, ...) must be enabled explicitly.",
-						"Self permissions decide which My Account cards show."
+						"Excellent for trainees, junior support, or restricted operators.",
+						"Access to each section (Users, Admins, Services, etc.) must be toggled on individually.",
+						"Self Permissions dictate which specific modules are visible on their 'My account' page."
 					],
 					"hints": [
-						"For view-only, enable can_view and leave can_edit off.",
-						"Add permissions gradually if you plan to upgrade them."
+						"For a read-only view, turn on can_view and ensure can_edit remains off.",
+						"Grant permissions gradually as the operator requires more access."
 					],
 					"icon": "user",
 					"color": "gray"
@@ -271,34 +271,34 @@
 	"dialogSections": [
 		{
 			"id": "dialog-basics",
-			"title": "Basics & status",
-			"description": "Top of the form: identity, status, time and quota.",
+			"title": "Basic info & status",
+			"description": "The top section handles identity, operational status, time, and data quotas.",
 			"fields": [
 				{
 					"name": "Username",
-					"detail": "3–32 chars; keep it simple and readable.",
-					"tips": ["Use trial/guest suffix for tests so they stand out."]
+					"detail": "Must be 3–32 characters with no spaces. Keep it simple and readable.",
+					"tips": ["Append a 'trial' or 'test' suffix to temporary accounts so they stand out in the dashboard."]
 				},
 				{
 					"name": "Status",
-					"detail": "active for normal use, on hold to start after first connect, limited/expired/disabled to pause or cap access.",
+					"detail": "Active for normal use, On Hold to delay tracking until the first connect, Limited/Expired/Disabled to suspend access.",
 					"tips": [
-						"On hold holds expiry and quota until the first successful connection."
+						"The On Hold status pauses expiry and data tracking until the first successful handshake."
 					]
 				},
 				{
 					"name": "Expire",
-					"detail": "End date; leave empty for no expiry.",
-					"tips": ["Quick add buttons (+30 days, etc.) sit above the table."]
+					"detail": "The cutoff date for access. Leave this blank for an unlimited lifespan.",
+					"tips": ["Quick-add buttons (e.g., +30 days) are conveniently located above the table."]
 				},
 				{
 					"name": "Data limit (GB)",
-					"detail": "Quota in GB; leave empty for unlimited.",
-					"tips": ["For trials, 10–50 GB is usually enough."]
+					"detail": "Total data quota in gigabytes. Leave blank for unlimited bandwidth.",
+					"tips": ["For trial accounts, 10–50 GB is usually more than enough."]
 				},
 				{
 					"name": "IP limit",
-					"detail": "Simultaneous IPs allowed; set to 1–2 to reduce sharing."
+					"detail": "Maximum number of simultaneous IPs allowed. Keep it at 1 or 2 to heavily discourage link sharing."
 				}
 			]
 		},
@@ -320,44 +320,44 @@
 			"fields": [
 				{
 					"name": "Subscription link / QR",
-					"detail": "After saving, copy a fresh link or QR from the users table."
+					"detail": "After hitting save, grab the freshly generated link or QR code directly from the users table."
 				}
 			]
 		},
 		{
 			"id": "dialog-auto-renew",
 			"title": "Auto Renew",
-			"description": "Keep accounts alive without manual edits.",
+			"description": "Configure rules to keep accounts active seamlessly without manual intervention.",
 			"fields": [
 				{
 					"name": "Data limit",
-					"detail": "Quota to apply when the cap is reached.",
+					"detail": "The data quota to apply automatically when the cap is hit.",
 					"tips": [
-						"Use add remaining to carry leftover traffic into the next cycle."
+						"Toggle 'Add remaining' to roll over any unused data traffic into the next billing cycle."
 					]
 				},
 				{
 					"name": "Time limit (days)",
-					"detail": "Days to add to expiry; zero means no time cap."
+					"detail": "The number of days added to the expiry date. Zero indicates no time cap."
 				},
 				{
 					"name": "Fire on either",
-					"detail": "If enabled, renews when either time or quota hits first."
+					"detail": "When enabled, the renewal triggers as soon as either the time or quota limit is reached."
 				}
 			]
 		},
 		{
 			"id": "dialog-other",
-			"title": "Notes & contact",
-			"description": "Support details so you remember who’s who.",
+			"title": "Notes & contact info",
+			"description": "Supplementary details for better account management and customer support.",
 			"fields": [
 				{
 					"name": "Note",
-					"detail": "Short context about the user or deal; helps searching later."
+					"detail": "A brief description of the account or deal. Highly useful for future searches."
 				},
 				{
 					"name": "Telegram ID / Contact number",
-					"detail": "Contact info for support follow-up."
+					"detail": "Customer contact information for troubleshooting and follow-ups."
 				}
 			]
 		}
@@ -365,99 +365,99 @@
 	"statuses": [
 		{
 			"status": "on_hold",
-			"title": "On Hold (waiting for first connect)",
-			"description": "Account exists but hasn’t connected yet. First successful connection flips it to active and starts timers.",
+			"title": "On Hold (waiting for first connection)",
+			"description": "The account is created but hasn't established a connection yet. The first successful handshake switches it to Active and starts the timer.",
 			"actions": [
-				"Use it for trials or brand new customers.",
-				"If the on-hold timer runs out, either extend the timer or clean it up.",
-				"Keep the IP limit low to avoid link sharing."
+				"Ideal for trial periods or onboarding brand new customers.",
+				"If the on-hold duration runs out without a connection, extend the timer or remove the account.",
+				"Keep the IP limit low to prevent link abuse before activation."
 			]
 		},
 		{
 			"status": "active",
 			"title": "Active (in use)",
-			"description": "Normal state. Usage, expiry, and logs are tracked.",
+			"description": "The standard operational state. Data usage, expiry times, and connection logs are actively tracked.",
 			"actions": [
-				"Add quota or extend expiry whenever needed, or reset usage to start fresh.",
-				"If you want to pause without deleting, switch to disabled."
+				"Top up data, extend the expiry date, or reset usage metrics at any time.",
+				"If you need to pause access without deleting the account, switch the status to Disabled."
 			]
 		},
 		{
 			"status": "limited",
-			"title": "Limited (quota reached)",
-			"description": "Data cap is hit and the connection is restricted.",
+			"title": "Limited (out of data)",
+			"description": "The allocated data cap has been reached and the connection is currently restricted.",
 			"actions": [
-				"Add more quota, reset usage, or flip back to active after you charge them.",
-				"Enable Auto Renew with \"add remaining\" if you don’t want leftover traffic to vanish."
+				"Add more data, reset the usage, or switch the status back to Active after receiving payment.",
+				"Enable Auto Renew with the \"Add remaining\" option to prevent unused traffic from being lost."
 			]
 		},
 		{
 			"status": "expired",
 			"title": "Expired (date passed)",
-			"description": "Expiry is in the past and the user can’t connect.",
+			"description": "The expiration date has passed, denying the user further access.",
 			"actions": [
-				"Move the expiry forward or reset usage and reactivate.",
-				"If it’s been dormant for a while, revoke the subscription and send a fresh link."
+				"Push the expiry date forward or reset usage, then reactivate the account.",
+				"If the account has been dormant for an extended period, revoke the subscription and issue a brand new link."
 			]
 		}
 	],
 	"faqs": [
 		{
 			"id": "when-onhold",
-			"question": "When should I use on hold?",
-			"answer": "Whenever you don’t want the account to start until the customer actually connects.",
+			"question": "When is the best time to use the 'On Hold' status?",
+			"answer": "Whenever you want to provision an account but delay the start of its billing cycle until the customer actually connects.",
 			"bullets": [
-				"Trial accounts that might never connect.",
-				"Customers who need to pay first, then activate.",
-				"Cases where you want to send the link early but start counting later."
+				"Trial accounts where the user might not connect immediately.",
+				"Customers who require the link beforehand but will pay/activate later.",
+				"Any scenario where you want to send links early but start the clock later."
 			]
 		},
 		{
 			"id": "fast-renew",
-			"question": "What’s the fastest way to renew?",
-			"answer": "Open the user dialog, change the expiry or quota, and save.",
+			"question": "What is the fastest way to renew a user?",
+			"answer": "Simply open the user dialog, update the expiry date or data quota, and save.",
 			"bullets": [
-				"Turn on Auto Renew in the same dialog for hands-off renewals.",
-				"Use reset usage if you want to zero out their counters."
+				"For a hands-off approach, turn on Auto Renew inside the same window.",
+				"Use the 'Reset usage' button if you prefer to zero out their current data counters."
 			]
 		},
 		{
 			"id": "status-differences",
-			"question": "What’s the difference between active, on hold, and disabled?",
-			"answer": "Active = full access; on hold = waiting for the first connection; disabled = paused until you change it back."
+			"question": "What’s the difference between Active, On Hold, and Disabled?",
+			"answer": "Active means full operational access; On Hold pauses timers until the very first connection is made; Disabled forcefully suspends access until you manually restore it."
 		},
 		{
 			"id": "troubleshoot",
-			"question": "User says they can’t connect—where do I start?",
-			"answer": "Check three things: status is active, expiry/quota aren’t blocking, and the link is current.",
+			"question": "A customer is reporting connection issues—where do I start?",
+			"answer": "Verify three critical points: the status is set to Active, the expiry/quota limits haven't been exceeded, and the link they are using is current.",
 			"bullets": [
-				"Grab a fresh QR or subscription link from the table.",
-				"If status is limited or expired, extend it as needed.",
-				"Lower the IP limit and reset usage if you suspect sharing."
+				"Generate a fresh QR code or subscription link from the users table and send it to them.",
+				"If their status is Limited or Expired, extend their allowances accordingly.",
+				"If you suspect they shared their link, lower their IP limit and reset their usage."
 			]
 		},
 		{
 			"id": "subscription-basics",
-			"question": "What is a subscription and where do I create it?",
-			"answer": "A subscription is the user account + link. Go to the Users page and click Create user to make one.",
+			"question": "What exactly is a subscription and how do I create one?",
+			"answer": "A subscription encompasses the user account and its connection link. Head to the Users page and click 'Create user' to set one up.",
 			"bullets": [
-				"Data limit = quota cap (GB).",
-				"Time limit = expiry date; access stops after it.",
-				"Service = prebuilt plan with inbound/quota/expiry defaults."
+				"Data limit = the maximum data volume (in GB).",
+				"Time limit = the expiration date; after this, the connection drops.",
+				"Service = a predefined template bundling specific inbounds, quotas, and lifespans."
 			]
 		},
 		{
 			"id": "subscription-advanced",
-			"question": "Common questions about subscription settings",
-			"answer": "Definitions you’ll see when creating/editing:",
+			"question": "Common terminologies in subscription settings",
+			"answer": "Here are definitions of key terms you will encounter while creating or editing accounts:",
 			"bullets": [
-				"Auto delete: remove the user after time/quota ends.",
-				"Auto renew: renews traffic/time automatically.",
-				"Add remaining: carry leftover traffic into the next cycle.",
-				"Revoke access: invalidate old links (revoke subscription).",
-				"Reset usage: zero out usage counters.",
-				"Enable/disable: temporarily allow or block access.",
-				"How does it connect? Via the subscription link/QR in your V2Ray/Reality/SS client."
+				"Auto delete: Automatically removes the user entirely once their time or quota ends.",
+				"Auto renew: Automatically replenishes traffic and time limits.",
+				"Add remaining: Carries over any unused traffic into the next billing cycle.",
+				"Revoke access: Invalidates the old links (Revoke Subscription).",
+				"Reset usage: Zeroes out the current usage tracking counters.",
+				"Enable/disable: Temporarily grants or blocks connection access.",
+				"Connection method: via the subscription link or QR code imported into clients like V2Ray, Reality, or ShadowSocks."
 			]
 		}
 	],
@@ -469,7 +469,7 @@
 			"dataLimitGb": 50,
 			"usedGb": 0.6,
 			"ipLimit": 1,
-			"note": "Trial account; link sent but not connected yet."
+			"note": "Trial account; link delivered but no connection established yet."
 		},
 		{
 			"username": "sara_active",
@@ -478,7 +478,7 @@
 			"dataLimitGb": 120,
 			"usedGb": 24.5,
 			"ipLimit": 3,
-			"note": "Main customer; monthly renewal with auto renew on."
+			"note": "Monthly subscription; Auto Renew is currently enabled."
 		},
 		{
 			"username": "reza_limited",
@@ -487,7 +487,7 @@
 			"dataLimitGb": 80,
 			"usedGb": 82.3,
 			"ipLimit": 2,
-			"note": "Quota exceeded; add data or reset usage."
+			"note": "Data allowance reached; requires a top-up or usage reset."
 		},
 		{
 			"username": "aria_expired",
@@ -495,7 +495,7 @@
 			"expireInDays": -2,
 			"dataLimitGb": 100,
 			"usedGb": 40.1,
-			"note": "Past expiry; reactivate after extending."
+			"note": "Past the expiry date; account will reactivate upon extension."
 		}
 	],
 	"panelIntro": {
